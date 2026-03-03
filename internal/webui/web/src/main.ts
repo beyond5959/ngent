@@ -3,10 +3,10 @@ import { store } from './store.ts'
 import { api } from './api.ts'
 import { applyTheme, settingsPanel } from './components/settings-panel.ts'
 import { newThreadModal } from './components/new-thread-modal.ts'
-import { mountPermissionCard } from './components/permission-card.ts'
+import { mountPermissionCard, PERMISSION_TIMEOUT_MS } from './components/permission-card.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
-import type { Thread, Message, Turn } from './types.ts'
-import type { TurnStream } from './sse.ts'
+import type { Thread, Message, Turn, StreamState } from './types.ts'
+import type { TurnStream, PermissionRequiredPayload } from './sse.ts'
 import { escHtml, formatRelativeTime, formatTimestamp, generateUUID } from './utils.ts'
 
 // ── Theme ─────────────────────────────────────────────────────────────────
@@ -53,15 +53,18 @@ const claudeIconURL = '/claude-icon.png'
 const opencodeIconURL = '/opencode-icon.png'
 const qwenIconURL = '/qwen-icon.png'
 
-// ── Active stream state (DOM-managed, not in store) ───────────────────────
+// ── Active stream state (DOM-managed, per thread) ──────────────────────────
 
 /**
  * Non-null while a streaming bubble is live in the DOM.
  * We use this to prevent updateMessageList() from wiping the in-progress bubble.
  */
-let activeStream:         TurnStream | null = null
-let activeStreamMsgId:    string | null     = null
-let activeStreamThreadId: string | null     = null
+let activeStreamMsgId: string | null = null
+const streamsByThread = new Map<string, TurnStream>()
+const streamBufferByThread = new Map<string, string>()
+const streamStartedAtByThread = new Map<string, string>()
+type PendingPermission = PermissionRequiredPayload & { deadlineMs: number }
+const pendingPermissionsByThread = new Map<string, Map<string, PendingPermission>>()
 
 /** Last threadId that triggered a full chat-area re-render. */
 let lastRenderThreadId: string | null = null
@@ -78,6 +81,126 @@ function isNearBottom(el: HTMLElement): boolean {
 function addMessageToStore(threadId: string, msg: Message): void {
   const { messages } = store.get()
   store.set({ messages: { ...messages, [threadId]: [...(messages[threadId] ?? []), msg] } })
+}
+
+function getThreadStreamState(threadId: string | null): StreamState | null {
+  if (!threadId) return null
+  return store.get().streamStates[threadId] ?? null
+}
+
+function setThreadStreamState(threadId: string, next: StreamState | null): void {
+  const { streamStates } = store.get()
+  const updated = { ...streamStates }
+  if (next) {
+    updated[threadId] = next
+  } else {
+    delete updated[threadId]
+  }
+  store.set({ streamStates: updated })
+}
+
+function appendOrRestoreStreamingBubble(thread: Thread): void {
+  const streamState = getThreadStreamState(thread.threadId)
+  if (!streamState) return
+
+  const listEl = document.getElementById('message-list')
+  if (!listEl) return
+
+  const bubbleID = `bubble-${streamState.messageId}`
+  if (document.getElementById(bubbleID)) {
+    activeStreamMsgId = streamState.messageId
+    return
+  }
+
+  listEl.querySelector('.empty-state')?.remove()
+  listEl.querySelector('.message-list-loading')?.remove()
+  const startedAt = streamStartedAtByThread.get(thread.threadId) ?? new Date().toISOString()
+  const avatar = renderAgentAvatar(thread.agent ?? '', 'message')
+  const div = document.createElement('div')
+  div.className = 'message message--agent'
+  div.dataset.msgId = streamState.messageId
+  div.innerHTML = `
+    <div class="message-avatar">${avatar}</div>
+    <div class="message-group">
+      <div class="message-bubble message-bubble--streaming" id="${escHtml(bubbleID)}">
+        <div class="typing-indicator"><span></span><span></span><span></span></div>
+      </div>
+      <div class="message-meta">
+        <span class="message-time">${formatTimestamp(startedAt)}</span>
+      </div>
+    </div>`
+
+  listEl.appendChild(div)
+  activeStreamMsgId = streamState.messageId
+
+  const buffered = streamBufferByThread.get(thread.threadId) ?? ''
+  if (buffered) {
+    const bubbleEl = document.getElementById(bubbleID)
+    if (bubbleEl) {
+      bubbleEl.classList.remove('message-bubble--streaming')
+      bubbleEl.textContent = buffered
+    }
+  }
+  listEl.scrollTop = listEl.scrollHeight
+}
+
+function clearThreadStreamRuntime(threadId: string): void {
+  streamsByThread.delete(threadId)
+  streamBufferByThread.delete(threadId)
+  streamStartedAtByThread.delete(threadId)
+  setThreadStreamState(threadId, null)
+  if (store.get().activeThreadId === threadId) {
+    activeStreamMsgId = null
+  }
+}
+
+function upsertPendingPermission(threadId: string, event: PermissionRequiredPayload): PendingPermission {
+  let byID = pendingPermissionsByThread.get(threadId)
+  if (!byID) {
+    byID = new Map<string, PendingPermission>()
+    pendingPermissionsByThread.set(threadId, byID)
+  }
+  const existing = byID.get(event.permissionId)
+  if (existing) return existing
+
+  const pending: PendingPermission = {
+    ...event,
+    deadlineMs: Date.now() + PERMISSION_TIMEOUT_MS,
+  }
+  byID.set(event.permissionId, pending)
+  return pending
+}
+
+function removePendingPermission(threadId: string, permissionId: string): void {
+  const byID = pendingPermissionsByThread.get(threadId)
+  if (!byID) return
+  byID.delete(permissionId)
+  if (byID.size === 0) {
+    pendingPermissionsByThread.delete(threadId)
+  }
+}
+
+function clearPendingPermissions(threadId: string): void {
+  pendingPermissionsByThread.delete(threadId)
+}
+
+function mountPendingPermissionCard(threadId: string, pending: PendingPermission): void {
+  if (store.get().activeThreadId !== threadId) return
+  if (document.getElementById(`perm-card-${pending.permissionId}`)) return
+
+  const listEl = document.getElementById('message-list')
+  if (!listEl) return
+
+  mountPermissionCard(listEl, pending, {
+    deadlineMs: pending.deadlineMs,
+    onResolved: () => removePendingPermission(threadId, pending.permissionId),
+  })
+}
+
+function renderPendingPermissionCards(threadId: string): void {
+  const byID = pendingPermissionsByThread.get(threadId)
+  if (!byID) return
+  byID.forEach(pending => mountPendingPermissionCard(threadId, pending))
 }
 
 // ── Thread list rendering ─────────────────────────────────────────────────
@@ -230,20 +353,18 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   delete nextMessages[threadId]
 
   const deletingActive = state.activeThreadId === threadId
-  const deletingStream = state.streamState?.threadId === threadId
+  const deletingStream = !!streamsByThread.get(threadId)
 
   if (deletingStream) {
-    activeStream?.abort()
-    activeStream = null
-    activeStreamMsgId = null
-    activeStreamThreadId = null
+    streamsByThread.get(threadId)?.abort()
+    clearThreadStreamRuntime(threadId)
   }
+  clearPendingPermissions(threadId)
 
   store.set({
     threads: nextThreads,
     messages: nextMessages,
     activeThreadId: deletingActive ? (nextThreads[0]?.threadId ?? null) : state.activeThreadId,
-    streamState: deletingStream ? null : state.streamState,
   })
 }
 
@@ -293,7 +414,7 @@ async function loadHistory(threadId: string): Promise<void> {
     const state = store.get()
     if (state.activeThreadId !== threadId) return
     // Don't overwrite while a turn is streaming on this thread
-    if (state.streamState?.threadId === threadId) return
+    if (getThreadStreamState(threadId)) return
     store.set({ messages: { ...state.messages, [threadId]: turnsToMessages(turns) } })
   } catch {
     if (store.get().activeThreadId !== threadId) return
@@ -393,7 +514,8 @@ function updateMessageList(): void {
 // ── Input state ───────────────────────────────────────────────────────────
 
 function updateInputState(): void {
-  const { streamState } = store.get()
+  const { activeThreadId } = store.get()
+  const streamState = getThreadStreamState(activeThreadId)
   const isStreaming   = !!streamState
   const isCancelling  = streamState?.status === 'cancelling'
 
@@ -474,14 +596,8 @@ function updateChatArea(): void {
   const { threads, activeThreadId } = store.get()
   const thread = activeThreadId ? threads.find(t => t.threadId === activeThreadId) : null
 
-  // Abort any stream that belongs to a thread we're leaving
-  if (activeStream && activeStreamThreadId !== activeThreadId) {
-    activeStream.abort()
-    activeStream         = null
-    activeStreamMsgId    = null
-    activeStreamThreadId = null
-    store.set({ streamState: null })
-  }
+  // The streaming bubble is tied to the current chat DOM; reset sentinel on thread switch.
+  activeStreamMsgId = null
 
   if (!thread) {
     chat.innerHTML = renderChatEmpty()
@@ -508,6 +624,9 @@ function updateChatArea(): void {
       listEl.innerHTML = `<div class="message-list-loading"><div class="loading-spinner"></div></div>`
     }
   }
+
+  appendOrRestoreStreamingBubble(thread)
+  renderPendingPermissionCards(thread.threadId)
 
   updateInputState()
   bindInputResize()
@@ -566,11 +685,12 @@ function handleSend(): void {
   const text = inputEl.value.trim()
   if (!text) return
 
-  const { activeThreadId, threads, streamState } = store.get()
-  if (!activeThreadId || streamState) return
+  const { activeThreadId, threads } = store.get()
+  if (!activeThreadId || getThreadStreamState(activeThreadId)) return
 
   const thread       = threads.find(t => t.threadId === activeThreadId)
   const agentAvatar  = renderAgentAvatar(thread?.agent ?? '', 'message')
+  const capturedThreadID = activeThreadId
 
   // Clear input immediately
   inputEl.value = ''
@@ -586,18 +706,20 @@ function handleSend(): void {
     timestamp: now,
     status:    'done',
   }
-  addMessageToStore(activeThreadId, userMsg)
+  addMessageToStore(capturedThreadID, userMsg)
 
-  // ── 2. Reserve streaming message ID before touching streamState ───────────
+  // ── 2. Reserve streaming message ID before touching stream state ───────────
   //    This prevents subscribe → updateMessageList from wiping the bubble.
-  const agentMsgId          = generateUUID()
-  activeStreamMsgId         = agentMsgId
-  activeStreamThreadId      = activeThreadId
-  // activeStream set below, after DOM setup
-
-  // ── 3. Gate the subscribe handler via streamState ──────────────────────────
-  const capturedThreadId = activeThreadId
-  store.set({ streamState: { turnId: '', threadId: activeThreadId, messageId: agentMsgId, status: 'streaming' } })
+  const agentMsgID = generateUUID()
+  activeStreamMsgId = agentMsgID
+  streamBufferByThread.set(capturedThreadID, '')
+  streamStartedAtByThread.set(capturedThreadID, now)
+  setThreadStreamState(capturedThreadID, {
+    turnId: '',
+    threadId: capturedThreadID,
+    messageId: agentMsgID,
+    status: 'streaming',
+  })
 
   // ── 4. Append streaming bubble directly to DOM ─────────────────────────────
   const listEl = document.getElementById('message-list')
@@ -605,11 +727,11 @@ function handleSend(): void {
     listEl.querySelector('.empty-state')?.remove()
     const div = document.createElement('div')
     div.className        = 'message message--agent'
-    div.dataset.msgId    = agentMsgId
+    div.dataset.msgId    = agentMsgID
     div.innerHTML = `
       <div class="message-avatar">${agentAvatar}</div>
       <div class="message-group">
-        <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(agentMsgId)}">
+        <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(agentMsgID)}">
           <div class="typing-indicator"><span></span><span></span><span></span></div>
         </div>
         <div class="message-meta">
@@ -621,89 +743,86 @@ function handleSend(): void {
   }
 
   // ── 5. Start SSE stream ────────────────────────────────────────────────────
-  activeStream = api.startTurn(activeThreadId, text, {
+  const stream = api.startTurn(capturedThreadID, text, {
 
     onTurnStarted({ turnId }) {
-      const ss = store.get().streamState
-      if (ss) store.set({ streamState: { ...ss, turnId } })
+      const state = getThreadStreamState(capturedThreadID)
+      if (!state) return
+      setThreadStreamState(capturedThreadID, { ...state, turnId })
     },
 
     onDelta({ delta }) {
-      const bubbleEl = document.getElementById(`bubble-${agentMsgId}`)
+      const previous = streamBufferByThread.get(capturedThreadID) ?? ''
+      const next = previous + delta
+      streamBufferByThread.set(capturedThreadID, next)
+
+      if (store.get().activeThreadId !== capturedThreadID) return
+      const bubbleEl = document.getElementById(`bubble-${agentMsgID}`)
       if (!bubbleEl) return
       const list      = document.getElementById('message-list')
       const atBottom  = !list || isNearBottom(list)
       // Replace typing indicator with first delta
       if (bubbleEl.querySelector('.typing-indicator')) {
         bubbleEl.classList.remove('message-bubble--streaming')
-        bubbleEl.textContent = delta
-      } else {
-        bubbleEl.textContent = (bubbleEl.textContent ?? '') + delta
       }
+      bubbleEl.textContent = next
       if (atBottom && list) list.scrollTop = list.scrollHeight
     },
 
     onPermissionRequired(event) {
-      const listEl = document.getElementById('message-list')
-      if (listEl) mountPermissionCard(listEl, event)
+      const pending = upsertPendingPermission(capturedThreadID, event)
+      mountPendingPermissionCard(capturedThreadID, pending)
     },
 
     onCompleted({ stopReason }) {
-      const bubbleEl    = document.getElementById(`bubble-${agentMsgId}`)
-      const finalContent = bubbleEl?.textContent ?? ''
-
       // Clear stream tracking BEFORE addMessageToStore (so subscribe calls updateMessageList)
-      activeStream         = null
-      activeStreamMsgId    = null
-      activeStreamThreadId = null
+      const finalContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      clearThreadStreamRuntime(capturedThreadID)
+      clearPendingPermissions(capturedThreadID)
 
-      addMessageToStore(capturedThreadId, {
-        id:         agentMsgId,
+      addMessageToStore(capturedThreadID, {
+        id:         agentMsgID,
         role:       'agent',
         content:    finalContent,
         timestamp:  now,
         status:     stopReason === 'cancelled' ? 'cancelled' : 'done',
         stopReason,
       })
-      store.set({ streamState: null })
     },
 
     onError({ code, message: msg }) {
-      activeStream         = null
-      activeStreamMsgId    = null
-      activeStreamThreadId = null
+      const partialContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      clearThreadStreamRuntime(capturedThreadID)
+      clearPendingPermissions(capturedThreadID)
 
-      addMessageToStore(capturedThreadId, {
-        id:           agentMsgId,
+      addMessageToStore(capturedThreadID, {
+        id:           agentMsgID,
         role:         'agent',
-        content:      '',
+        content:      partialContent,
         timestamp:    now,
         status:       'error',
         errorCode:    code,
         errorMessage: msg,
       })
-      store.set({ streamState: null })
     },
 
     onDisconnect() {
-      const bubbleEl     = document.getElementById(`bubble-${agentMsgId}`)
-      const partialContent = bubbleEl?.textContent ?? ''
+      const partialContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      clearThreadStreamRuntime(capturedThreadID)
+      clearPendingPermissions(capturedThreadID)
 
-      activeStream         = null
-      activeStreamMsgId    = null
-      activeStreamThreadId = null
-
-      addMessageToStore(capturedThreadId, {
-        id:           agentMsgId,
+      addMessageToStore(capturedThreadID, {
+        id:           agentMsgID,
         role:         'agent',
         content:      partialContent,
         timestamp:    now,
         status:       'error',
         errorMessage: 'Connection lost',
       })
-      store.set({ streamState: null })
     },
   })
+
+  streamsByThread.set(capturedThreadID, stream)
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────
@@ -713,10 +832,11 @@ function bindCancelHandler(): void {
 }
 
 async function handleCancel(): Promise<void> {
-  const { streamState } = store.get()
-  if (!streamState?.turnId) return
+  const { activeThreadId } = store.get()
+  const streamState = getThreadStreamState(activeThreadId)
+  if (!activeThreadId || !streamState?.turnId) return
 
-  store.set({ streamState: { ...streamState, status: 'cancelling' } })
+  setThreadStreamState(activeThreadId, { ...streamState, status: 'cancelling' })
   try {
     await api.cancelTurn(streamState.turnId)
   } catch {
@@ -829,7 +949,8 @@ function bindGlobalShortcuts(): void {
         return
       }
       // (3) cancel active stream
-      const { streamState } = store.get()
+      const { activeThreadId } = store.get()
+      const streamState = getThreadStreamState(activeThreadId)
       if (streamState?.turnId) {
         void handleCancel()
       }

@@ -383,3 +383,24 @@ This file is the source of milestone progress, validation commands, and next act
 
 - Canonical module path is now finalized as `github.com/beyond5959/go-acp-server`.
 - All in-repo Go import paths were updated from placeholder path to canonical path.
+
+- `Post-F9` Web UI multi-thread streaming behavior fixed:
+  - removed UI behavior that aborted an in-flight SSE stream when switching threads.
+  - changed client stream tracking from single global `streamState` to per-thread `streamStates`.
+  - maintained per-thread stream runtime maps (stream handle, delta buffer, start time), so background threads can keep streaming and finalize correctly.
+  - wired send/cancel/input disable logic to current thread only, enabling concurrent in-flight turns across different threads.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` permission countdown updated to 2 hours:
+  - changed server default permission timeout to `2 * time.Hour`.
+  - changed Web UI Permission Required countdown to 2 hours and display format to `H:MM:SS`.
+
+- `Post-F9` permission card persistence across thread switch fixed:
+  - stored pending permission requests per thread in Web UI runtime state.
+  - when switching back to a thread, pending Permission Required cards are re-mounted with original deadline.
+  - resolved/timeout outcomes remove pending records to avoid stale prompts.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`

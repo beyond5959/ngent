@@ -107,7 +107,8 @@ export interface AppState {
   activeThreadId: string | null
   /** Keyed by threadId */
   messages: Record<string, Message[]>
-  streamState: StreamState | null
+  /** Keyed by threadId */
+  streamStates: Record<string, StreamState>
 
   // — UI flags —
   settingsOpen: boolean

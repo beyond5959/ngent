@@ -104,6 +104,7 @@ const (
 	defaultContextMaxChars    = 20000
 	defaultCompactMaxChars    = 4000
 	defaultAgentIdleTTL       = 5 * time.Minute
+	defaultPermissionTimeout  = 2 * time.Hour
 )
 
 const (
@@ -159,7 +160,7 @@ func New(cfg Config) *Server {
 
 	permissionTimeout := cfg.PermissionTimeout
 	if permissionTimeout <= 0 {
-		permissionTimeout = 15 * time.Second
+		permissionTimeout = defaultPermissionTimeout
 	}
 
 	contextRecentTurns := cfg.ContextRecentTurns
@@ -1545,7 +1546,7 @@ func (s *Server) unregisterPermission(permissionID string, pending *pendingPermi
 func (s *Server) waitPermissionOutcome(ctx context.Context, pending *pendingPermission) agents.PermissionOutcome {
 	timeout := s.permissionTimeout
 	if timeout <= 0 {
-		timeout = 15 * time.Second
+		timeout = defaultPermissionTimeout
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()

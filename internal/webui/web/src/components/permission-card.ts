@@ -2,8 +2,15 @@ import { api } from '../api.ts'
 import { escHtml } from '../utils.ts'
 import type { PermissionRequiredPayload } from '../sse.ts'
 
-// Server-side default permissionTimeout is 15 seconds
-const TIMEOUT_MS = 15_000
+// Server-side default permissionTimeout is 2 hours
+export const PERMISSION_TIMEOUT_MS = 2 * 60 * 60 * 1000
+const TICK_MS = 1_000
+type ResolveOutcome = 'approved' | 'declined' | 'timeout'
+
+interface MountOptions {
+  deadlineMs?: number
+  onResolved?: (outcome: ResolveOutcome) => void
+}
 
 // ── Public entry point ────────────────────────────────────────────────────
 
@@ -14,22 +21,26 @@ const TIMEOUT_MS = 15_000
 export function mountPermissionCard(
   listEl: HTMLElement,
   event: PermissionRequiredPayload,
+  options?: MountOptions,
 ): void {
+  const timeoutMs = options?.deadlineMs
+    ? Math.max(0, options.deadlineMs - Date.now())
+    : PERMISSION_TIMEOUT_MS
+
   const wrapper = document.createElement('div')
   wrapper.className = 'message message--agent'
-  wrapper.innerHTML = buildHtml(event)
+  wrapper.innerHTML = buildHtml(event, timeoutMs)
   listEl.appendChild(wrapper)
   listEl.scrollTop = listEl.scrollHeight
 
   // Elements are now in the DOM — bind interactivity
-  bindCard(event.permissionId)
+  bindCard(event.permissionId, timeoutMs, options?.onResolved)
 }
 
 // ── HTML template ─────────────────────────────────────────────────────────
 
-function buildHtml(event: PermissionRequiredPayload): string {
+function buildHtml(event: PermissionRequiredPayload, timeoutMs: number): string {
   const { permissionId: pid, approval, command } = event
-  const initialSecs = TIMEOUT_MS / 1000
 
   return `
     <div class="message-avatar perm-avatar">!</div>
@@ -46,7 +57,7 @@ function buildHtml(event: PermissionRequiredPayload): string {
         </div>
 
         <div class="permission-card-footer">
-          <span class="permission-countdown" id="perm-cd-${pid}">${initialSecs}s</span>
+          <span class="permission-countdown" id="perm-cd-${pid}">${formatRemaining(timeoutMs)}</span>
           <div class="permission-actions" id="perm-actions-${pid}">
             <button class="btn btn-sm btn-success" id="perm-allow-${pid}">Allow</button>
             <button class="btn btn-sm btn-danger"  id="perm-deny-${pid}">Deny</button>
@@ -62,45 +73,71 @@ function buildHtml(event: PermissionRequiredPayload): string {
 
 // ── Countdown + button binding ────────────────────────────────────────────
 
-function bindCard(pid: string): void {
+function bindCard(
+  pid: string,
+  timeoutMs: number,
+  onResolved?: (outcome: ResolveOutcome) => void,
+): void {
   let resolved = false
   let elapsed  = 0
+  if (timeoutMs <= 0) {
+    showResolved(pid, 'timeout', onResolved)
+    return
+  }
 
   const tick = setInterval(() => {
-    elapsed += 100
-    const remaining = Math.max(0, TIMEOUT_MS - elapsed)
-    const pct        = (remaining / TIMEOUT_MS) * 100
+    const cardEl = document.getElementById(`perm-card-${pid}`)
+    if (!cardEl) {
+      clearInterval(tick)
+      return
+    }
+
+    elapsed += TICK_MS
+    const remaining = Math.max(0, timeoutMs - elapsed)
+    const pct        = (remaining / timeoutMs) * 100
 
     const cdEl  = document.getElementById(`perm-cd-${pid}`)
     const barEl = document.getElementById(`perm-bar-${pid}`)
-    if (cdEl)  cdEl.textContent    = `${Math.ceil(remaining / 1000)}s`
+    if (cdEl)  cdEl.textContent    = formatRemaining(remaining)
     if (barEl) barEl.style.width   = `${pct}%`
 
     if (remaining === 0 && !resolved) {
       resolved = true
       clearInterval(tick)
-      showResolved(pid, 'timeout')
+      showResolved(pid, 'timeout', onResolved)
     }
-  }, 100)
+  }, TICK_MS)
 
   document.getElementById(`perm-allow-${pid}`)?.addEventListener('click', () => {
     if (resolved) return
     resolved = true
     clearInterval(tick)
-    void doResolve(pid, 'approved')
+    void doResolve(pid, 'approved', onResolved)
   })
 
   document.getElementById(`perm-deny-${pid}`)?.addEventListener('click', () => {
     if (resolved) return
     resolved = true
     clearInterval(tick)
-    void doResolve(pid, 'declined')
+    void doResolve(pid, 'declined', onResolved)
   })
+}
+
+function formatRemaining(remainingMs: number): string {
+  const totalSeconds = Math.ceil(Math.max(0, remainingMs) / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
 // ── API call ──────────────────────────────────────────────────────────────
 
-async function doResolve(pid: string, outcome: 'approved' | 'declined'): Promise<void> {
+async function doResolve(
+  pid: string,
+  outcome: 'approved' | 'declined',
+  onResolved?: (outcome: ResolveOutcome) => void,
+): Promise<void> {
   // Disable buttons immediately so the user can't double-click
   document
     .getElementById(`perm-actions-${pid}`)
@@ -113,18 +150,25 @@ async function doResolve(pid: string, outcome: 'approved' | 'declined'): Promise
     // 409 = already resolved by server — show the intended outcome anyway
   }
 
-  showResolved(pid, outcome)
+  showResolved(pid, outcome, onResolved)
 }
 
 // ── Resolved state ────────────────────────────────────────────────────────
 
-function showResolved(pid: string, outcome: 'approved' | 'declined' | 'timeout'): void {
+function showResolved(
+  pid: string,
+  outcome: ResolveOutcome,
+  onResolved?: (outcome: ResolveOutcome) => void,
+): void {
   const cardEl    = document.getElementById(`perm-card-${pid}`)
   const actionsEl = document.getElementById(`perm-actions-${pid}`)
   const cdEl      = document.getElementById(`perm-cd-${pid}`)
   const barEl     = document.getElementById(`perm-bar-${pid}`)
 
-  if (!cardEl) return  // card was removed from DOM (stream completed) — nothing to do
+  if (!cardEl) {
+    onResolved?.(outcome)
+    return
+  }
 
   // Hide countdown text
   if (cdEl) cdEl.textContent = ''
@@ -150,4 +194,5 @@ function showResolved(pid: string, outcome: 'approved' | 'declined' | 'timeout')
 
   // Recolor card header and border to reflect outcome
   cardEl.classList.add(`permission-card--${outcome}`)
+  onResolved?.(outcome)
 }

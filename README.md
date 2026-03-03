@@ -6,23 +6,21 @@
 
 - HTTP/JSON APIs with SSE streaming for agent turns
 - Multi-thread conversation state persisted in SQLite
-- ACP-compatible agent provider architecture (for example Claude Code, Gemini, OpenCode, Codex)
+- ACP-compatible agent provider architecture (for example Claude Code, Gemini, OpenCode, Qwen Code, Codex)
 - Strict runtime controls: one active turn per thread, fast cancel, and fail-closed permission handling
 
 By default, the server listens on `0.0.0.0` and prints a QR code so other devices on the same LAN can connect.
 
-Current implementation status:
-
-- Built-in providers: `codex` (embedded), `opencode` (ACP stdio), and `gemini` (ACP stdio via `--experimental-acp`)
 
 ## Supported Agents
 
 | Agent | Supported |
 |---|---|
 | Codex | ✅ |
-| OpenCode | ✅ |
+| Claude Code | ✅ |
 | Gemini CLI | ✅ |
-| Claude Code | 🔜 |
+| Qwen Code | ✅ |
+| OpenCode | ✅ |
 
 
 

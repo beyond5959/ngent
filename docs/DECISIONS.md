@@ -23,6 +23,10 @@
 - ADR-019: OpenCode ACP stdio provider. (Accepted)
 - ADR-020: Gemini CLI ACP stdio provider. (Accepted)
 - ADR-021: Public-by-default bind with local-only opt-out. (Accepted)
+- ADR-022: Qwen Code ACP stdio provider integration. (Accepted)
+- ADR-023: Shared ACP stdio transport for OpenCode and Qwen providers. (Accepted)
+- ADR-024: Claude Code embedded provider via claudeacp runtime. (Accepted)
+- ADR-025: Hard-delete thread endpoint with active-turn lock. (Accepted)
 
 ## ADR-018: Embedded Web UI via Go embed
 
@@ -39,6 +43,21 @@
 - Consequences: single-binary distribution with no external file dependencies; Go binary size increases by the size of the minified JS/CSS bundle (~200–400 KB estimated). Build pipeline requires Node.js for frontend changes.
 - Alternatives considered: separate static file directory (requires deployment of two artifacts); WebSocket-only SPA (rejected: SSE already implemented); React/Vue framework (rejected: adds runtime bundle weight and build complexity).
 - Follow-up actions: add `npm run build` to CI pipeline; version-pin Node.js in project tooling docs.
+
+## ADR-025: Hard-delete Thread Endpoint with Active-turn Lock
+
+- Status: Accepted
+- Date: 2026-03-03
+- Context: users need to clean historical threads from both API and Web UI, while preserving the one-active-turn-per-thread guarantee and avoiding partial deletes.
+- Decision:
+  - add `DELETE /v1/threads/{threadId}` with ownership enforcement based on `X-Client-ID`.
+  - return `409 CONFLICT` when the target thread currently has an active turn.
+  - reserve a temporary turn-controller slot during deletion so no new turn can start on that thread while delete is in progress.
+  - perform storage deletion in one transaction with explicit dependency order: `events` -> `turns` -> `threads`.
+  - close and evict cached per-thread agent provider after successful delete.
+- Consequences: deletion is deterministic and race-safe with active turn startup, but remains irreversible (no soft-delete/recover endpoint).
+- Alternatives considered: soft-delete tombstone model, relying only on foreign-key cascades, and best-effort delete without turn-controller lock.
+- Follow-up actions: add optional audit trail for delete operations if compliance requirements increase.
 
 ## ADR Template
 
@@ -244,20 +263,20 @@ Use this template for new decisions.
 - Date: 2026-02-28
 - Context: sidecar mode required user-facing binary path configuration (`--codex-acp-go-bin`) and made deployment ergonomics/error modes depend on path wiring.
 - Decision:
-  - replace codex turn execution from external `codex-acp-go` process spawning to in-process `github.com/beyond5959/codex-acp/pkg/codexacp` embedded runtime.
-  - remove user-facing codex binary path flags; server now links codex-acp library directly.
+  - replace codex turn execution from external `codex-acp-go` process spawning to in-process `github.com/beyond5959/acp-adapter/pkg/acpadapter` embedded runtime.
+  - remove user-facing codex binary path flags; server now links acp-adapter library directly.
   - keep lazy startup and per-thread isolation by creating one embedded runtime per thread provider on first turn.
   - keep existing HTTP/SSE/permission/history contracts unchanged; permission round-trip remains fail-closed.
   - set `/v1/agents` codex status by embedded runtime preflight (`available`/`unavailable`) instead of path-config presence.
-- Consequences: simpler operator UX and fewer path misconfiguration failures; server binary is now more tightly coupled to codex-acp module/runtime behavior.
+- Consequences: simpler operator UX and fewer path misconfiguration failures; server binary is now more tightly coupled to acp-adapter module/runtime behavior.
 - Alternatives considered: keep sidecar-only mode; dual mode (embedded + sidecar fallback).
-- Follow-up actions: define codex-acp version pin/upgrade policy and add compatibility smoke checks across codex CLI/app-server versions.
+- Follow-up actions: define acp-adapter version pin/upgrade policy and add compatibility smoke checks across codex CLI/app-server versions.
 
 ## ADR-015: First-Turn Prompt Passthrough for Embedded Slash Commands
 
 - Status: Accepted
 - Date: 2026-02-28
-- Context: context-window injection always wrapped prompts with `[Conversation Summary]` / `[Recent Turns]` / `[Current User Input]`, which masked first-turn slash commands (for example `/mcp call`) in embedded codex-acp flows.
+- Context: context-window injection always wrapped prompts with `[Conversation Summary]` / `[Recent Turns]` / `[Current User Input]`, which masked first-turn slash commands (for example `/mcp call`) in embedded acp-adapter flows.
 - Decision:
   - keep context wrapper for normal multi-turn continuity.
   - when `summary == ""` and there are no visible recent turns, pass through raw `currentInput` (still bounded by `context-max-chars`) instead of wrapping.
@@ -265,7 +284,7 @@ Use this template for new decisions.
   - first-turn slash commands remain functional in embedded mode, enabling deterministic permission round-trip validation (`approved` / `declined`).
   - first-turn request text persisted in history no longer includes synthetic wrapper headings.
 - Alternatives considered:
-  - parse wrapped `[Current User Input]` inside codex-acp slash-command parser.
+  - parse wrapped `[Current User Input]` inside acp-adapter slash-command parser.
   - keep always-wrapped behavior and accept slash-command incompatibility.
 - Follow-up actions:
   - evaluate an explicit API-level raw-input toggle if future providers need slash-command compatibility beyond first turn.
@@ -339,3 +358,93 @@ Use this template for new decisions.
 - Consequences:
   - `gemini` binary must be in PATH and `GEMINI_API_KEY` must be set for the provider to be available.
   - No model selection option at thread creation time; model is controlled by Gemini CLI's own configuration.
+
+## ADR-022: Qwen Code ACP stdio provider integration
+
+- Status: Accepted
+- Date: 2026-03-03
+- Context:
+  - Qwen Code is available locally and supports ACP via `qwen --acp`.
+  - hub requirements remain strict: one-active-turn-per-thread, fast cancel, fail-closed permissions, and no regressions for existing providers.
+  - protocol inspection shows required ACP fields (`clientCapabilities.fs`, `mcpServers`) and provider-specific response variants.
+- Decision:
+  - implemented `internal/agents/qwen` as a standalone ACP stdio provider (one process per turn).
+  - process command is fixed as `qwen --acp` (no user-supplied binary path in server config).
+  - protocol flow is `initialize -> session/new -> session/prompt`, with required params:
+    - `initialize.protocolVersion = 1`
+    - `initialize.clientCapabilities.fs.readTextFile = false`
+    - `initialize.clientCapabilities.fs.writeTextFile = false`
+    - `session/new` includes `cwd` and `mcpServers: []`
+    - `session/prompt` uses ACP prompt blocks (`[{type:"text", text:...}]`)
+  - stream output is parsed from `session/update` when `update.sessionUpdate == "agent_message_chunk"` and delta comes from `update.content.text`.
+  - handle `session/request_permission` by mapping hub decisions into ACP outcome format:
+    - approve/decline: `outcome=selected` with matching `optionId`
+    - cancel: `outcome=cancelled`
+    - default deny on timeout/errors/no handler (fail-closed)
+  - cancellation path sends `session/cancel` with `sessionId` on context cancellation and converges to `stopReason=cancelled`.
+  - stderr is drained/discarded to avoid protocol stream corruption; existing providers (`codex`, `opencode`, `gemini`) behavior remains unchanged.
+- Consequences:
+  - qwen availability is startup-preflight dependent (`qwen` in PATH).
+  - real qwen turns depend on local runtime prerequisites (writable qwen home/config + auth/network readiness), so environment misconfiguration can fail before ACP turn execution.
+  - provider must tolerate schema drift across qwen versions (new optional fields in `session/new` response).
+  - test surface expanded:
+    - fake-process ACP tests for initialize/session/new/session/prompt/session/update
+    - permission mapping tests (`approved`, `declined`, `cancelled`)
+    - optional real smoke test (`E2E_QWEN=1`)
+- Alternatives considered:
+  - reuse a single generic ACP provider configured by command/args at runtime.
+  - force qwen through existing `opencode`/`gemini` adapters.
+  - postpone qwen until ACP schema is frozen upstream.
+- Follow-up actions:
+  - improve qwen preflight diagnostics for filesystem/auth prerequisites (beyond PATH existence).
+  - keep validating against newer qwen releases for ACP schema compatibility.
+
+## ADR-023: Shared ACP stdio transport for OpenCode and Qwen providers
+
+- Status: Accepted
+- Date: 2026-03-03
+- Context:
+  - `internal/agents/opencode` and `internal/agents/qwen` had duplicated JSON-RPC stdio transport code (request id/pending map, read loop, inbound request handling, notify/call framing, process termination helpers).
+  - duplicated protocol plumbing increased maintenance risk and made bug fixes easy to diverge across providers.
+- Decision:
+  - extracted shared package `internal/agents/acpstdio` with:
+    - newline-delimited JSON-RPC connection (`Conn`) supporting `Call`, `Notify`, notifications, and inbound request handling.
+    - shared JSON-RPC message/error types.
+    - shared helpers: `ParseSessionID`, `ParseStopReason`, `TerminateProcess`.
+  - refactored both providers to use the shared transport while keeping provider-specific ACP behavior unchanged:
+    - OpenCode flow and modelId handling unchanged.
+    - Qwen permission mapping and fail-closed behavior unchanged.
+- Consequences:
+  - transport-layer fixes are now centralized and consistent across providers.
+  - provider files are shorter and focused on protocol semantics instead of wire plumbing.
+  - regression risk from this refactor is controlled by fake-process tests + full `go test ./...` + real E2E smoke tests for both providers.
+- Alternatives considered:
+  - keep duplicated transport code and only copy fixes manually.
+  - extract only tiny helper funcs without shared connection type.
+- Follow-up actions:
+  - if Gemini migration value is clear, evaluate moving Gemini transport to `acpstdio` in a separate change (to keep current refactor blast radius limited).
+
+## ADR-024: Claude Code embedded provider via claudeacp runtime
+
+- Status: Accepted
+- Date: 2026-03-03
+- Context:
+  - Claude Code is the primary Anthropic coding agent; it was listed as a planned provider (`🔜`) since project inception.
+  - `github.com/beyond5959/acp-adapter` already contained a complete parallel `pkg/claudeacp` package with identical API surface to `pkg/acpadapter`; no new library dependency was needed.
+  - Preflight for Claude does not require a binary path check — availability is determined entirely by the presence of `ANTHROPIC_AUTH_TOKEN` in the environment.
+- Decision:
+  - implement `internal/agents/claude` as an embedded provider package mirroring `internal/agents/codex`.
+  - replace `codexacp` references with `claudeacp`; `Preflight()` checks `ANTHROPIC_AUTH_TOKEN != ""` (no binary lookup).
+  - `DefaultRuntimeConfig()` delegates to `claudeacp.DefaultRuntimeConfig()`, which reads `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` from environment.
+  - wire into server startup: preflight, `/v1/agents` status, `AllowedAgentIDs`, and `TurnAgentFactory`.
+  - for local development, add `replace github.com/beyond5959/acp-adapter => /path/to/local/acp-adapter` in `go.mod`; remove or publish before production release.
+- Consequences:
+  - claude availability is purely environment-variable dependent; no binary installation required beyond valid API credentials.
+  - `ANTHROPIC_BASE_URL` allows pointing at a compatible proxy or local endpoint (e.g., for testing or corporate gateways).
+  - local `go.mod` replace directive must be removed or updated to a published version before CI/release builds.
+- Alternatives considered:
+  - implement as an ACP stdio provider wrapping the `claude` CLI binary (rejected: CLI spawns its own runtime per invocation with higher latency and no direct permission bridge).
+  - share implementation with codex via generics/interface (rejected: would couple two independently-versioned runtimes).
+- Follow-up actions:
+  - publish `acp-adapter` with `pkg/claudeacp` to a versioned tag and remove the `replace` directive from `go.mod`.
+  - add permission round-trip E2E test for Claude (approved/declined/cancelled paths).

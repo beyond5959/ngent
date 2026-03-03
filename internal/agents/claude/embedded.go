@@ -1,4 +1,4 @@
-package codex
+package claude
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -14,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	codexacp "github.com/beyond5959/acp-adapter/pkg/acpadapter"
+	"github.com/beyond5959/acp-adapter/pkg/claudeacp"
 	"github.com/beyond5959/go-acp-server/internal/agents"
 )
 
@@ -34,21 +33,21 @@ const (
 	defaultRequestTimeout = 15 * time.Second
 )
 
-// Config configures one embedded codex runtime provider instance.
+// Config configures one embedded Claude runtime provider instance.
 type Config struct {
 	Dir            string
 	Name           string
-	RuntimeConfig  codexacp.RuntimeConfig
+	RuntimeConfig  claudeacp.RuntimeConfig
 	StartTimeout   time.Duration
 	RequestTimeout time.Duration
 }
 
-// Client streams turn output through one in-process codex-acp runtime.
+// Client streams turn output through one in-process claude-acp runtime.
 type Client struct {
 	name string
 	dir  string
 
-	runtimeConfig  codexacp.RuntimeConfig
+	runtimeConfig  claudeacp.RuntimeConfig
 	startTimeout   time.Duration
 	requestTimeout time.Duration
 
@@ -56,7 +55,7 @@ type Client struct {
 	mu     sync.Mutex
 	closed bool
 
-	runtime   *codexacp.EmbeddedRuntime
+	runtime   *claudeacp.EmbeddedRuntime
 	sessionID string
 
 	requestSeq uint64
@@ -65,79 +64,47 @@ type Client struct {
 var _ agents.Streamer = (*Client)(nil)
 var _ io.Closer = (*Client)(nil)
 
-// DefaultRuntimeConfig returns the default embedded runtime configuration.
-func DefaultRuntimeConfig() codexacp.RuntimeConfig {
-	cfg := codexacp.DefaultRuntimeConfig()
-	cfg.InitialAuthMode = detectInitialAuthModeFromEnv()
-	return cfg
+// DefaultRuntimeConfig returns the default embedded Claude runtime configuration.
+func DefaultRuntimeConfig() claudeacp.RuntimeConfig {
+	return claudeacp.DefaultRuntimeConfig()
 }
 
-func detectInitialAuthModeFromEnv() string {
-	if strings.TrimSpace(os.Getenv("CODEX_API_KEY")) != "" {
-		return "codex_api_key"
+// Preflight checks whether the claude binary is available in PATH.
+func Preflight() error {
+	cfg := claudeacp.DefaultRuntimeConfig()
+	bin := strings.TrimSpace(cfg.ClaudeBin)
+	if bin == "" {
+		bin = "claude"
 	}
-	if strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "" {
-		return "openai_api_key"
-	}
-	if subscriptionEnabled(os.Getenv("CHATGPT_SUBSCRIPTION_ACTIVE")) {
-		return "chatgpt_subscription"
-	}
-	return ""
-}
-
-func subscriptionEnabled(raw string) bool {
-	value := strings.TrimSpace(strings.ToLower(raw))
-	if value == "" {
-		return true
-	}
-
-	switch value {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return true
-	}
-}
-
-// Preflight checks whether runtime prerequisites are available on the host.
-func Preflight(cfg codexacp.RuntimeConfig) error {
-	command := strings.TrimSpace(cfg.AppServerCommand)
-	if command == "" {
-		command = strings.TrimSpace(codexacp.DefaultRuntimeConfig().AppServerCommand)
-	}
-	if command == "" {
-		return errors.New("codex app-server command is empty")
-	}
-	if _, err := exec.LookPath(command); err != nil {
-		return fmt.Errorf("codex app-server command %q not found: %w", command, err)
+	if _, err := exec.LookPath(bin); err != nil {
+		return fmt.Errorf("claude: binary %q not found in PATH: %w", bin, err)
 	}
 	return nil
 }
 
-// New constructs one embedded codex provider.
+// New constructs one embedded Claude provider.
 func New(cfg Config) (*Client, error) {
 	runtimeCfg := cfg.RuntimeConfig
-	if strings.TrimSpace(runtimeCfg.AppServerCommand) == "" &&
-		len(runtimeCfg.AppServerArgs) == 0 &&
-		strings.TrimSpace(runtimeCfg.LogLevel) == "" &&
-		strings.TrimSpace(runtimeCfg.PatchApplyMode) == "" &&
+	if strings.TrimSpace(runtimeCfg.ClaudeBin) == "" &&
+		strings.TrimSpace(runtimeCfg.DefaultModel) == "" &&
+		runtimeCfg.MaxTurns == 0 &&
+		!runtimeCfg.SkipPerms &&
+		strings.TrimSpace(runtimeCfg.AllowedTools) == "" &&
 		!runtimeCfg.TraceJSON &&
 		strings.TrimSpace(runtimeCfg.TraceJSONFile) == "" &&
-		!runtimeCfg.RetryTurnOnCrash &&
+		strings.TrimSpace(runtimeCfg.LogLevel) == "" &&
+		strings.TrimSpace(runtimeCfg.PatchApplyMode) == "" &&
 		len(runtimeCfg.Profiles) == 0 &&
-		strings.TrimSpace(runtimeCfg.DefaultProfile) == "" &&
-		strings.TrimSpace(runtimeCfg.InitialAuthMode) == "" {
+		strings.TrimSpace(runtimeCfg.DefaultProfile) == "" {
 		runtimeCfg = DefaultRuntimeConfig()
 	}
-	if err := Preflight(runtimeCfg); err != nil {
+	if err := Preflight(); err != nil {
 		return nil, err
 	}
 
 	name := strings.TrimSpace(cfg.Name)
 	if name == "" {
-		name = "codex-embedded"
+		name = "claude-embedded"
 	}
 
 	startTimeout := cfg.StartTimeout
@@ -161,7 +128,7 @@ func New(cfg Config) (*Client, error) {
 // Name returns provider name.
 func (c *Client) Name() string {
 	if c == nil || c.name == "" {
-		return "codex-embedded"
+		return "claude-embedded"
 	}
 	return c.name
 }
@@ -189,13 +156,13 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Stream sends one prompt to embedded runtime and emits deltas.
+// Stream sends one prompt to the embedded Claude runtime and emits deltas.
 func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
 	if c == nil {
-		return agents.StopReasonEndTurn, errors.New("codex: nil client")
+		return agents.StopReasonEndTurn, errors.New("claude: nil client")
 	}
 	if onDelta == nil {
-		return agents.StopReasonEndTurn, errors.New("codex: onDelta callback is required")
+		return agents.StopReasonEndTurn, errors.New("claude: onDelta callback is required")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -208,7 +175,7 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return agents.StopReasonCancelled, nil
 			}
-			return agents.StopReasonEndTurn, fmt.Errorf("codex: initialize runtime: %w", err)
+			return agents.StopReasonEndTurn, fmt.Errorf("claude: initialize runtime: %w", err)
 		}
 
 		stopReason, streamErr := c.streamOnce(ctx, runtime, sessionID, input, onDelta)
@@ -222,12 +189,12 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		c.resetRuntime()
 	}
 
-	return agents.StopReasonEndTurn, errors.New("codex: retry loop exited unexpectedly")
+	return agents.StopReasonEndTurn, errors.New("claude: retry loop exited unexpectedly")
 }
 
 func (c *Client) streamOnce(
 	ctx context.Context,
-	runtime *codexacp.EmbeddedRuntime,
+	runtime *claudeacp.EmbeddedRuntime,
 	sessionID string,
 	input string,
 	onDelta func(delta string) error,
@@ -256,7 +223,7 @@ func (c *Client) streamOnce(
 	}()
 
 	type promptResult struct {
-		response codexacp.RPCMessage
+		response claudeacp.RPCMessage
 		err      error
 	}
 	promptDone := make(chan promptResult, 1)
@@ -279,7 +246,7 @@ func (c *Client) streamOnce(
 				if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) || ctx.Err() != nil {
 					return agents.StopReasonCancelled, nil
 				}
-				return agents.StopReasonEndTurn, fmt.Errorf("codex: session/prompt failed: %w", result.err)
+				return agents.StopReasonEndTurn, fmt.Errorf("claude: session/prompt failed: %w", result.err)
 			}
 
 			stopReason, parseErr := parsePromptStopReason(result.response.Result)
@@ -296,7 +263,7 @@ func (c *Client) streamOnce(
 				if ctx.Err() != nil {
 					return agents.StopReasonCancelled, nil
 				}
-				return agents.StopReasonEndTurn, errors.New("codex: embedded updates channel closed")
+				return agents.StopReasonEndTurn, errors.New("claude: embedded updates channel closed")
 			}
 
 			if err := c.handleUpdate(ctx, runtime, msg, onDelta); err != nil {
@@ -329,8 +296,8 @@ func (c *Client) resetRuntime() {
 
 func (c *Client) handleUpdate(
 	ctx context.Context,
-	runtime *codexacp.EmbeddedRuntime,
-	msg codexacp.RPCMessage,
+	runtime *claudeacp.EmbeddedRuntime,
+	msg claudeacp.RPCMessage,
 	onDelta func(delta string) error,
 ) error {
 	if msg.Method == methodSessionUpdate {
@@ -354,24 +321,24 @@ func (c *Client) handleUpdate(
 
 	if msg.Method != "" && msg.ID != nil {
 		c.sendSessionCancel(runtime, c.currentSessionID())
-		return fmt.Errorf("codex: unsupported embedded request method %q", msg.Method)
+		return fmt.Errorf("claude: unsupported embedded request method %q", msg.Method)
 	}
 	return nil
 }
 
 func (c *Client) handlePermissionRequest(
 	ctx context.Context,
-	runtime *codexacp.EmbeddedRuntime,
-	msg codexacp.RPCMessage,
+	runtime *claudeacp.EmbeddedRuntime,
+	msg claudeacp.RPCMessage,
 ) error {
 	if msg.ID == nil {
-		return errors.New("codex: permission request missing id")
+		return errors.New("claude: permission request missing id")
 	}
 
 	rawParams := map[string]any{}
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &rawParams); err != nil {
-			return fmt.Errorf("codex: decode permission params: %w", err)
+			return fmt.Errorf("claude: decode permission params: %w", err)
 		}
 	}
 
@@ -398,14 +365,14 @@ func (c *Client) handlePermissionRequest(
 	if err := runtime.RespondPermission(
 		respondCtx,
 		*msg.ID,
-		codexacp.PermissionDecision{Outcome: string(outcome)},
+		claudeacp.PermissionDecision{Outcome: string(outcome)},
 	); err != nil {
-		return fmt.Errorf("codex: respond permission outcome: %w", err)
+		return fmt.Errorf("claude: respond permission outcome: %w", err)
 	}
 	return nil
 }
 
-func (c *Client) sendSessionCancel(runtime *codexacp.EmbeddedRuntime, sessionID string) {
+func (c *Client) sendSessionCancel(runtime *claudeacp.EmbeddedRuntime, sessionID string) {
 	if runtime == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
@@ -422,14 +389,14 @@ func (c *Client) currentSessionID() string {
 	return c.sessionID
 }
 
-func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRuntime, string, error) {
+func (c *Client) ensureInitialized(ctx context.Context) (*claudeacp.EmbeddedRuntime, string, error) {
 	c.initMu.Lock()
 	defer c.initMu.Unlock()
 
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return nil, "", errors.New("codex: client is closed")
+		return nil, "", errors.New("claude: client is closed")
 	}
 	if c.runtime != nil && c.sessionID != "" {
 		runtime := c.runtime
@@ -442,7 +409,7 @@ func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRunti
 	startCtx, cancel := context.WithTimeout(ctx, c.startTimeout)
 	defer cancel()
 
-	runtime := codexacp.NewEmbeddedRuntime(c.runtimeConfig)
+	runtime := claudeacp.NewEmbeddedRuntime(c.runtimeConfig)
 	// Runtime lifecycle is controlled by client Close/reset, not startup timeout context.
 	if err := runtime.Start(context.Background()); err != nil {
 		_ = runtime.Close()
@@ -476,7 +443,7 @@ func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRunti
 	defer c.mu.Unlock()
 	if c.closed {
 		_ = runtime.Close()
-		return nil, "", errors.New("codex: client is closed")
+		return nil, "", errors.New("claude: client is closed")
 	}
 	if c.runtime != nil && c.sessionID != "" {
 		_ = runtime.Close()
@@ -490,19 +457,19 @@ func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRunti
 
 func (c *Client) clientRequest(
 	ctx context.Context,
-	runtime *codexacp.EmbeddedRuntime,
+	runtime *claudeacp.EmbeddedRuntime,
 	method string,
 	params any,
-) (codexacp.RPCMessage, error) {
+) (claudeacp.RPCMessage, error) {
 	if runtime == nil {
-		return codexacp.RPCMessage{}, errors.New("codex: embedded runtime is nil")
+		return claudeacp.RPCMessage{}, errors.New("claude: embedded runtime is nil")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	id := c.nextRequestID()
-	msg := codexacp.RPCMessage{
+	msg := claudeacp.RPCMessage{
 		JSONRPC: jsonRPCVersion,
 		ID:      &id,
 		Method:  method,
@@ -511,18 +478,18 @@ func (c *Client) clientRequest(
 	if params != nil {
 		paramsJSON, err := json.Marshal(params)
 		if err != nil {
-			return codexacp.RPCMessage{}, fmt.Errorf("codex: marshal %s params: %w", method, err)
+			return claudeacp.RPCMessage{}, fmt.Errorf("claude: marshal %s params: %w", method, err)
 		}
 		msg.Params = paramsJSON
 	}
 
 	response, err := runtime.ClientRequest(ctx, msg)
 	if err != nil {
-		return codexacp.RPCMessage{}, err
+		return claudeacp.RPCMessage{}, err
 	}
 	if response.Error != nil {
-		return codexacp.RPCMessage{}, fmt.Errorf(
-			"codex: %s rpc error code=%d message=%s",
+		return claudeacp.RPCMessage{}, fmt.Errorf(
+			"claude: %s rpc error code=%d message=%s",
 			method,
 			response.Error.Code,
 			strings.TrimSpace(response.Error.Message),
@@ -542,11 +509,11 @@ func parseSessionID(raw json.RawMessage) (string, error) {
 		SessionID string `json:"sessionId"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", fmt.Errorf("codex: decode session/new result: %w", err)
+		return "", fmt.Errorf("claude: decode session/new result: %w", err)
 	}
 	sessionID := strings.TrimSpace(payload.SessionID)
 	if sessionID == "" {
-		return "", errors.New("codex: session/new returned empty sessionId")
+		return "", errors.New("claude: session/new returned empty sessionId")
 	}
 	return sessionID, nil
 }
@@ -556,7 +523,7 @@ func parsePromptStopReason(raw json.RawMessage) (string, error) {
 		StopReason string `json:"stopReason"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", fmt.Errorf("codex: decode session/prompt result: %w", err)
+		return "", fmt.Errorf("claude: decode session/prompt result: %w", err)
 	}
 	stopReason := strings.TrimSpace(payload.StopReason)
 	if stopReason == "" {
@@ -570,12 +537,21 @@ func parseSessionDelta(raw json.RawMessage) (string, error) {
 		return "", nil
 	}
 	var payload struct {
-		Delta string `json:"delta"`
+		Update struct {
+			SessionUpdate string `json:"sessionUpdate"`
+			Content       struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", fmt.Errorf("codex: decode session/update payload: %w", err)
+		return "", fmt.Errorf("claude: decode session/update payload: %w", err)
 	}
-	return payload.Delta, nil
+	if payload.Update.SessionUpdate == "agent_message_chunk" && payload.Update.Content.Type == "text" {
+		return payload.Update.Content.Text, nil
+	}
+	return "", nil
 }
 
 func mapString(values map[string]any, key string) string {

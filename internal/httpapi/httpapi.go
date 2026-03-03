@@ -37,6 +37,7 @@ type ThreadStore interface {
 	UpsertClient(ctx context.Context, clientID string) error
 	CreateThread(ctx context.Context, params storage.CreateThreadParams) (storage.Thread, error)
 	GetThread(ctx context.Context, threadID string) (storage.Thread, error)
+	DeleteThread(ctx context.Context, threadID string) error
 	UpdateThreadSummary(ctx context.Context, threadID, summary string) error
 	ListThreadsByClient(ctx context.Context, clientID string) ([]storage.Thread, error)
 	CreateTurn(ctx context.Context, params storage.CreateTurnParams) (storage.Turn, error)
@@ -103,6 +104,7 @@ const (
 	defaultContextMaxChars    = 20000
 	defaultCompactMaxChars    = 4000
 	defaultAgentIdleTTL       = 5 * time.Minute
+	defaultPermissionTimeout  = 2 * time.Hour
 )
 
 const (
@@ -158,7 +160,7 @@ func New(cfg Config) *Server {
 
 	permissionTimeout := cfg.PermissionTimeout
 	if permissionTimeout <= 0 {
-		permissionTimeout = 15 * time.Second
+		permissionTimeout = defaultPermissionTimeout
 	}
 
 	contextRecentTurns := cfg.ContextRecentTurns
@@ -343,7 +345,14 @@ func (s *Server) handleThreadsCollection(w http.ResponseWriter, r *http.Request,
 func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, clientID, threadID, subresource string) {
 	switch subresource {
 	case "":
-		s.handleGetThread(w, r, clientID, threadID)
+		switch r.Method {
+		case http.MethodGet:
+			s.handleGetThread(w, r, clientID, threadID)
+		case http.MethodDelete:
+			s.handleDeleteThread(w, r, clientID, threadID)
+		default:
+			writeMethodNotAllowed(w, r)
+		}
 	case "turns":
 		s.handleCreateTurnStream(w, r, clientID, threadID)
 	case "compact":
@@ -465,6 +474,46 @@ func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request, clientI
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"thread": resp})
+}
+
+func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
+	if err := requireMethod(r, http.MethodDelete); err != nil {
+		writeMethodNotAllowed(w, r)
+		return
+	}
+
+	thread, ok := s.getOwnedThread(r.Context(), clientID, threadID)
+	if !ok {
+		writeError(w, http.StatusNotFound, codeNotFound, "thread not found", map[string]any{})
+		return
+	}
+
+	deleteGuardTurnID := "delete-" + newTurnID()
+	if err := s.turns.Activate(thread.ThreadID, deleteGuardTurnID, nil); err != nil {
+		if errors.Is(err, runtime.ErrActiveTurnExists) {
+			writeError(w, http.StatusConflict, codeConflict, "thread has an active turn", map[string]any{"threadId": thread.ThreadID})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to lock thread for delete", map[string]any{"reason": err.Error()})
+		return
+	}
+	defer s.turns.Release(thread.ThreadID, deleteGuardTurnID)
+
+	if err := s.store.DeleteThread(r.Context(), thread.ThreadID); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			writeError(w, http.StatusNotFound, codeNotFound, "thread not found", map[string]any{})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to delete thread", map[string]any{"reason": err.Error()})
+		return
+	}
+
+	s.closeThreadAgent(thread.ThreadID, "thread_deleted")
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"threadId": thread.ThreadID,
+		"status":   "deleted",
+	})
 }
 
 func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
@@ -1094,6 +1143,31 @@ func (s *Server) closeAllThreadAgents() error {
 	return nil
 }
 
+func (s *Server) closeThreadAgent(threadID, reason string) {
+	if strings.TrimSpace(threadID) == "" {
+		return
+	}
+
+	s.agentMu.Lock()
+	entry, ok := s.agentsByThread[threadID]
+	if ok {
+		delete(s.agentsByThread, threadID)
+	}
+	s.agentMu.Unlock()
+
+	if !ok {
+		return
+	}
+	if entry.closer != nil {
+		_ = entry.closer.Close()
+	}
+	s.logger.Info("agent.closed",
+		"threadId", threadID,
+		"agentName", entry.provider.Name(),
+		"reason", reason,
+	)
+}
+
 func (s *Server) buildInjectedPrompt(ctx context.Context, thread storage.Thread, input string) (string, error) {
 	recentTurns, err := s.loadRecentVisibleTurns(ctx, thread.ThreadID)
 	if err != nil {
@@ -1472,7 +1546,7 @@ func (s *Server) unregisterPermission(permissionID string, pending *pendingPermi
 func (s *Server) waitPermissionOutcome(ctx context.Context, pending *pendingPermission) agents.PermissionOutcome {
 	timeout := s.permissionTimeout
 	if timeout <= 0 {
-		timeout = 15 * time.Second
+		timeout = defaultPermissionTimeout
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()

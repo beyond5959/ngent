@@ -76,7 +76,7 @@
 - Affects: deployments enabling embedded codex provider
 - Symptom: codex turns fail when `codex app-server` prerequisites/auth/environment are not ready even though server binary is correctly configured
 - Workaround: verify codex CLI/app-server availability and auth state before issuing codex turns; inspect startup preflight and turn error logs
-- Follow-up plan: add richer preflight diagnostics and compatibility matrix checks for codex CLI vs linked `codex-acp` module versions
+- Follow-up plan: add richer preflight diagnostics and compatibility matrix checks for codex CLI vs linked `acp-adapter` module versions
 
 - ID: KI-008
 - Title: Character-based context budgeting can diverge from token budgets
@@ -93,5 +93,30 @@
 - Severity: Medium
 - Affects: real local embedded codex runs that depend on user `~/.codex` state and app-server version capabilities
 - Symptom: stderr may show warnings like `state_5.sqlite migration ... missing` and endpoint compatibility errors such as `mcpServer/call unknown variant`; turn usually still completes but tool output can be empty
-- Workaround: align local codex CLI/app-server version with linked `codex-acp` schema expectations, and repair/reset local codex state DB when migration drift appears
+- Workaround: align local codex CLI/app-server version with linked `acp-adapter` schema expectations, and repair/reset local codex state DB when migration drift appears
 - Follow-up plan: add explicit diagnostics/preflight endpoint to surface local state/schema compatibility before turn execution
+
+- ID: KI-010
+- Title: Qwen ACP environment/auth dependency
+- Status: Open
+- Severity: Medium
+- Affects: implemented `qwen --acp` provider turns in constrained environments
+- Symptom:
+  - in sandboxed or permission-restricted environments, Qwen can fail before ACP initialize completes when local runtime files under `~/.qwen` are not writable.
+  - hub-side symptom in those environments typically converges as `qwen: initialize: qwen: connection closed`.
+  - prompt execution can still fail with upstream/internal errors when auth or network is not ready, even after handshake succeeds.
+- Workaround:
+  - ensure writable home/config directory for qwen runtime (`HOME`, `~/.qwen`).
+  - ensure qwen authentication is completed and network path to model backend is available before turn execution.
+- Follow-up plan:
+  - add clearer preflight diagnostics for qwen runtime prerequisites (filesystem writable check + auth hints).
+  - map common qwen upstream errors to stable hub error details for easier operator debugging.
+
+- ID: KI-011
+- Title: Thread deletion is irreversible
+- Status: Open
+- Severity: Low
+- Affects: users deleting historical threads via API/Web UI
+- Symptom: deleting a thread permanently removes its thread/turn/event history and cannot be restored through server APIs.
+- Workaround: export needed history before delete.
+- Follow-up plan: evaluate optional soft-delete retention window and admin-only restore endpoint if product requirements demand recoverability.

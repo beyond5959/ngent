@@ -1,6 +1,6 @@
 # ACCEPTANCE
 
-This checklist defines executable acceptance checks for requirements 1-11.
+This checklist defines executable acceptance checks for requirements 1-16.
 
 ## Requirement 1: HTTP/JSON plus SSE
 
@@ -128,3 +128,40 @@ This checklist defines executable acceptance checks for requirements 1-11.
 - Verification commands:
   - `go test ./internal/agents/gemini -run TestStreamWithFakeProcess -count=1`
   - `E2E_GEMINI=1 go test ./internal/agents/gemini -run TestGeminiE2ESmoke -v -timeout 60s`
+
+## Requirement 16: Qwen Code Agent
+
+- Operation: verify qwen provider is listed and can complete a turn over ACP.
+- Expected:
+  - `GET /v1/agents` includes `{"id":"qwen","name":"Qwen Code","status":"available"}` when `qwen` is in PATH.
+  - thread creation accepts `agent=qwen`.
+  - turn streaming emits `message_delta` and finishes with `turn_completed` (or explicit upstream error envelope).
+  - permission flow remains fail-closed.
+- Verification commands (executed 2026-03-03):
+  - `qwen --version` (pass, `0.11.0`)
+  - `go test ./internal/agents/qwen -count=1` (pass)
+  - `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s` (pass, real prompt returns `PONG`)
+  - `go test ./cmd/agent-hub-server ./internal/httpapi -count=1` (pass)
+
+## Requirement 17: Thread Delete Lifecycle
+
+- Operation: delete an existing thread from API/UI, verify ownership behavior, conflict behavior, and provider cleanup.
+- Expected:
+  - `DELETE /v1/threads/{threadId}` returns `200` with `status=deleted` for same-client thread.
+  - deleting a thread with an active turn returns `409 CONFLICT`.
+  - deleted thread is no longer visible in list/get/history endpoints.
+  - cached thread agent provider is closed when the thread is deleted.
+- Verification commands (executed 2026-03-03):
+  - `go test ./internal/storage -run TestDeleteThread -count=1`
+  - `go test ./internal/httpapi -run TestDeleteThread -count=1`
+  - `cd internal/webui/web && npm run build`
+
+## Current Acceptance Result (Integration Update, 2026-03-03)
+
+- Scope: qwen provider implementation + server wiring + test coverage.
+- Result:
+  - implementation verification passed:
+    - qwen provider unit/fake-process tests passed.
+    - server/httpapi wiring tests passed (includes qwen allowlist coverage).
+  - real qwen smoke in host environment: `Passed`.
+  - Requirement 16 status: `Accepted`.

@@ -32,7 +32,7 @@ go build ./...     # compile check
 - Input validation:
   - `agent` must be in the server allowlist.
   - `cwd` must be an absolute path.
-- Codex provider runs in **embedded mode** (`github.com/beyond5959/codex-acp/pkg/codexacp`). Do not add user-facing binary path flags.
+- Codex provider runs in **embedded mode** (`github.com/beyond5959/acp-adapter/pkg/acpadapter`). Do not add user-facing binary path flags.
 - Concurrency model:
   - one active turn per thread at a time (`409 CONFLICT` on conflict).
   - cancel must take effect quickly.

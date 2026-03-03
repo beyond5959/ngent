@@ -3,10 +3,10 @@ import { store } from './store.ts'
 import { api } from './api.ts'
 import { applyTheme, settingsPanel } from './components/settings-panel.ts'
 import { newThreadModal } from './components/new-thread-modal.ts'
-import { mountPermissionCard } from './components/permission-card.ts'
+import { mountPermissionCard, PERMISSION_TIMEOUT_MS } from './components/permission-card.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
-import type { Thread, Message, Turn } from './types.ts'
-import type { TurnStream } from './sse.ts'
+import type { Thread, Message, Turn, StreamState } from './types.ts'
+import type { TurnStream, PermissionRequiredPayload } from './sse.ts'
 import { escHtml, formatRelativeTime, formatTimestamp, generateUUID } from './utils.ts'
 
 // ── Theme ─────────────────────────────────────────────────────────────────
@@ -36,15 +36,35 @@ const iconMenu = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" ar
   <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 </svg>`
 
-// ── Active stream state (DOM-managed, not in store) ───────────────────────
+const iconTrash = `<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <path d="M29.5 11.5V11c0-3-2.5-5.5-5.5-5.5S18.5 8 18.5 11v.5"
+    stroke="currentColor" stroke-width="3" stroke-miterlimit="10"/>
+  <line x1="7.5" y1="11.5" x2="40.5" y2="11.5"
+    stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-miterlimit="10"/>
+  <line x1="36.5" y1="27" x2="38" y2="11.5"
+    stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-miterlimit="10"/>
+  <path d="M10.7 18.6l2 20.3c.2 2.1 1.9 3.6 4 3.6h14.7c2.1 0 3.8-1.6 4-3.6l.5-4.8"
+    stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-miterlimit="10"/>
+</svg>`
+
+const codexIconURL = '/codex-icon.png'
+const geminiIconURL = '/gemini-icon.png'
+const claudeIconURL = '/claude-icon.png'
+const opencodeIconURL = '/opencode-icon.png'
+const qwenIconURL = '/qwen-icon.png'
+
+// ── Active stream state (DOM-managed, per thread) ──────────────────────────
 
 /**
  * Non-null while a streaming bubble is live in the DOM.
  * We use this to prevent updateMessageList() from wiping the in-progress bubble.
  */
-let activeStream:         TurnStream | null = null
-let activeStreamMsgId:    string | null     = null
-let activeStreamThreadId: string | null     = null
+let activeStreamMsgId: string | null = null
+const streamsByThread = new Map<string, TurnStream>()
+const streamBufferByThread = new Map<string, string>()
+const streamStartedAtByThread = new Map<string, string>()
+type PendingPermission = PermissionRequiredPayload & { deadlineMs: number }
+const pendingPermissionsByThread = new Map<string, Map<string, PendingPermission>>()
 
 /** Last threadId that triggered a full chat-area re-render. */
 let lastRenderThreadId: string | null = null
@@ -61,6 +81,126 @@ function isNearBottom(el: HTMLElement): boolean {
 function addMessageToStore(threadId: string, msg: Message): void {
   const { messages } = store.get()
   store.set({ messages: { ...messages, [threadId]: [...(messages[threadId] ?? []), msg] } })
+}
+
+function getThreadStreamState(threadId: string | null): StreamState | null {
+  if (!threadId) return null
+  return store.get().streamStates[threadId] ?? null
+}
+
+function setThreadStreamState(threadId: string, next: StreamState | null): void {
+  const { streamStates } = store.get()
+  const updated = { ...streamStates }
+  if (next) {
+    updated[threadId] = next
+  } else {
+    delete updated[threadId]
+  }
+  store.set({ streamStates: updated })
+}
+
+function appendOrRestoreStreamingBubble(thread: Thread): void {
+  const streamState = getThreadStreamState(thread.threadId)
+  if (!streamState) return
+
+  const listEl = document.getElementById('message-list')
+  if (!listEl) return
+
+  const bubbleID = `bubble-${streamState.messageId}`
+  if (document.getElementById(bubbleID)) {
+    activeStreamMsgId = streamState.messageId
+    return
+  }
+
+  listEl.querySelector('.empty-state')?.remove()
+  listEl.querySelector('.message-list-loading')?.remove()
+  const startedAt = streamStartedAtByThread.get(thread.threadId) ?? new Date().toISOString()
+  const avatar = renderAgentAvatar(thread.agent ?? '', 'message')
+  const div = document.createElement('div')
+  div.className = 'message message--agent'
+  div.dataset.msgId = streamState.messageId
+  div.innerHTML = `
+    <div class="message-avatar">${avatar}</div>
+    <div class="message-group">
+      <div class="message-bubble message-bubble--streaming" id="${escHtml(bubbleID)}">
+        <div class="typing-indicator"><span></span><span></span><span></span></div>
+      </div>
+      <div class="message-meta">
+        <span class="message-time">${formatTimestamp(startedAt)}</span>
+      </div>
+    </div>`
+
+  listEl.appendChild(div)
+  activeStreamMsgId = streamState.messageId
+
+  const buffered = streamBufferByThread.get(thread.threadId) ?? ''
+  if (buffered) {
+    const bubbleEl = document.getElementById(bubbleID)
+    if (bubbleEl) {
+      bubbleEl.classList.remove('message-bubble--streaming')
+      bubbleEl.textContent = buffered
+    }
+  }
+  listEl.scrollTop = listEl.scrollHeight
+}
+
+function clearThreadStreamRuntime(threadId: string): void {
+  streamsByThread.delete(threadId)
+  streamBufferByThread.delete(threadId)
+  streamStartedAtByThread.delete(threadId)
+  setThreadStreamState(threadId, null)
+  if (store.get().activeThreadId === threadId) {
+    activeStreamMsgId = null
+  }
+}
+
+function upsertPendingPermission(threadId: string, event: PermissionRequiredPayload): PendingPermission {
+  let byID = pendingPermissionsByThread.get(threadId)
+  if (!byID) {
+    byID = new Map<string, PendingPermission>()
+    pendingPermissionsByThread.set(threadId, byID)
+  }
+  const existing = byID.get(event.permissionId)
+  if (existing) return existing
+
+  const pending: PendingPermission = {
+    ...event,
+    deadlineMs: Date.now() + PERMISSION_TIMEOUT_MS,
+  }
+  byID.set(event.permissionId, pending)
+  return pending
+}
+
+function removePendingPermission(threadId: string, permissionId: string): void {
+  const byID = pendingPermissionsByThread.get(threadId)
+  if (!byID) return
+  byID.delete(permissionId)
+  if (byID.size === 0) {
+    pendingPermissionsByThread.delete(threadId)
+  }
+}
+
+function clearPendingPermissions(threadId: string): void {
+  pendingPermissionsByThread.delete(threadId)
+}
+
+function mountPendingPermissionCard(threadId: string, pending: PendingPermission): void {
+  if (store.get().activeThreadId !== threadId) return
+  if (document.getElementById(`perm-card-${pending.permissionId}`)) return
+
+  const listEl = document.getElementById('message-list')
+  if (!listEl) return
+
+  mountPermissionCard(listEl, pending, {
+    deadlineMs: pending.deadlineMs,
+    onResolved: () => removePendingPermission(threadId, pending.permissionId),
+  })
+}
+
+function renderPendingPermissionCards(threadId: string): void {
+  const byID = pendingPermissionsByThread.get(threadId)
+  if (!byID) return
+  byID.forEach(pending => mountPendingPermissionCard(threadId, pending))
 }
 
 // ── Thread list rendering ─────────────────────────────────────────────────
@@ -81,11 +221,33 @@ function threadTitle(t: Thread): string {
   return t.cwd.split('/').filter(Boolean).pop() ?? t.cwd
 }
 
+function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): string {
+  const normalized = (agentId || '').trim().toLowerCase()
+  const cls = variant === 'thread' ? 'thread-item-avatar-icon' : 'message-avatar-icon'
+  if (normalized === 'codex') {
+    return `<img src="${codexIconURL}" alt="Codex" class="${cls}" loading="lazy" decoding="async">`
+  }
+  if (normalized === 'gemini') {
+    return `<img src="${geminiIconURL}" alt="Gemini CLI" class="${cls}" loading="lazy" decoding="async">`
+  }
+  if (normalized === 'claude') {
+    return `<img src="${claudeIconURL}" alt="Claude Code" class="${cls}" loading="lazy" decoding="async">`
+  }
+  if (normalized === 'opencode') {
+    return `<img src="${opencodeIconURL}" alt="OpenCode" class="${cls} ${cls}--contain" loading="lazy" decoding="async">`
+  }
+  if (normalized === 'qwen') {
+    return `<img src="${qwenIconURL}" alt="Qwen Code" class="${cls}" loading="lazy" decoding="async">`
+  }
+  return escHtml((agentId || 'A').slice(0, 1).toUpperCase())
+}
+
 function renderThreadItem(t: Thread, activeId: string | null, query: string): string {
   const isActive     = t.threadId === activeId
-  const initials     = (t.agent ?? 'A').slice(0, 1).toUpperCase()
+  const avatar       = renderAgentAvatar(t.agent ?? '', 'thread')
   const displayTitle = threadTitle(t)
   const relTime      = t.updatedAt ? formatRelativeTime(t.updatedAt) : ''
+  const deleteLabel  = `Delete thread ${displayTitle}`
 
   const titleHtml = query
     ? escHtml(displayTitle).replace(
@@ -100,7 +262,7 @@ function renderThreadItem(t: Thread, activeId: string | null, query: string): st
          role="button"
          tabindex="0"
          aria-label="${escHtml(displayTitle)}">
-      <div class="thread-item-avatar ${isActive ? '' : 'thread-item-avatar--inactive'}">${initials}</div>
+      <div class="thread-item-avatar ${isActive ? '' : 'thread-item-avatar--inactive'}">${avatar}</div>
       <div class="thread-item-body">
         <div class="thread-item-title">${titleHtml}</div>
         <div class="thread-item-preview">${escHtml(t.cwd)}</div>
@@ -108,6 +270,14 @@ function renderThreadItem(t: Thread, activeId: string | null, query: string): st
           <span class="badge badge--agent">${escHtml(t.agent ?? '')}</span>
           <span class="thread-item-time">${relTime}</span>
         </div>
+      </div>
+      <div class="thread-item-actions">
+        <button class="btn btn-icon thread-delete-btn" type="button"
+                data-thread-id="${escHtml(t.threadId)}"
+                aria-label="${escHtml(deleteLabel)}"
+                title="${escHtml(deleteLabel)}">
+          ${iconTrash}
+        </button>
       </div>
     </div>`
 }
@@ -136,6 +306,17 @@ function updateThreadList(): void {
     .map(t => renderThreadItem(t, activeThreadId, q))
     .join('')
 
+  el.querySelectorAll<HTMLButtonElement>('.thread-delete-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = btn.dataset.threadId ?? ''
+      if (!id) return
+      void handleDeleteThread(id)
+    })
+    btn.addEventListener('keydown', e => e.stopPropagation())
+  })
+
   el.querySelectorAll<HTMLElement>('.thread-item').forEach(item => {
     const handler = () => {
       const id = item.dataset.threadId ?? ''
@@ -147,6 +328,43 @@ function updateThreadList(): void {
     }
     item.addEventListener('click', handler)
     item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') handler() })
+  })
+}
+
+async function handleDeleteThread(threadId: string): Promise<void> {
+  const snapshot = store.get()
+  const thread = snapshot.threads.find(t => t.threadId === threadId)
+  if (!thread) return
+
+  const label = threadTitle(thread)
+  if (!window.confirm(`Delete thread "${label}"? This will permanently remove its history.`)) return
+
+  try {
+    await api.deleteThread(threadId)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    window.alert(`Failed to delete thread: ${message}`)
+    return
+  }
+
+  const state = store.get()
+  const nextThreads = state.threads.filter(t => t.threadId !== threadId)
+  const nextMessages = { ...state.messages }
+  delete nextMessages[threadId]
+
+  const deletingActive = state.activeThreadId === threadId
+  const deletingStream = !!streamsByThread.get(threadId)
+
+  if (deletingStream) {
+    streamsByThread.get(threadId)?.abort()
+    clearThreadStreamRuntime(threadId)
+  }
+  clearPendingPermissions(threadId)
+
+  store.set({
+    threads: nextThreads,
+    messages: nextMessages,
+    activeThreadId: deletingActive ? (nextThreads[0]?.threadId ?? null) : state.activeThreadId,
   })
 }
 
@@ -196,7 +414,7 @@ async function loadHistory(threadId: string): Promise<void> {
     const state = store.get()
     if (state.activeThreadId !== threadId) return
     // Don't overwrite while a turn is streaming on this thread
-    if (state.streamState?.threadId === threadId) return
+    if (getThreadStreamState(threadId)) return
     store.set({ messages: { ...state.messages, [threadId]: turnsToMessages(turns) } })
   } catch {
     if (store.get().activeThreadId !== threadId) return
@@ -212,7 +430,7 @@ async function loadHistory(threadId: string): Promise<void> {
 
 // ── Message rendering ─────────────────────────────────────────────────────
 
-function renderMessage(msg: Message, agentInitial: string): string {
+function renderMessage(msg: Message, agentAvatar: string): string {
   if (msg.role === 'user') {
     return `
       <div class="message message--user" data-msg-id="${escHtml(msg.id)}">
@@ -252,7 +470,7 @@ function renderMessage(msg: Message, agentInitial: string): string {
 
   return `
     <div class="message message--agent" data-msg-id="${escHtml(msg.id)}">
-      <div class="message-avatar">${escHtml(agentInitial)}</div>
+      <div class="message-avatar">${agentAvatar}</div>
       <div class="message-group">
         <div class="message-bubble${bubbleExtra}">${bubbleContent}</div>
         <div class="message-meta">
@@ -273,7 +491,7 @@ function updateMessageList(): void {
 
   const thread   = threads.find(t => t.threadId === activeThreadId)
   const msgs     = messages[activeThreadId] ?? []
-  const agentInitial = (thread?.agent ?? 'A').slice(0, 1).toUpperCase()
+  const agentAvatar = renderAgentAvatar(thread?.agent ?? '', 'message')
 
   if (!msgs.length) {
     listEl.innerHTML = `
@@ -285,7 +503,7 @@ function updateMessageList(): void {
     return
   }
 
-  listEl.innerHTML = msgs.map(m => renderMessage(m, agentInitial)).join('')
+  listEl.innerHTML = msgs.map(m => renderMessage(m, agentAvatar)).join('')
   bindMarkdownControls(listEl)
   listEl.scrollTop = listEl.scrollHeight
   // Sync scroll button (we just moved to the bottom)
@@ -296,7 +514,8 @@ function updateMessageList(): void {
 // ── Input state ───────────────────────────────────────────────────────────
 
 function updateInputState(): void {
-  const { streamState } = store.get()
+  const { activeThreadId } = store.get()
+  const streamState = getThreadStreamState(activeThreadId)
   const isStreaming   = !!streamState
   const isCancelling  = streamState?.status === 'cancelling'
 
@@ -377,14 +596,8 @@ function updateChatArea(): void {
   const { threads, activeThreadId } = store.get()
   const thread = activeThreadId ? threads.find(t => t.threadId === activeThreadId) : null
 
-  // Abort any stream that belongs to a thread we're leaving
-  if (activeStream && activeStreamThreadId !== activeThreadId) {
-    activeStream.abort()
-    activeStream         = null
-    activeStreamMsgId    = null
-    activeStreamThreadId = null
-    store.set({ streamState: null })
-  }
+  // The streaming bubble is tied to the current chat DOM; reset sentinel on thread switch.
+  activeStreamMsgId = null
 
   if (!thread) {
     chat.innerHTML = renderChatEmpty()
@@ -411,6 +624,9 @@ function updateChatArea(): void {
       listEl.innerHTML = `<div class="message-list-loading"><div class="loading-spinner"></div></div>`
     }
   }
+
+  appendOrRestoreStreamingBubble(thread)
+  renderPendingPermissionCards(thread.threadId)
 
   updateInputState()
   bindInputResize()
@@ -469,11 +685,12 @@ function handleSend(): void {
   const text = inputEl.value.trim()
   if (!text) return
 
-  const { activeThreadId, threads, streamState } = store.get()
-  if (!activeThreadId || streamState) return
+  const { activeThreadId, threads } = store.get()
+  if (!activeThreadId || getThreadStreamState(activeThreadId)) return
 
   const thread       = threads.find(t => t.threadId === activeThreadId)
-  const agentInitial = (thread?.agent ?? 'A').slice(0, 1).toUpperCase()
+  const agentAvatar  = renderAgentAvatar(thread?.agent ?? '', 'message')
+  const capturedThreadID = activeThreadId
 
   // Clear input immediately
   inputEl.value = ''
@@ -489,18 +706,20 @@ function handleSend(): void {
     timestamp: now,
     status:    'done',
   }
-  addMessageToStore(activeThreadId, userMsg)
+  addMessageToStore(capturedThreadID, userMsg)
 
-  // ── 2. Reserve streaming message ID before touching streamState ───────────
+  // ── 2. Reserve streaming message ID before touching stream state ───────────
   //    This prevents subscribe → updateMessageList from wiping the bubble.
-  const agentMsgId          = generateUUID()
-  activeStreamMsgId         = agentMsgId
-  activeStreamThreadId      = activeThreadId
-  // activeStream set below, after DOM setup
-
-  // ── 3. Gate the subscribe handler via streamState ──────────────────────────
-  const capturedThreadId = activeThreadId
-  store.set({ streamState: { turnId: '', threadId: activeThreadId, messageId: agentMsgId, status: 'streaming' } })
+  const agentMsgID = generateUUID()
+  activeStreamMsgId = agentMsgID
+  streamBufferByThread.set(capturedThreadID, '')
+  streamStartedAtByThread.set(capturedThreadID, now)
+  setThreadStreamState(capturedThreadID, {
+    turnId: '',
+    threadId: capturedThreadID,
+    messageId: agentMsgID,
+    status: 'streaming',
+  })
 
   // ── 4. Append streaming bubble directly to DOM ─────────────────────────────
   const listEl = document.getElementById('message-list')
@@ -508,11 +727,11 @@ function handleSend(): void {
     listEl.querySelector('.empty-state')?.remove()
     const div = document.createElement('div')
     div.className        = 'message message--agent'
-    div.dataset.msgId    = agentMsgId
+    div.dataset.msgId    = agentMsgID
     div.innerHTML = `
-      <div class="message-avatar">${escHtml(agentInitial)}</div>
+      <div class="message-avatar">${agentAvatar}</div>
       <div class="message-group">
-        <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(agentMsgId)}">
+        <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(agentMsgID)}">
           <div class="typing-indicator"><span></span><span></span><span></span></div>
         </div>
         <div class="message-meta">
@@ -524,89 +743,86 @@ function handleSend(): void {
   }
 
   // ── 5. Start SSE stream ────────────────────────────────────────────────────
-  activeStream = api.startTurn(activeThreadId, text, {
+  const stream = api.startTurn(capturedThreadID, text, {
 
     onTurnStarted({ turnId }) {
-      const ss = store.get().streamState
-      if (ss) store.set({ streamState: { ...ss, turnId } })
+      const state = getThreadStreamState(capturedThreadID)
+      if (!state) return
+      setThreadStreamState(capturedThreadID, { ...state, turnId })
     },
 
     onDelta({ delta }) {
-      const bubbleEl = document.getElementById(`bubble-${agentMsgId}`)
+      const previous = streamBufferByThread.get(capturedThreadID) ?? ''
+      const next = previous + delta
+      streamBufferByThread.set(capturedThreadID, next)
+
+      if (store.get().activeThreadId !== capturedThreadID) return
+      const bubbleEl = document.getElementById(`bubble-${agentMsgID}`)
       if (!bubbleEl) return
       const list      = document.getElementById('message-list')
       const atBottom  = !list || isNearBottom(list)
       // Replace typing indicator with first delta
       if (bubbleEl.querySelector('.typing-indicator')) {
         bubbleEl.classList.remove('message-bubble--streaming')
-        bubbleEl.textContent = delta
-      } else {
-        bubbleEl.textContent = (bubbleEl.textContent ?? '') + delta
       }
+      bubbleEl.textContent = next
       if (atBottom && list) list.scrollTop = list.scrollHeight
     },
 
     onPermissionRequired(event) {
-      const listEl = document.getElementById('message-list')
-      if (listEl) mountPermissionCard(listEl, event)
+      const pending = upsertPendingPermission(capturedThreadID, event)
+      mountPendingPermissionCard(capturedThreadID, pending)
     },
 
     onCompleted({ stopReason }) {
-      const bubbleEl    = document.getElementById(`bubble-${agentMsgId}`)
-      const finalContent = bubbleEl?.textContent ?? ''
-
       // Clear stream tracking BEFORE addMessageToStore (so subscribe calls updateMessageList)
-      activeStream         = null
-      activeStreamMsgId    = null
-      activeStreamThreadId = null
+      const finalContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      clearThreadStreamRuntime(capturedThreadID)
+      clearPendingPermissions(capturedThreadID)
 
-      addMessageToStore(capturedThreadId, {
-        id:         agentMsgId,
+      addMessageToStore(capturedThreadID, {
+        id:         agentMsgID,
         role:       'agent',
         content:    finalContent,
         timestamp:  now,
         status:     stopReason === 'cancelled' ? 'cancelled' : 'done',
         stopReason,
       })
-      store.set({ streamState: null })
     },
 
     onError({ code, message: msg }) {
-      activeStream         = null
-      activeStreamMsgId    = null
-      activeStreamThreadId = null
+      const partialContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      clearThreadStreamRuntime(capturedThreadID)
+      clearPendingPermissions(capturedThreadID)
 
-      addMessageToStore(capturedThreadId, {
-        id:           agentMsgId,
+      addMessageToStore(capturedThreadID, {
+        id:           agentMsgID,
         role:         'agent',
-        content:      '',
+        content:      partialContent,
         timestamp:    now,
         status:       'error',
         errorCode:    code,
         errorMessage: msg,
       })
-      store.set({ streamState: null })
     },
 
     onDisconnect() {
-      const bubbleEl     = document.getElementById(`bubble-${agentMsgId}`)
-      const partialContent = bubbleEl?.textContent ?? ''
+      const partialContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      clearThreadStreamRuntime(capturedThreadID)
+      clearPendingPermissions(capturedThreadID)
 
-      activeStream         = null
-      activeStreamMsgId    = null
-      activeStreamThreadId = null
-
-      addMessageToStore(capturedThreadId, {
-        id:           agentMsgId,
+      addMessageToStore(capturedThreadID, {
+        id:           agentMsgID,
         role:         'agent',
         content:      partialContent,
         timestamp:    now,
         status:       'error',
         errorMessage: 'Connection lost',
       })
-      store.set({ streamState: null })
     },
   })
+
+  streamsByThread.set(capturedThreadID, stream)
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────
@@ -616,10 +832,11 @@ function bindCancelHandler(): void {
 }
 
 async function handleCancel(): Promise<void> {
-  const { streamState } = store.get()
-  if (!streamState?.turnId) return
+  const { activeThreadId } = store.get()
+  const streamState = getThreadStreamState(activeThreadId)
+  if (!activeThreadId || !streamState?.turnId) return
 
-  store.set({ streamState: { ...streamState, status: 'cancelling' } })
+  setThreadStreamState(activeThreadId, { ...streamState, status: 'cancelling' })
   try {
     await api.cancelTurn(streamState.turnId)
   } catch {
@@ -732,7 +949,8 @@ function bindGlobalShortcuts(): void {
         return
       }
       // (3) cancel active stream
-      const { streamState } = store.get()
+      const { activeThreadId } = store.get()
+      const streamState = getThreadStreamState(activeThreadId)
       if (streamState?.turnId) {
         void handleCancel()
       }

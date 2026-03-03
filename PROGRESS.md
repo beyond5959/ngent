@@ -4,7 +4,7 @@
 
 Code Agent Hub Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
 The system targets ACP-compatible agent providers, lazily starts per-thread agents, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
-Current built-in provider is `codex`; additional ACP-compatible providers are planned.
+Current built-in providers are `codex`, `opencode`, `gemini`, and `qwen`; `claude` remains planned.
 This file is the source of milestone progress, validation commands, and next actions.
 
 ## Current Milestone
@@ -69,14 +69,14 @@ This file is the source of milestone progress, validation commands, and next act
   - finalized canonical Go module path as `github.com/beyond5959/go-acp-server`.
   - replaced placeholder import path references across in-repo Go sources/tests.
 - `Post-M8` embedded codex migration completed:
-  - switched codex provider from external `codex-acp-go` path-based process spawning to embedded `github.com/beyond5959/codex-acp/pkg/codexacp`.
+  - switched codex provider from external `codex-acp-go` path-based process spawning to embedded `github.com/beyond5959/acp-adapter/pkg/acpadapter`.
   - removed user-facing codex binary path flags; codex runtime is now linked into server and lazily created per thread on first turn.
   - kept HTTP API semantics unchanged (`threads/turns/sse/permissions/history`) and preserved permission fail-closed round-trip.
   - updated `/v1/agents` codex status contract to runtime preflight-based `available|unavailable`.
   - updated codex smoke test gate to `E2E_CODEX=1` without `CODEX_ACP_GO_BIN` path dependency.
 - `Post-M8` real local codex regression completed:
   - fixed embedded runtime lifecycle bug in `internal/agents/codex/embedded.go` (`runtime.Start(context.Background())` instead of timeout-bound context) and kept retry-on-turn-start-failure guard.
-  - updated context composer so first turn with empty summary/history passes raw input, preserving slash-command semantics for embedded codex-acp flows.
+  - updated context composer so first turn with empty summary/history passes raw input, preserving slash-command semantics for embedded acp-adapter flows.
   - executed real HTTP/SSE regression with required prompts plus same-thread conflict (`409`), cancel convergence, and permission round-trip (`approved` + `declined`) using `/mcp call` on fresh threads.
 - `Post-M8` docs refresh completed:
   - added root `README.md` in English with project goal, `go install` instructions, and startup examples (local/public/auth) using default DB home `$HOME/.go-agent-server`.
@@ -91,7 +91,7 @@ This file is the source of milestone progress, validation commands, and next act
   - updated docs and tests to reflect absolute-cwd policy.
 - `Post-M8` docs framing update completed:
   - adjusted README/SPEC/API/ARCHITECTURE wording to emphasize ACP-compatible multi-agent goal.
-  - kept current-state note explicit: today only `codex` is built-in.
+  - kept current-state note explicit: built-in providers are `codex`, `opencode`, `gemini`, and `qwen`.
   - simplified README startup path to `agent-hub-server` with explicit `agent-hub-server --help` guidance.
 - `Post-M8` startup log UX simplification completed:
   - replaced startup JSON line with multi-line human-readable stderr summary (QR code + port and URL hint).
@@ -99,6 +99,24 @@ This file is the source of milestone progress, validation commands, and next act
   - added unit test coverage for startup summary rendering and request completion log fields.
 - `Post-M8` LAN-friendly default bind completed:
   - changed default bind to `0.0.0.0:8686` and `--allow-public` default to `true` so other devices can connect via the startup QR code.
+- `Post-M8` qwen ACP integration completed:
+  - implemented `internal/agents/qwen` with one-turn process lifecycle (`qwen --acp`) and ACP flow `initialize -> session/new -> session/prompt`.
+  - implemented `session/update` delta extraction (`agent_message_chunk` + `content.text`) and `session/request_permission` fail-closed mapping (`approved/declined/cancelled`).
+  - wired qwen into main server startup preflight, `/v1/agents` supported list, thread agent allowlist, and turn agent factory.
+  - added/updated tests for qwen provider and server wiring (`main` + `httpapi` qwen allowlist coverage).
+  - executed validation:
+    - pass: `qwen --version` (`0.11.0`)
+    - pass: `go test ./internal/agents/qwen -count=1`
+    - pass: `go test ./cmd/agent-hub-server ./internal/httpapi -count=1`
+    - pass: `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s`
+- `Post-M8` ACP stdio transport refactor completed:
+  - extracted shared transport package `internal/agents/acpstdio` (JSON-RPC stdio call/notify, inbound request handling, parse helpers, process termination helper).
+  - refactored `internal/agents/opencode` and `internal/agents/qwen` to reuse `acpstdio` while preserving provider-specific behavior.
+  - executed regression:
+    - pass: `go test ./internal/agents/opencode ./internal/agents/qwen -count=1`
+    - pass: `go test ./...`
+    - pass: `E2E_OPENCODE=1 go test ./internal/agents/opencode -run TestOpenCodeE2ESmoke -v -timeout 90s`
+    - pass: `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s`
 - `F2` completed:
   - created `src/types.ts`: full TypeScript interface set (Thread, Turn, Message, PermissionRequest, StreamState, AppState, etc.).
   - created `src/utils.ts`: generateUUID (crypto.randomUUID + fallback), formatTimestamp, formatRelativeTime, isAbsolutePath, escHtml, debounce.
@@ -196,6 +214,28 @@ This file is the source of milestone progress, validation commands, and next act
 - Optional enhancement 5: Expanded audit logs and retention tooling.
 - Optional enhancement 6: expose environment diagnostics for codex local state DB/schema mismatches (for example `~/.codex/state_5.sqlite` migration drift) and app-server method compatibility.
 
+- `Post-M8` Claude Code embedded provider completed:
+  - implemented `internal/agents/claude/embedded.go` backed by `github.com/beyond5959/acp-adapter/pkg/claudeacp.EmbeddedRuntime`.
+  - preflight checks `ANTHROPIC_AUTH_TOKEN` environment variable; status reports `available` when set, `unavailable` otherwise.
+  - `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` are read from environment via `claudeacp.DefaultRuntimeConfig()` at startup.
+- `Post-M8` thread delete lifecycle completed:
+  - added `DELETE /v1/threads/{threadId}` with same-client ownership check and `409 CONFLICT` when a thread has an active turn.
+  - guarded deletion with a temporary turn-controller lock to prevent new turns from starting during delete.
+  - implemented transactional storage deletion in `internal/storage` with dependent cleanup (`events` -> `turns` -> `threads`).
+  - wired Web UI thread-list delete action with confirmation and local state cleanup (threads/messages/active selection/stream state).
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+  - added unit tests (`TestPreflight_*`, `TestNew_*`, `TestClose_*`, `TestDefaultRuntimeConfig_ReadsEnv`) covering token presence/absence, default/custom timeouts, and idempotent close.
+  - added optional real smoke test (`E2E_CLAUDE=1 go test ./internal/agents/claude/ -run TestClaudeE2ESmoke -v -timeout 120s`); confirmed `PONG` response and `stopReason=end_turn` (16.68s).
+  - added `go.mod` `replace` directive pointing to local `github.com/beyond5959/acp-adapter` for local development; refreshed module dependencies for the embedded Claude runtime integration.
+  - wired claude into `cmd/agent-hub-server/main.go`: preflight call, `"claude"` in `AllowedAgentIDs`, `case "claude"` in `TurnAgentFactory`, real status in `supportedAgents`.
+  - updated `main_test.go`: `supportedAgents` signature extended with `claudeAvailable bool`; added claude id/status assertions.
+  - executed validation:
+    - pass: `go build ./...`
+    - pass: `go test ./...` (all packages green)
+    - pass: `E2E_CLAUDE=1 go test ./internal/agents/claude -run TestClaudeE2ESmoke -v -timeout 120s` (response: `PONG`, stopReason: `end_turn`)
+
 - `Post-F9` CI and release pipeline completed:
   - removed `internal/webui/web/dist/` and `tsconfig.tsbuildinfo` from git tracking (`git rm --cached`); added both to `.gitignore`.
   - created `.github/workflows/ci.yml`: triggers on every push/PR (non-tag); steps: Go + Node.js 20 setup, `make build-web`, gofmt check, `go test ./...`.
@@ -227,6 +267,26 @@ This file is the source of milestone progress, validation commands, and next act
   - frontend build: pass (121 kB JS, 27 kB CSS)
   - full binary build: pass
 
+## Latest Verification (ACP Transport Refactor Update)
+
+- Date: `2026-03-03`
+- Commands executed:
+  - `go test ./internal/agents/opencode ./internal/agents/qwen -count=1`
+  - `E2E_OPENCODE=1 go test ./internal/agents/opencode -run TestOpenCodeE2ESmoke -v -timeout 90s`
+  - `qwen --version`
+  - `go test ./internal/agents/qwen -count=1`
+  - `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s`
+  - `go test ./cmd/agent-hub-server ./internal/httpapi -count=1`
+  - `go test ./...`
+- Result:
+  - opencode/qwen package tests: pass
+  - opencode real smoke: pass (`PONG`, `stopReason=end_turn`)
+  - qwen version check: pass (`0.11.0`)
+  - qwen package tests: pass
+  - qwen real smoke: pass (`PONG`, `stopReason=end_turn`)
+  - server/httpapi regression tests: pass
+  - full repo tests: pass
+
 ## Dependency Fetch Notes
 
 - Date: `2026-02-28`
@@ -242,10 +302,10 @@ This file is the source of milestone progress, validation commands, and next act
 - Effective workaround:
   - used locally cached module `modernc.org/sqlite@v1.18.2` and offline-capable verification.
 - Failure 4:
-  - command: `go get github.com/beyond5959/codex-acp@dev`
+  - command: `go get github.com/beyond5959/acp-adapter@master`
   - error: `lookup proxy.golang.org: no such host`
 - Effective workaround:
-  - reused locally cached `github.com/beyond5959/codex-acp` pseudo-version already present in module cache and pinned it as direct dependency in `go.mod`.
+  - reused locally cached `github.com/beyond5959/acp-adapter` pseudo-version already present in module cache and pinned it as direct dependency in `go.mod`.
 
 ## Milestone Plan (M0-M8)
 
@@ -323,3 +383,24 @@ This file is the source of milestone progress, validation commands, and next act
 
 - Canonical module path is now finalized as `github.com/beyond5959/go-acp-server`.
 - All in-repo Go import paths were updated from placeholder path to canonical path.
+
+- `Post-F9` Web UI multi-thread streaming behavior fixed:
+  - removed UI behavior that aborted an in-flight SSE stream when switching threads.
+  - changed client stream tracking from single global `streamState` to per-thread `streamStates`.
+  - maintained per-thread stream runtime maps (stream handle, delta buffer, start time), so background threads can keep streaming and finalize correctly.
+  - wired send/cancel/input disable logic to current thread only, enabling concurrent in-flight turns across different threads.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` permission countdown updated to 2 hours:
+  - changed server default permission timeout to `2 * time.Hour`.
+  - changed Web UI Permission Required countdown to 2 hours and display format to `H:MM:SS`.
+
+- `Post-F9` permission card persistence across thread switch fixed:
+  - stored pending permission requests per thread in Web UI runtime state.
+  - when switching back to a thread, pending Permission Required cards are re-mounted with original deadline.
+  - resolved/timeout outcomes remove pending records to avoid stale prompts.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`

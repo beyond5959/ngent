@@ -1,5 +1,5 @@
 import { store } from './store.ts'
-import type { AgentInfo, Thread, Turn } from './types.ts'
+import type { AgentInfo, ConfigOption, ModelOption, Thread, Turn } from './types.ts'
 import { TurnStream } from './sse.ts'
 import type { TurnStreamCallbacks } from './sse.ts'
 
@@ -26,12 +26,24 @@ export interface CreateThreadParams {
   agentOptions?: Record<string, unknown>
 }
 
+export interface UpdateThreadParams {
+  agentOptions: Record<string, unknown>
+}
+
+export interface SetThreadConfigOptionParams {
+  configId: string
+  value: string
+}
+
 // ── Response shapes ────────────────────────────────────────────────────────
 
 interface AgentsResponse        { agents: AgentInfo[] }
+interface AgentModelsResponse   { agentId: string; models: ModelOption[] }
 interface ThreadsResponse       { threads: Thread[] }
 interface HistoryResponse       { turns: Turn[] }
 interface CreateThreadResponse  { threadId: string }
+interface UpdateThreadResponse  { thread: Thread }
+interface ThreadConfigOptionsResponse { threadId: string; configOptions: ConfigOption[] }
 interface CancelTurnResponse    { turnId: string; threadId: string; status: string }
 interface DeleteThreadResponse  { threadId: string; status: string }
 
@@ -90,6 +102,15 @@ class ApiClient {
     return data.agents
   }
 
+  /** GET /v1/agents/{agentId}/models */
+  async getAgentModels(agentId: string): Promise<ModelOption[]> {
+    const data = await this.request<AgentModelsResponse>(
+      'GET',
+      `/v1/agents/${encodeURIComponent(agentId)}/models`,
+    )
+    return data.models
+  }
+
   /** GET /v1/threads */
   async getThreads(): Promise<Thread[]> {
     const data = await this.request<ThreadsResponse>('GET', '/v1/threads')
@@ -105,10 +126,39 @@ class ApiClient {
     return data.turns
   }
 
+  /** GET /v1/threads/{threadId}/config-options */
+  async getThreadConfigOptions(threadId: string): Promise<ConfigOption[]> {
+    const data = await this.request<ThreadConfigOptionsResponse>(
+      'GET',
+      `/v1/threads/${encodeURIComponent(threadId)}/config-options`,
+    )
+    return data.configOptions
+  }
+
+  /** POST /v1/threads/{threadId}/config-options */
+  async setThreadConfigOption(threadId: string, params: SetThreadConfigOptionParams): Promise<ConfigOption[]> {
+    const data = await this.request<ThreadConfigOptionsResponse>(
+      'POST',
+      `/v1/threads/${encodeURIComponent(threadId)}/config-options`,
+      params,
+    )
+    return data.configOptions
+  }
+
   /** POST /v1/threads */
   async createThread(params: CreateThreadParams): Promise<string> {
     const data = await this.request<CreateThreadResponse>('POST', '/v1/threads', params)
     return data.threadId
+  }
+
+  /** PATCH /v1/threads/{threadId} */
+  async updateThread(threadId: string, params: UpdateThreadParams): Promise<Thread> {
+    const data = await this.request<UpdateThreadResponse>(
+      'PATCH',
+      `/v1/threads/${encodeURIComponent(threadId)}`,
+      params,
+    )
+    return data.thread
   }
 
   /** DELETE /v1/threads/{threadId} */

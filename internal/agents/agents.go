@@ -18,6 +18,36 @@ type Streamer interface {
 	Stream(ctx context.Context, input string, onDelta func(delta string) error) (StopReason, error)
 }
 
+// ModelOption describes one selectable model entry reported by an agent.
+type ModelOption struct {
+	ID   string
+	Name string
+}
+
+// ConfigOptionValue is one selectable value for a session config option.
+type ConfigOptionValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// ConfigOption describes one ACP session config option.
+type ConfigOption struct {
+	ID           string              `json:"id"`
+	Category     string              `json:"category,omitempty"`
+	Name         string              `json:"name,omitempty"`
+	Description  string              `json:"description,omitempty"`
+	Type         string              `json:"type,omitempty"`
+	CurrentValue string              `json:"currentValue"`
+	Options      []ConfigOptionValue `json:"options,omitempty"`
+}
+
+// ConfigOptionManager exposes ACP session config option querying/updating.
+type ConfigOptionManager interface {
+	ConfigOptions(ctx context.Context) ([]ConfigOption, error)
+	SetConfigOption(ctx context.Context, configID, value string) ([]ConfigOption, error)
+}
+
 // PermissionOutcome is the client decision for one permission request.
 type PermissionOutcome string
 

@@ -31,6 +31,7 @@ func TestNew(t *testing.T) {
 	}{
 		{"empty dir", gemini.Config{Dir: ""}, true},
 		{"valid", gemini.Config{Dir: "/tmp"}, false},
+		{"with modelID", gemini.Config{Dir: "/tmp", ModelID: "gemini-2.5-pro"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -135,6 +136,158 @@ for line in sys.stdin:
 	}
 	if got := strings.Join(deltas, ""); !strings.Contains(got, "PONG") {
 		t.Errorf("deltas = %q, want to contain %q", got, "PONG")
+	}
+}
+
+func TestStreamWithFakeProcessModelID(t *testing.T) {
+	python3, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not in PATH")
+	}
+
+	fakeScript := fmt.Sprintf(`#!%s
+import sys, json
+
+expected_model = "gemini-2.5-pro"
+seen_new_model = False
+seen_prompt_model = False
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    method = req.get("method", "")
+    rid = req.get("id")
+    params = req.get("params", {})
+
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":rid,"result":{
+            "protocolVersion":1,
+            "authMethods":[{"id":"gemini-api-key","name":"Use Gemini API key","description":None}],
+            "agentCapabilities":{"loadSession":True}
+        }})
+    elif method == "session/new":
+        seen_new_model = (params.get("model","") == expected_model)
+        send({"jsonrpc":"2.0","id":rid,"result":{
+            "sessionId":"ses_test456",
+            "modes":{"availableModes":[],"currentModeId":"default"}
+        }})
+    elif method == "session/prompt":
+        seen_prompt_model = (params.get("model","") == expected_model)
+        if (not seen_new_model) or (not seen_prompt_model):
+            send({"jsonrpc":"2.0","id":rid,"error":{"code":-32000,"message":"model not forwarded"}})
+            sys.exit(0)
+        sid = params.get("sessionId","")
+        send({"jsonrpc":"2.0","method":"session/update","params":{
+            "sessionId":sid,
+            "update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"MODEL_OK"}}
+        }})
+        send({"jsonrpc":"2.0","id":rid,"result":{"stopReason":"end_turn"}})
+        sys.exit(0)
+`, python3)
+
+	tmpDir := t.TempDir()
+	fakeBin := tmpDir + "/gemini"
+	if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	c, err := gemini.New(gemini.Config{
+		Dir:     tmpDir,
+		ModelID: "gemini-2.5-pro",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var deltas []string
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	reason, err := c.Stream(ctx, "say MODEL_OK", func(delta string) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if reason != "end_turn" {
+		t.Errorf("StopReason = %q, want %q", reason, "end_turn")
+	}
+	if got := strings.Join(deltas, ""); !strings.Contains(got, "MODEL_OK") {
+		t.Errorf("deltas = %q, want to contain %q", got, "MODEL_OK")
+	}
+}
+
+func TestDiscoverModelsWithFakeProcess(t *testing.T) {
+	python3, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not in PATH")
+	}
+
+	fakeScript := fmt.Sprintf(`#!%s
+import json
+import sys
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    method = req.get("method", "")
+    rid = req.get("id")
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":rid,"result":{
+            "protocolVersion":1,
+            "authMethods":[{"id":"gemini-api-key","name":"Use Gemini API key","description":None}],
+            "agentCapabilities":{"loadSession":True}
+        }})
+    elif method == "session/new":
+        send({"jsonrpc":"2.0","id":rid,"result":{
+            "sessionId":"ses_test_models",
+            "models":{
+                "currentModelId":"gemini-2.5-pro",
+                "availableModels":[
+                    "gemini-2.5-pro",
+                    {"modelId":"gemini-2.5-flash","name":"Gemini 2.5 Flash"}
+                ]
+            }
+        }})
+`, python3)
+
+	tmpDir := t.TempDir()
+	fakeBin := tmpDir + "/gemini"
+	if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	models, err := gemini.DiscoverModels(context.Background(), gemini.Config{Dir: tmpDir})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if got, want := len(models), 2; got != want {
+		t.Fatalf("len(models) = %d, want %d", got, want)
+	}
+	if models[0].ID != "gemini-2.5-pro" {
+		t.Fatalf("models[0].id = %q, want %q", models[0].ID, "gemini-2.5-pro")
+	}
+	if models[1].ID != "gemini-2.5-flash" {
+		t.Fatalf("models[1].id = %q, want %q", models[1].ID, "gemini-2.5-flash")
 	}
 }
 

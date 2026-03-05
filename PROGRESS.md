@@ -4,7 +4,7 @@
 
 Code Agent Hub Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
 The system targets ACP-compatible agent providers, lazily starts per-thread agents, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
-Current built-in providers are `codex`, `opencode`, `gemini`, and `qwen`; `claude` remains planned.
+Current built-in providers are `codex`, `claude`, `opencode`, `gemini`, and `qwen`.
 This file is the source of milestone progress, validation commands, and next actions.
 
 ## Current Milestone
@@ -91,7 +91,7 @@ This file is the source of milestone progress, validation commands, and next act
   - updated docs and tests to reflect absolute-cwd policy.
 - `Post-M8` docs framing update completed:
   - adjusted README/SPEC/API/ARCHITECTURE wording to emphasize ACP-compatible multi-agent goal.
-  - kept current-state note explicit: built-in providers are `codex`, `opencode`, `gemini`, and `qwen`.
+  - kept current-state note explicit: built-in providers are `codex`, `claude`, `opencode`, `gemini`, and `qwen`.
   - simplified README startup path to `agent-hub-server` with explicit `agent-hub-server --help` guidance.
 - `Post-M8` startup log UX simplification completed:
   - replaced startup JSON line with multi-line human-readable stderr summary (QR code + port and URL hint).
@@ -404,3 +404,56 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
+
+- `Post-F9` thread model selection and switching completed:
+  - added thread update API `PATCH /v1/threads/{threadId}` (agentOptions-only payload) with ownership checks and active-turn conflict (`409`).
+  - added model discovery API `GET /v1/agents/{agentId}/models` (ACP handshake-backed).
+  - storage layer now supports `UpdateThreadAgentOptions` and updates thread `updated_at`.
+  - successful thread option update closes cached per-thread provider, so next turn re-initializes with new model config.
+  - wired runtime model discovery into all providers:
+    - `codex`/`claude`: ACP embedded `session/new.configOptions`.
+    - `gemini`/`opencode`/`qwen`: ACP `session/new.models.availableModels`.
+  - wired `agentOptions.modelId` forwarding into all providers:
+    - embedded `codex`/`claude` now pass `model` in ACP `session/new`.
+    - `gemini` now passes `model` in `session/new` and `session/prompt`.
+    - `opencode` passes `modelId` in `session/prompt`; `qwen` passes `model` in `session/prompt`.
+  - Web UI updates:
+    - new-thread modal model selector removed (create flow keeps agent/cwd/title/advanced JSON only).
+    - active thread header switched from free-text model input to ACP-backed model dropdown + Apply action.
+    - model controls are disabled while model lists load and during streaming turns.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` thread session model config switched to ACP `configOptions` + immediate apply:
+  - added thread-scoped config options APIs:
+    - `GET /v1/threads/{threadId}/config-options`
+    - `POST /v1/threads/{threadId}/config-options`
+  - `POST` now applies model changes through ACP `session/set_config_option` (no separate apply endpoint/action).
+  - provider-side config option support added across all built-in agents:
+    - embedded: `codex`, `claude` (in-session `session/set_config_option` on cached runtime).
+    - stdio: `opencode`, `qwen`, `gemini` (ACP handshake + `session/set_config_option` apply path, then persist selected model for next turns).
+  - Web UI changes:
+    - removed thread header `Apply` button.
+    - model dropdown now applies immediately on selection.
+    - model source switched from agent-level model catalog to thread-level `configOptions` (`category=model`).
+    - model option descriptions are rendered under the selector in the chat header.
+  - thread metadata sync:
+    - successful model switch persists `agentOptions.modelId` for thread continuity and restart recovery.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` codex thread-config timeout fix (Playwright real-env regression):
+  - reproduced in real browser flow (Playwright MCP + local codex env): opening a codex thread triggered `GET /v1/threads/{threadId}/config-options` `503` caused by embedded startup timeout at 8s.
+  - fixed by increasing embedded runtime default startup timeout from `8s` to `30s` for:
+    - `internal/agents/codex`
+    - `internal/agents/claude`
+  - reran real browser flow:
+    - thread model list now loads successfully from ACP `configOptions`.
+    - model switching calls `POST /v1/threads/{threadId}/config-options` and persists selected model.
+    - no frontend console errors during switch flow.
+  - executed validation:
+    - pass: `go test ./...`
+
+ 

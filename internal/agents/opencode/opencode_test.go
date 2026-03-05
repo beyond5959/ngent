@@ -141,6 +141,70 @@ for line in sys.stdin:
 	}
 }
 
+func TestDiscoverModelsWithFakeProcess(t *testing.T) {
+	python3, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not in PATH")
+	}
+
+	fakeScript := fmt.Sprintf(`#!%s
+import json
+import sys
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    method = req.get("method", "")
+    rid = req.get("id")
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":rid,"result":{
+            "protocolVersion":1,
+            "agentInfo":{"name":"FakeOpenCode","version":"0.0.1"},
+            "agentCapabilities":{},"authMethods":[]
+        }})
+    elif method == "session/new":
+        send({"jsonrpc":"2.0","id":rid,"result":{
+            "sessionId":"ses_models",
+            "models":{
+                "currentModelId":"openai/gpt-5",
+                "availableModels":[
+                    "openai/gpt-5",
+                    {"modelId":"anthropic/claude-3-5-haiku","name":"Claude 3.5 Haiku"}
+                ]
+            }
+        }})
+`, python3)
+
+	tmpDir := t.TempDir()
+	fakeBin := tmpDir + "/opencode"
+	if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	models, err := opencode.DiscoverModels(context.Background(), opencode.Config{Dir: tmpDir})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if got, want := len(models), 2; got != want {
+		t.Fatalf("len(models) = %d, want %d", got, want)
+	}
+	if models[0].ID != "openai/gpt-5" {
+		t.Fatalf("models[0].id = %q, want %q", models[0].ID, "openai/gpt-5")
+	}
+	if models[1].ID != "anthropic/claude-3-5-haiku" {
+		t.Fatalf("models[1].id = %q, want %q", models[1].ID, "anthropic/claude-3-5-haiku")
+	}
+}
+
 // TestOpenCodeE2ESmoke performs a real turn with the installed opencode binary.
 // Run with: E2E_OPENCODE=1 go test ./internal/agents/opencode/ -run E2E -v -timeout 60s
 func TestOpenCodeE2ESmoke(t *testing.T) {

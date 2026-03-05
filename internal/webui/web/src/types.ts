@@ -10,6 +10,27 @@ export interface AgentInfo {
   status: 'available' | 'unavailable'
 }
 
+export interface ModelOption {
+  id: string
+  name: string
+}
+
+export interface ConfigOptionValue {
+  value: string
+  name: string
+  description?: string
+}
+
+export interface ConfigOption {
+  id: string
+  category?: string
+  name?: string
+  description?: string
+  type?: string
+  currentValue: string
+  options?: ConfigOptionValue[]
+}
+
 export interface Thread {
   threadId: string
   agent: string

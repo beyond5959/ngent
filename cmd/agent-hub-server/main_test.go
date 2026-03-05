@@ -91,6 +91,23 @@ func TestResolveAllowedRoots(t *testing.T) {
 	}
 }
 
+func TestResolveModelDiscoveryDir(t *testing.T) {
+	root := t.TempDir()
+	if got := resolveModelDiscoveryDir([]string{root}); got != root {
+		t.Fatalf("resolveModelDiscoveryDir() = %q, want %q", got, root)
+	}
+
+	t.Run("fallback to cwd when roots missing", func(t *testing.T) {
+		got := resolveModelDiscoveryDir([]string{filepath.Join(root, "missing")})
+		if strings.TrimSpace(got) == "" {
+			t.Fatalf("resolveModelDiscoveryDir() returned empty path")
+		}
+		if !filepath.IsAbs(got) {
+			t.Fatalf("resolveModelDiscoveryDir() = %q, want absolute path", got)
+		}
+	})
+}
+
 func TestSupportedAgentsCodexStatus(t *testing.T) {
 	agentsUnavailable := supportedAgents(false, false, false, false, false)
 	if len(agentsUnavailable) == 0 {

@@ -376,6 +376,36 @@ func (s *Store) UpdateThreadSummary(ctx context.Context, threadID, summary strin
 	return nil
 }
 
+// UpdateThreadAgentOptions updates one thread agent options and updates updated_at timestamp.
+func (s *Store) UpdateThreadAgentOptions(ctx context.Context, threadID, agentOptionsJSON string) error {
+	if strings.TrimSpace(threadID) == "" {
+		return errors.New("storage: threadID is required")
+	}
+	if strings.TrimSpace(agentOptionsJSON) == "" {
+		agentOptionsJSON = "{}"
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE threads
+		SET
+			agent_options_json = ?,
+			updated_at = ?
+		WHERE thread_id = ?;
+	`, agentOptionsJSON, formatTime(s.now()), threadID)
+	if err != nil {
+		return fmt.Errorf("storage: update thread agent options: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("storage: update thread agent options rows affected: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListThreadsByClient returns all threads for one client.
 func (s *Store) ListThreadsByClient(ctx context.Context, clientID string) ([]Thread, error) {
 	rows, err := s.db.QueryContext(ctx, `

@@ -21,6 +21,7 @@ import (
 
 	"github.com/beyond5959/go-acp-server/internal/agents"
 	"github.com/beyond5959/go-acp-server/internal/agents/acp"
+	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
 	runtimectl "github.com/beyond5959/go-acp-server/internal/runtime"
 	"github.com/beyond5959/go-acp-server/internal/storage"
 )
@@ -130,6 +131,85 @@ func TestV1Agents(t *testing.T) {
 	if body.Agents[0].Status == "unconfigured" {
 		t.Fatalf("agents[0].status must not be unconfigured")
 	}
+}
+
+func TestV1AgentModels(t *testing.T) {
+	h := newTestServer(t, testServerOptions{
+		allowedAgentIDs: []string{"codex"},
+		agentList: []AgentInfo{
+			{ID: "codex", Name: "Codex", Status: "available"},
+		},
+		agentModelsFactory: func(ctx context.Context, agentID string) ([]agents.ModelOption, error) {
+			if agentID != "codex" {
+				return nil, errors.New("unexpected agent")
+			}
+			return []agents.ModelOption{
+				{ID: "gpt-5", Name: "GPT-5"},
+				{ID: "gpt-5-mini", Name: "GPT-5 Mini"},
+			}, nil
+		},
+	})
+
+	rr := performJSONRequest(t, h, http.MethodGet, "/v1/agents/codex/models", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var body struct {
+		AgentID string               `json:"agentId"`
+		Models  []agents.ModelOption `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.AgentID != "codex" {
+		t.Fatalf("agentId = %q, want %q", body.AgentID, "codex")
+	}
+	if got, want := len(body.Models), 2; got != want {
+		t.Fatalf("len(models) = %d, want %d", got, want)
+	}
+	if body.Models[0].ID != "gpt-5" {
+		t.Fatalf("models[0].id = %q, want %q", body.Models[0].ID, "gpt-5")
+	}
+}
+
+func TestV1AgentModelsNotFound(t *testing.T) {
+	h := newTestServer(t, testServerOptions{
+		allowedAgentIDs: []string{"codex"},
+		agentList: []AgentInfo{
+			{ID: "codex", Name: "Codex", Status: "available"},
+		},
+	})
+
+	rr := performJSONRequest(t, h, http.MethodGet, "/v1/agents/unknown/models", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+	assertErrorCode(t, rr.Body.Bytes(), "NOT_FOUND")
+}
+
+func TestV1AgentModelsUpstreamUnavailable(t *testing.T) {
+	h := newTestServer(t, testServerOptions{
+		allowedAgentIDs: []string{"codex"},
+		agentList: []AgentInfo{
+			{ID: "codex", Name: "Codex", Status: "available"},
+		},
+		agentModelsFactory: func(ctx context.Context, agentID string) ([]agents.ModelOption, error) {
+			return nil, errors.New("boom")
+		},
+	})
+
+	rr := performJSONRequest(t, h, http.MethodGet, "/v1/agents/codex/models", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	}
+	assertErrorCode(t, rr.Body.Bytes(), "UPSTREAM_UNAVAILABLE")
 }
 
 func TestV1RequiresClientID(t *testing.T) {
@@ -284,6 +364,83 @@ func TestThreadsCreateListGetHappyPath(t *testing.T) {
 	}
 }
 
+func TestUpdateThreadAgentOptions(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+
+	createRR := performJSONRequest(t, h, http.MethodPost, "/v1/threads", map[string]any{
+		"agent":        "codex",
+		"cwd":          root,
+		"agentOptions": map[string]any{"mode": "safe"},
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if createRR.Code != http.StatusOK {
+		t.Fatalf("create status code = %d, want %d", createRR.Code, http.StatusOK)
+	}
+	threadID := extractThreadID(t, createRR.Body.Bytes())
+
+	updateRR := performJSONRequest(t, h, http.MethodPatch, "/v1/threads/"+threadID, map[string]any{
+		"agentOptions": map[string]any{"modelId": "gpt-5"},
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if updateRR.Code != http.StatusOK {
+		t.Fatalf("update status code = %d, want %d", updateRR.Code, http.StatusOK)
+	}
+
+	var updateBody struct {
+		Thread struct {
+			ThreadID     string         `json:"threadId"`
+			AgentOptions map[string]any `json:"agentOptions"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(updateRR.Body.Bytes(), &updateBody); err != nil {
+		t.Fatalf("unmarshal update response: %v", err)
+	}
+	if updateBody.Thread.ThreadID != threadID {
+		t.Fatalf("updated threadId = %q, want %q", updateBody.Thread.ThreadID, threadID)
+	}
+	if got := fmt.Sprintf("%v", updateBody.Thread.AgentOptions["modelId"]); got != "gpt-5" {
+		t.Fatalf("updated modelId = %q, want %q", got, "gpt-5")
+	}
+
+	getRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID, nil, map[string]string{"X-Client-ID": "client-a"})
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get status code = %d, want %d", getRR.Code, http.StatusOK)
+	}
+
+	var getBody struct {
+		Thread struct {
+			AgentOptions map[string]any `json:"agentOptions"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &getBody); err != nil {
+		t.Fatalf("unmarshal get response: %v", err)
+	}
+	if got := fmt.Sprintf("%v", getBody.Thread.AgentOptions["modelId"]); got != "gpt-5" {
+		t.Fatalf("persisted modelId = %q, want %q", got, "gpt-5")
+	}
+}
+
+func TestUpdateThreadAgentOptionsCrossClientReturnsNotFound(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+
+	createRR := performJSONRequest(t, h, http.MethodPost, "/v1/threads", map[string]any{
+		"agent": "codex",
+		"cwd":   root,
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if createRR.Code != http.StatusOK {
+		t.Fatalf("create status code = %d, want %d", createRR.Code, http.StatusOK)
+	}
+	threadID := extractThreadID(t, createRR.Body.Bytes())
+
+	updateRR := performJSONRequest(t, h, http.MethodPatch, "/v1/threads/"+threadID, map[string]any{
+		"agentOptions": map[string]any{"modelId": "gpt-5"},
+	}, map[string]string{"X-Client-ID": "client-b"})
+	if updateRR.Code != http.StatusNotFound {
+		t.Fatalf("cross-client update status = %d, want %d", updateRR.Code, http.StatusNotFound)
+	}
+	assertErrorCode(t, updateRR.Body.Bytes(), "NOT_FOUND")
+}
+
 func TestThreadAccessAcrossClientsReturnsNotFound(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
@@ -417,6 +574,233 @@ func TestDeleteThreadClosesCachedAgent(t *testing.T) {
 	if got := streamer.CloseCount(); got != 1 {
 		t.Fatalf("provider close count after delete = %d, want %d", got, 1)
 	}
+}
+
+func TestUpdateThreadConflictWhenActiveTurn(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return agents.NewFakeAgentWithConfig(1, 50*time.Millisecond), nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+
+	streamResultCh := make(chan httpTurnStreamResult, 1)
+	go func() {
+		streamResultCh <- runTurnStreamRequest(t, ts.URL, "client-a", threadID, strings.Repeat("long-update-conflict-", 20))
+	}()
+
+	turnID := waitForTurnID(t, ts.URL, "client-a", threadID, 4*time.Second)
+	if turnID == "" {
+		t.Fatalf("failed to observe running turn before timeout")
+	}
+
+	updateStatus, updateBody := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"modelId": "gpt-5"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if updateStatus != http.StatusConflict {
+		t.Fatalf("update status = %d, want %d, body=%s", updateStatus, http.StatusConflict, updateBody)
+	}
+	assertErrorCode(t, []byte(updateBody), "CONFLICT")
+
+	cancelStatus, cancelBody := postCancel(t, ts.URL, "client-a", turnID)
+	if cancelStatus != http.StatusOK {
+		t.Fatalf("cancel status = %d, want %d, body=%s", cancelStatus, http.StatusOK, cancelBody)
+	}
+	_ = <-streamResultCh
+}
+
+func TestUpdateThreadClosesCachedAgent(t *testing.T) {
+	root := t.TempDir()
+	streamer := &countingClosableStreamer{}
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	result := runTurnStreamRequest(t, ts.URL, "client-a", threadID, "prime cached provider for update")
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("turn stream status = %d, want %d", result.StatusCode, http.StatusOK)
+	}
+
+	updateStatus, updateBody := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"modelId": "gpt-5"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if updateStatus != http.StatusOK {
+		t.Fatalf("update status = %d, want %d, body=%s", updateStatus, http.StatusOK, updateBody)
+	}
+
+	if got := streamer.CloseCount(); got != 1 {
+		t.Fatalf("provider close count after update = %d, want %d", got, 1)
+	}
+}
+
+func TestThreadConfigOptionsGetAndSetModel(t *testing.T) {
+	root := t.TempDir()
+	streamer := newConfigOptionStreamer("gpt-5.3-codex", []agents.ConfigOptionValue{
+		{Value: "gpt-5.3-codex", Name: "gpt-5.3-codex", Description: "Latest frontier agentic coding model."},
+		{Value: "gpt-5.2-codex", Name: "gpt-5.2-codex", Description: "Frontier agentic coding model."},
+	})
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+
+	getStatus, getBody := doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID+"/config-options",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if getStatus != http.StatusOK {
+		t.Fatalf("get config options status = %d, want %d, body=%s", getStatus, http.StatusOK, getBody)
+	}
+
+	var getResp struct {
+		ThreadID      string                `json:"threadId"`
+		ConfigOptions []agents.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal([]byte(getBody), &getResp); err != nil {
+		t.Fatalf("unmarshal get config options response: %v", err)
+	}
+	if getResp.ThreadID != threadID {
+		t.Fatalf("threadId = %q, want %q", getResp.ThreadID, threadID)
+	}
+	if got := acpmodel.CurrentValueForConfig(getResp.ConfigOptions, "model"); got != "gpt-5.3-codex" {
+		t.Fatalf("model currentValue = %q, want %q", got, "gpt-5.3-codex")
+	}
+
+	setStatus, setBody := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/config-options",
+		map[string]any{
+			"configId": "model",
+			"value":    "gpt-5.2-codex",
+		},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if setStatus != http.StatusOK {
+		t.Fatalf("set config option status = %d, want %d, body=%s", setStatus, http.StatusOK, setBody)
+	}
+
+	var setResp struct {
+		ConfigOptions []agents.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal([]byte(setBody), &setResp); err != nil {
+		t.Fatalf("unmarshal set config options response: %v", err)
+	}
+	if got := acpmodel.CurrentValueForConfig(setResp.ConfigOptions, "model"); got != "gpt-5.2-codex" {
+		t.Fatalf("updated model currentValue = %q, want %q", got, "gpt-5.2-codex")
+	}
+	if got := streamer.SetConfigCalls(); got != 1 {
+		t.Fatalf("set config call count = %d, want %d", got, 1)
+	}
+	if got := streamer.CloseCount(); got != 0 {
+		t.Fatalf("provider close count = %d, want %d", got, 0)
+	}
+
+	threadStatus, threadBody := doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID,
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if threadStatus != http.StatusOK {
+		t.Fatalf("get thread status = %d, want %d, body=%s", threadStatus, http.StatusOK, threadBody)
+	}
+	var threadResp struct {
+		Thread struct {
+			AgentOptions map[string]any `json:"agentOptions"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal([]byte(threadBody), &threadResp); err != nil {
+		t.Fatalf("unmarshal get thread response: %v", err)
+	}
+	if got := fmt.Sprintf("%v", threadResp.Thread.AgentOptions["modelId"]); got != "gpt-5.2-codex" {
+		t.Fatalf("persisted modelId = %q, want %q", got, "gpt-5.2-codex")
+	}
+}
+
+func TestThreadConfigOptionsCrossClientNotFound(t *testing.T) {
+	root := t.TempDir()
+	streamer := newConfigOptionStreamer("gpt-5.3-codex", []agents.ConfigOptionValue{
+		{Value: "gpt-5.3-codex", Name: "gpt-5.3-codex"},
+	})
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/config-options",
+		nil,
+		map[string]string{"X-Client-ID": "client-b"},
+	)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-client config options status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+	assertErrorCode(t, rr.Body.Bytes(), "NOT_FOUND")
+}
+
+func TestThreadConfigOptionsUnsupportedManager(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return agents.NewFakeAgentWithConfig(1, 1*time.Millisecond), nil
+		},
+	})
+	threadID := createThreadForClient(t, h, "client-a", root)
+
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/config-options",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	}
+	assertErrorCode(t, rr.Body.Bytes(), "UPSTREAM_UNAVAILABLE")
 }
 
 func TestTurnsSSEAndHistory(t *testing.T) {
@@ -1116,15 +1500,16 @@ func TestRestartRecoveryWithInjectedContext(t *testing.T) {
 }
 
 type testServerOptions struct {
-	authToken         string
-	allowedRoots      []string
-	allowedAgentIDs   []string
-	agentList         []AgentInfo
-	agent             agents.Streamer
-	turnAgentFactory  TurnAgentFactory
-	agentIdleTTL      time.Duration
-	permissionTimeout time.Duration
-	logger            *slog.Logger
+	authToken          string
+	allowedRoots       []string
+	allowedAgentIDs    []string
+	agentList          []AgentInfo
+	agent              agents.Streamer
+	turnAgentFactory   TurnAgentFactory
+	agentModelsFactory AgentModelsFactory
+	agentIdleTTL       time.Duration
+	permissionTimeout  time.Duration
+	logger             *slog.Logger
 }
 
 func newTestServer(t *testing.T, opt testServerOptions) *Server {
@@ -1167,16 +1552,17 @@ func newTestServer(t *testing.T, opt testServerOptions) *Server {
 	}
 
 	server := New(Config{
-		AuthToken:         opt.authToken,
-		Agents:            agentList,
-		AllowedAgentIDs:   allowedAgentIDs,
-		AllowedRoots:      allowedRoots,
-		Store:             store,
-		TurnController:    runtimectl.NewTurnController(),
-		TurnAgentFactory:  turnAgentFactory,
-		AgentIdleTTL:      opt.agentIdleTTL,
-		PermissionTimeout: opt.permissionTimeout,
-		Logger:            opt.logger,
+		AuthToken:          opt.authToken,
+		Agents:             agentList,
+		AllowedAgentIDs:    allowedAgentIDs,
+		AllowedRoots:       allowedRoots,
+		Store:              store,
+		TurnController:     runtimectl.NewTurnController(),
+		TurnAgentFactory:   turnAgentFactory,
+		AgentModelsFactory: opt.agentModelsFactory,
+		AgentIdleTTL:       opt.agentIdleTTL,
+		PermissionTimeout:  opt.permissionTimeout,
+		Logger:             opt.logger,
 	})
 	t.Cleanup(func() {
 		_ = server.Close()
@@ -1225,16 +1611,17 @@ func newTestServerWithDBPath(t *testing.T, dbPath string, opt testServerOptions)
 	}
 
 	server := New(Config{
-		AuthToken:         opt.authToken,
-		Agents:            agentList,
-		AllowedAgentIDs:   allowedAgentIDs,
-		AllowedRoots:      allowedRoots,
-		Store:             store,
-		TurnController:    runtimectl.NewTurnController(),
-		TurnAgentFactory:  turnAgentFactory,
-		AgentIdleTTL:      opt.agentIdleTTL,
-		PermissionTimeout: opt.permissionTimeout,
-		Logger:            opt.logger,
+		AuthToken:          opt.authToken,
+		Agents:             agentList,
+		AllowedAgentIDs:    allowedAgentIDs,
+		AllowedRoots:       allowedRoots,
+		Store:              store,
+		TurnController:     runtimectl.NewTurnController(),
+		TurnAgentFactory:   turnAgentFactory,
+		AgentModelsFactory: opt.agentModelsFactory,
+		AgentIdleTTL:       opt.agentIdleTTL,
+		PermissionTimeout:  opt.permissionTimeout,
+		Logger:             opt.logger,
 	})
 	return server, func() {
 		_ = server.Close()
@@ -1398,6 +1785,75 @@ func (s *errorStreamer) Stream(ctx context.Context, input string, onDelta func(d
 		return agents.StopReasonEndTurn, nil
 	}
 	return agents.StopReasonEndTurn, s.err
+}
+
+type configOptionStreamer struct {
+	options        []agents.ConfigOption
+	setConfigCalls atomic.Int32
+	closeCalls     atomic.Int32
+}
+
+func newConfigOptionStreamer(currentModel string, models []agents.ConfigOptionValue) *configOptionStreamer {
+	return &configOptionStreamer{
+		options: []agents.ConfigOption{{
+			ID:           "model",
+			Category:     "model",
+			Name:         "Model",
+			Description:  "Model used for this session",
+			Type:         "select",
+			CurrentValue: currentModel,
+			Options:      models,
+		}},
+	}
+}
+
+func (s *configOptionStreamer) Name() string {
+	return "config-option-streamer"
+}
+
+func (s *configOptionStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = ctx
+	if onDelta != nil {
+		if err := onDelta(input); err != nil {
+			return agents.StopReasonEndTurn, err
+		}
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+func (s *configOptionStreamer) ConfigOptions(ctx context.Context) ([]agents.ConfigOption, error) {
+	_ = ctx
+	return acpmodel.CloneConfigOptions(s.options), nil
+}
+
+func (s *configOptionStreamer) SetConfigOption(ctx context.Context, configID, value string) ([]agents.ConfigOption, error) {
+	_ = ctx
+	configID = strings.TrimSpace(configID)
+	value = strings.TrimSpace(value)
+	if configID == "" || value == "" {
+		return nil, errors.New("invalid config option request")
+	}
+	for i := range s.options {
+		if strings.EqualFold(s.options[i].ID, configID) {
+			s.options[i].CurrentValue = value
+			s.setConfigCalls.Add(1)
+			return acpmodel.CloneConfigOptions(s.options), nil
+		}
+	}
+	return nil, errors.New("config option not found")
+}
+
+func (s *configOptionStreamer) Close() error {
+	s.closeCalls.Add(1)
+	return nil
+}
+
+func (s *configOptionStreamer) SetConfigCalls() int32 {
+	return s.setConfigCalls.Load()
+}
+
+func (s *configOptionStreamer) CloseCount() int32 {
+	return s.closeCalls.Load()
 }
 
 func createThreadHTTP(t *testing.T, baseURL, clientID, root string) string {

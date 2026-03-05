@@ -27,6 +27,8 @@
 - ADR-023: Shared ACP stdio transport for OpenCode and Qwen providers. (Accepted)
 - ADR-024: Claude Code embedded provider via claudeacp runtime. (Accepted)
 - ADR-025: Hard-delete thread endpoint with active-turn lock. (Accepted)
+- ADR-026: Thread-level model override update API and provider reset. (Accepted)
+- ADR-027: ACP-backed agent model catalog endpoint and UI dropdown wiring. (Accepted)
 
 ## ADR-018: Embedded Web UI via Go embed
 
@@ -58,6 +60,39 @@
 - Consequences: deletion is deterministic and race-safe with active turn startup, but remains irreversible (no soft-delete/recover endpoint).
 - Alternatives considered: soft-delete tombstone model, relying only on foreign-key cascades, and best-effort delete without turn-controller lock.
 - Follow-up actions: add optional audit trail for delete operations if compliance requirements increase.
+
+## ADR-026: Thread-level Model Override Update API and Provider Reset
+
+- Status: Accepted
+- Date: 2026-03-05
+- Context: users need to choose model at thread creation time and switch model on existing threads from Web UI/API without breaking one-active-turn-per-thread guarantees.
+- Decision:
+  - standardize thread-level model override as `agentOptions.modelId`.
+  - add `PATCH /v1/threads/{threadId}` to update `agentOptions` for owned threads.
+  - reject updates with `409 CONFLICT` while the thread has an active turn.
+  - close cached per-thread provider after successful update so next turn re-initializes provider/session with new model config.
+  - wire `modelId` into all provider factories; embedded `codex`/`claude` pass it to ACP `session/new` as `model`; `gemini` passes it to `session/new` and `session/prompt`; `opencode` passes `modelId` in `session/prompt`; `qwen` passes `model` in `session/prompt`.
+- Consequences: model switching becomes explicit and deterministic at thread boundary; switching takes effect on next turn (not mid-turn) and may incur one provider re-init.
+- Alternatives considered: in-session mutable model switching without provider reset, and provider-specific update endpoints.
+- Follow-up actions: expose optional model catalogs per agent for richer dropdown UX and validate model ids against runtime-reported config options when available.
+
+## ADR-027: ACP-backed Agent Model Catalog Endpoint and UI Dropdown Wiring
+
+- Status: Accepted
+- Date: 2026-03-05
+- Context: Web UI hardcoded model lists drift from runtime reality; users need model options sourced directly from each agent's ACP runtime so create/switch flows stay accurate across codex/claude/opencode/gemini/qwen.
+- Decision:
+  - add `GET /v1/agents/{agentId}/models` and wire it to a backend `AgentModelsFactory`.
+  - implement per-agent ACP discovery handshake (`initialize` + `session/new`) and parse model options from:
+    - `session/new.configOptions` (`id=model`) for embedded codex/claude (acp-adapter latest).
+    - `session/new.models.availableModels` for opencode/gemini/qwen.
+  - normalize response shape to `[{id,name}]`, de-duplicate by `id`, and return `503 UPSTREAM_UNAVAILABLE` on discovery failure.
+  - replace active-thread free-text model control with dropdown powered by the new endpoint:
+    - active-thread header switches via dropdown + `PATCH /v1/threads/{threadId}`.
+  - keep new-thread modal focused on agent/cwd/title creation and advanced JSON (no dedicated model selector).
+- Consequences: model selection UX is runtime-accurate and provider-specific without frontend hardcoding; failure mode is explicit (upstream unavailable) and localized to model discovery.
+- Alternatives considered: keep hardcoded frontend catalogs, or validate only at prompt-time without exposing a catalog endpoint.
+- Follow-up actions: optionally add short-lived server-side model catalog cache and server-side create/update validation against discovered options.
 
 ## ADR Template
 
@@ -448,3 +483,30 @@ Use this template for new decisions.
 - Follow-up actions:
   - publish `acp-adapter` with `pkg/claudeacp` to a versioned tag and remove the `replace` directive from `go.mod`.
   - add permission round-trip E2E test for Claude (approved/declined/cancelled paths).
+
+## ADR-025: Thread-level model switching via ACP session config options
+
+- Status: Accepted
+- Date: 2026-03-05
+- Context:
+  - model switching previously used thread metadata patch (`PATCH /v1/threads/{threadId}` with `agentOptions.modelId`) and recreated provider state, while ACP now standardizes runtime config through `session/new.configOptions` + `session/set_config_option`.
+  - Web UI requirement is immediate switch on model select (no extra apply action), and model list/selected value must come from ACP session config data (including per-model descriptions).
+- Decision:
+  - add thread-scoped config option endpoints:
+    - `GET /v1/threads/{threadId}/config-options`
+    - `POST /v1/threads/{threadId}/config-options` (`configId`, `value`)
+  - `POST` applies changes through provider `SetConfigOption`, backed by ACP `session/set_config_option`.
+  - support `ConfigOptionManager` on all built-in providers:
+    - embedded (`codex`, `claude`): mutate cached session in-place.
+    - stdio (`opencode`, `qwen`, `gemini`): perform ACP handshake/apply flow and persist resulting model id for subsequent turns.
+  - keep `agentOptions.modelId` as durable thread metadata mirror when `configId=model` succeeds.
+  - Web UI model selector is bound to thread-level `configOptions` model option and applies immediately on `change`.
+- Consequences:
+  - model UX is consistent with ACP protocol semantics and no longer depends on separate apply state.
+  - per-option descriptions are available to UI and rendered beneath selector.
+  - active-turn safety remains strict (`409` on config mutation while turn is active).
+- Alternatives considered:
+  - continue using thread patch only and skip ACP `session/set_config_option`.
+  - expose only agent-level model catalog and infer current model from local metadata.
+- Follow-up actions:
+  - optionally add richer Web UI rendering for non-model config categories (e.g. reasoning level) using the same API.

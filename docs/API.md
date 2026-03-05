@@ -67,7 +67,7 @@ All errors use:
 - Headers: `X-Client-ID` (required), optional bearer auth if enabled.
 - agent status contract:
   - each agent entry reports readiness as `available|unavailable`.
-  - current built-in runtime implementation is `codex`; additional ACP-compatible agent ids may appear as unavailable placeholders until integrated.
+  - current built-in ids are `codex`, `claude`, `gemini`, `qwen`, `opencode`.
 - Response `200`:
 
 ```json
@@ -87,6 +87,23 @@ All errors use:
 }
 ```
 
+2.1 `GET /v1/agents/{agentId}/models`
+- Headers: `X-Client-ID` (required), optional bearer auth if enabled.
+- Behavior:
+  - queries the target agent via ACP (`initialize` + `session/new`) and returns runtime-reported model options.
+  - returns `503 UPSTREAM_UNAVAILABLE` when the agent runtime is unavailable or model discovery handshake fails.
+- Response `200`:
+
+```json
+{
+  "agentId": "codex",
+  "models": [
+    {"id": "gpt-5", "name": "GPT-5"},
+    {"id": "gpt-5-mini", "name": "GPT-5 Mini"}
+  ]
+}
+```
+
 3. `POST /v1/threads`
 - Headers: `X-Client-ID` (required), optional bearer auth if enabled.
 - Request:
@@ -97,13 +114,14 @@ All errors use:
   "cwd": "/abs/path",
   "title": "optional",
   "agentOptions": {
-    "mode": "safe"
+    "mode": "safe",
+    "modelId": "gpt-5"
   }
 }
 ```
 
 - Validation:
-  - `agent` must be in allowlist (currently `codex`; more ACP-compatible agents planned).
+  - `agent` must be in allowlist (`codex|claude|gemini|qwen|opencode`).
   - `cwd` must be absolute.
   - server default policy accepts any absolute `cwd`.
   - create thread only persists row; no agent process is started.
@@ -158,7 +176,44 @@ All errors use:
 }
 ```
 
-5.1 `DELETE /v1/threads/{threadId}`
+5.1 `PATCH /v1/threads/{threadId}`
+- Headers: `X-Client-ID` (required), optional bearer auth if enabled.
+- Ownership rule:
+  - if thread does not exist OR does not belong to `X-Client-ID`, return `404`.
+- Request:
+
+```json
+{
+  "agentOptions": {
+    "modelId": "gpt-5"
+  }
+}
+```
+
+- Behavior:
+  - updates persisted `thread.agentOptions` and `updatedAt`.
+  - if the thread has an active turn, returns `409 CONFLICT`.
+  - closes cached thread-level agent provider so the next turn uses updated options.
+- Response `200`:
+
+```json
+{
+  "thread": {
+    "threadId": "th_...",
+    "agent": "<agent-id>",
+    "cwd": "/abs/path",
+    "title": "optional",
+    "agentOptions": {
+      "modelId": "gpt-5"
+    },
+    "summary": "",
+    "createdAt": "2026-02-28T00:00:00Z",
+    "updatedAt": "2026-02-28T00:05:00Z"
+  }
+}
+```
+
+5.2 `DELETE /v1/threads/{threadId}`
 - Headers: `X-Client-ID` (required), optional bearer auth if enabled.
 - Ownership rule:
   - if thread does not exist OR does not belong to `X-Client-ID`, return `404`.

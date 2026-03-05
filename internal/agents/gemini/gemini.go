@@ -18,26 +18,34 @@ import (
 	"time"
 
 	"github.com/beyond5959/go-acp-server/internal/agents"
+	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
 )
 
 const (
-	jsonRPCVersion         = "2.0"
-	methodNotFound         = -32601
-	updateTypeMessageChunk = "agent_message_chunk"
+	jsonRPCVersion               = "2.0"
+	methodNotFound               = -32601
+	updateTypeMessageChunk       = "agent_message_chunk"
+	methodSessionSetConfigOption = "session/set_config_option"
 )
 
 // Config configures the Gemini CLI ACP stdio provider.
 type Config struct {
 	// Dir is the working directory for the Gemini session.
 	Dir string
+	// ModelID is the optional model identifier.
+	ModelID string
 }
 
 // Client runs one gemini --experimental-acp process per Stream call.
 type Client struct {
-	dir string
+	mu sync.RWMutex
+
+	dir     string
+	modelID string
 }
 
 var _ agents.Streamer = (*Client)(nil)
+var _ agents.ConfigOptionManager = (*Client)(nil)
 
 // New constructs a Gemini CLI ACP client.
 func New(cfg Config) (*Client, error) {
@@ -45,7 +53,10 @@ func New(cfg Config) (*Client, error) {
 	if dir == "" {
 		return nil, errors.New("gemini: Dir is required")
 	}
-	return &Client{dir: dir}, nil
+	return &Client{
+		dir:     dir,
+		modelID: strings.TrimSpace(cfg.ModelID),
+	}, nil
 }
 
 // Preflight checks that the gemini binary is available in PATH.
@@ -60,6 +71,48 @@ func Preflight() error {
 // Name returns the provider identifier.
 func (c *Client) Name() string { return "gemini" }
 
+// ConfigOptions queries ACP session config options.
+func (c *Client) ConfigOptions(ctx context.Context) ([]agents.ConfigOption, error) {
+	if c == nil {
+		return nil, errors.New("gemini: nil client")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.runConfigSession(ctx, c.currentModelID(), "", "")
+}
+
+// SetConfigOption applies one ACP session config option.
+func (c *Client) SetConfigOption(ctx context.Context, configID, value string) ([]agents.ConfigOption, error) {
+	if c == nil {
+		return nil, errors.New("gemini: nil client")
+	}
+	configID = strings.TrimSpace(configID)
+	value = strings.TrimSpace(value)
+	if configID == "" {
+		return nil, errors.New("gemini: configID is required")
+	}
+	if value == "" {
+		return nil, errors.New("gemini: value is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	options, err := c.runConfigSession(ctx, c.currentModelID(), configID, value)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(configID, "model") {
+		current := acpmodel.CurrentValueForConfig(options, "model")
+		if current == "" {
+			current = value
+		}
+		c.setModelID(current)
+	}
+	return options, nil
+}
+
 // Stream spawns gemini --experimental-acp, runs one turn, and streams deltas via onDelta.
 func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
 	if c == nil {
@@ -68,6 +121,8 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 	if onDelta == nil {
 		return agents.StopReasonEndTurn, errors.New("gemini: onDelta callback is required")
 	}
+
+	modelID := c.currentModelID()
 
 	// Create a fresh GEMINI_CLI_HOME to prevent Gemini CLI from writing
 	// interactive auth prompts to stdout, which would corrupt the ACP stream.
@@ -121,10 +176,14 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 	}
 
 	// 2. session/new
-	newResult, err := conn.Call(ctx, "session/new", map[string]any{
+	newParams := map[string]any{
 		"cwd":        c.dir,
 		"mcpServers": []any{},
-	})
+	}
+	if modelID != "" {
+		newParams["model"] = modelID
+	}
+	newResult, err := conn.Call(ctx, "session/new", newParams)
 	if err != nil {
 		return agents.StopReasonEndTurn, fmt.Errorf("gemini: session/new: %w", err)
 	}
@@ -199,10 +258,14 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 	})
 
 	// 5. session/prompt — blocks until the model finishes or ctx is cancelled.
-	promptResult, err := conn.Call(ctx, "session/prompt", map[string]any{
+	promptParams := map[string]any{
 		"sessionId": sessionID,
 		"prompt":    []map[string]any{{"type": "text", "text": input}},
-	})
+	}
+	if modelID != "" {
+		promptParams["model"] = modelID
+	}
+	promptResult, err := conn.Call(ctx, "session/prompt", promptParams)
 	if err != nil {
 		if ctx.Err() != nil {
 			c.sendCancel(conn, sessionID)
@@ -221,6 +284,102 @@ func (c *Client) sendCancel(conn *rpcConn, sessionID string) {
 	cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	conn.Notify(cancelCtx, "session/cancel", map[string]any{"sessionId": sessionID})
+}
+
+func (c *Client) currentModelID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.modelID)
+}
+
+func (c *Client) setModelID(modelID string) {
+	c.mu.Lock()
+	c.modelID = strings.TrimSpace(modelID)
+	c.mu.Unlock()
+}
+
+func (c *Client) runConfigSession(ctx context.Context, modelID, configID, value string) ([]agents.ConfigOption, error) {
+	cliHome, err := makeCLIHome()
+	if err != nil {
+		return nil, fmt.Errorf("gemini: config options create CLI home: %w", err)
+	}
+	defer os.RemoveAll(cliHome)
+
+	cmd := exec.Command("gemini", "--experimental-acp")
+	cmd.Env = buildGeminiCLIEnv(cliHome)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("gemini: config options open stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("gemini: config options open stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("gemini: config options open stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("gemini: config options start process: %w", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() { _, _ = io.Copy(io.Discard, stderr) }()
+	go func() { errCh <- cmd.Wait() }()
+
+	conn := newRPCConn(stdin, stdout)
+	defer conn.Close()
+	defer terminateProcess(cmd, errCh)
+
+	if _, err := conn.Call(ctx, "initialize", map[string]any{
+		"protocolVersion": 1,
+		"clientCapabilities": map[string]any{
+			"fs": map[string]any{
+				"readTextFile":  false,
+				"writeTextFile": false,
+			},
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("gemini: config options initialize: %w", err)
+	}
+
+	newParams := map[string]any{
+		"cwd":        c.dir,
+		"mcpServers": []any{},
+	}
+	if modelID != "" {
+		newParams["model"] = modelID
+		newParams["modelId"] = modelID
+	}
+	newResult, err := conn.Call(ctx, "session/new", newParams)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: config options session/new: %w", err)
+	}
+
+	options := acpmodel.ExtractConfigOptions(newResult)
+	if configID == "" {
+		return options, nil
+	}
+
+	sessionID := parseSessionID(newResult)
+	if sessionID == "" {
+		return nil, errors.New("gemini: config options session/new returned empty sessionId")
+	}
+	setResult, err := conn.Call(ctx, methodSessionSetConfigOption, map[string]any{
+		"sessionId": sessionID,
+		"configId":  configID,
+		"value":     value,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gemini: config options session/set_config_option: %w", err)
+	}
+
+	updated := acpmodel.ExtractConfigOptions(setResult)
+	if len(updated) == 0 {
+		return options, nil
+	}
+	return updated, nil
 }
 
 // buildPermResponse constructs a RequestPermissionResponse for the given optionId.

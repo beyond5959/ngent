@@ -9,15 +9,18 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beyond5959/go-acp-server/internal/agents"
+	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
 	"github.com/beyond5959/go-acp-server/internal/agents/acpstdio"
 	"github.com/beyond5959/go-acp-server/internal/agents/agentutil"
 )
 
 const (
-	updateTypeMessageChunk = "agent_message_chunk"
+	updateTypeMessageChunk       = "agent_message_chunk"
+	methodSessionSetConfigOption = "session/set_config_option"
 
 	defaultPermissionTimeout = 15 * time.Second
 )
@@ -32,11 +35,14 @@ type Config struct {
 
 // Client runs one qwen --acp process per Stream call.
 type Client struct {
+	mu sync.RWMutex
+
 	dir     string
 	modelID string
 }
 
 var _ agents.Streamer = (*Client)(nil)
+var _ agents.ConfigOptionManager = (*Client)(nil)
 
 // New constructs a Qwen ACP client.
 func New(cfg Config) (*Client, error) {
@@ -58,6 +64,48 @@ func Preflight() error {
 // Name returns the provider identifier.
 func (c *Client) Name() string { return "qwen" }
 
+// ConfigOptions queries ACP session config options.
+func (c *Client) ConfigOptions(ctx context.Context) ([]agents.ConfigOption, error) {
+	if c == nil {
+		return nil, errors.New("qwen: nil client")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.runConfigSession(ctx, c.currentModelID(), "", "")
+}
+
+// SetConfigOption applies one ACP session config option.
+func (c *Client) SetConfigOption(ctx context.Context, configID, value string) ([]agents.ConfigOption, error) {
+	if c == nil {
+		return nil, errors.New("qwen: nil client")
+	}
+	configID = strings.TrimSpace(configID)
+	value = strings.TrimSpace(value)
+	if configID == "" {
+		return nil, errors.New("qwen: configID is required")
+	}
+	if value == "" {
+		return nil, errors.New("qwen: value is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	options, err := c.runConfigSession(ctx, c.currentModelID(), configID, value)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(configID, "model") {
+		current := acpmodel.CurrentValueForConfig(options, "model")
+		if current == "" {
+			current = value
+		}
+		c.setModelID(current)
+	}
+	return options, nil
+}
+
 // Stream spawns qwen --acp, runs one turn, and streams deltas via onDelta.
 func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
 	if c == nil {
@@ -69,6 +117,8 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	modelID := c.currentModelID()
 
 	cmd := exec.Command("qwen", "--acp")
 	cmd.Dir = c.dir
@@ -223,6 +273,9 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		"sessionId": sessionID,
 		"prompt":    []map[string]any{{"type": "text", "text": input}},
 	}
+	if modelID != "" {
+		promptParams["model"] = modelID
+	}
 
 	promptResult, err := conn.Call(ctx, "session/prompt", promptParams)
 	if err != nil {
@@ -297,4 +350,95 @@ func pickPermissionOptionID(options []struct {
 		}
 	}
 	return ""
+}
+
+func (c *Client) currentModelID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.modelID)
+}
+
+func (c *Client) setModelID(modelID string) {
+	c.mu.Lock()
+	c.modelID = strings.TrimSpace(modelID)
+	c.mu.Unlock()
+}
+
+func (c *Client) runConfigSession(ctx context.Context, modelID, configID, value string) ([]agents.ConfigOption, error) {
+	cmd := exec.Command("qwen", "--acp")
+	cmd.Dir = c.dir
+	cmd.Env = os.Environ()
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("qwen: config options open stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("qwen: config options open stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("qwen: config options open stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("qwen: config options start process: %w", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() { _, _ = io.Copy(io.Discard, stderr) }()
+	go func() { errCh <- cmd.Wait() }()
+
+	conn := acpstdio.NewConn(stdin, stdout, "qwen")
+	defer conn.Close()
+	defer acpstdio.TerminateProcess(cmd, errCh, 2*time.Second)
+
+	if _, err := conn.Call(ctx, "initialize", map[string]any{
+		"protocolVersion": 1,
+		"clientCapabilities": map[string]any{
+			"fs": map[string]any{
+				"readTextFile":  false,
+				"writeTextFile": false,
+			},
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("qwen: config options initialize: %w", err)
+	}
+
+	newParams := map[string]any{
+		"cwd":        c.dir,
+		"mcpServers": []any{},
+	}
+	if modelID != "" {
+		newParams["model"] = modelID
+		newParams["modelId"] = modelID
+	}
+	newResult, err := conn.Call(ctx, "session/new", newParams)
+	if err != nil {
+		return nil, fmt.Errorf("qwen: config options session/new: %w", err)
+	}
+
+	options := acpmodel.ExtractConfigOptions(newResult)
+	if configID == "" {
+		return options, nil
+	}
+
+	sessionID := acpstdio.ParseSessionID(newResult)
+	if sessionID == "" {
+		return nil, errors.New("qwen: config options session/new returned empty sessionId")
+	}
+	setResult, err := conn.Call(ctx, methodSessionSetConfigOption, map[string]any{
+		"sessionId": sessionID,
+		"configId":  configID,
+		"value":     value,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("qwen: config options session/set_config_option: %w", err)
+	}
+
+	updated := acpmodel.ExtractConfigOptions(setResult)
+	if len(updated) == 0 {
+		return options, nil
+	}
+	return updated, nil
 }

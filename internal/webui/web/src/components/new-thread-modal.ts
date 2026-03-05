@@ -14,23 +14,12 @@ const iconChevron = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"
 </svg>`
 
 // ── Agent Icons ─────────────────────────────────────────────────────────────
-// Official brand icons via Simple Icons (https://simpleicons.org, CC0 license)
-// Layout: 32×32 rounded-rect badge (brand color) + white icon path (24×24, inset 4px)
 
 const agentIcons: Record<string, string> = {
-  // Codex official icon — developers.openai.com/images/codex/codex-banner-icon.webp
   codex: `<img src="/codex-icon.png" width="32" height="32" alt="Codex" style="border-radius:8px;display:block;">`,
-
-  // Gemini CLI official icon — https://geminicli.com/icon.png
   gemini: `<img src="/gemini-icon.png" width="32" height="32" alt="Gemini CLI" style="border-radius:8px;display:block;">`,
-
-  // Claude Code official icon — lobehub/lobe-icons claude-color.png
   claude: `<img src="/claude-icon.png" width="32" height="32" alt="Claude Code" style="border-radius:8px;display:block;">`,
-
-  // OpenCode icon from local asset
   opencode: `<img src="/opencode-icon.png" width="32" height="32" alt="OpenCode" style="border-radius:8px;display:block;object-fit:contain;background:#ffffff;">`,
-
-  // Qwen Code icon from local asset
   qwen: `<img src="/qwen-icon.png" width="32" height="32" alt="Qwen Code" style="border-radius:8px;display:block;">`,
 }
 
@@ -79,7 +68,7 @@ function renderAgentCard(agent: AgentInfo, selected: boolean): string {
 
 function renderModal(s: ModalState, agents: AgentInfo[]): string {
   const cwdInvalid = s.cwd.length > 0 && !isAbsolutePath(s.cwd)
-  const canSubmit   = s.selectedAgent && isAbsolutePath(s.cwd) && !s.submitting
+  const canSubmit = !!s.selectedAgent && isAbsolutePath(s.cwd) && !s.submitting
 
   return `
     <div class="modal-overlay" id="new-thread-overlay" role="dialog" aria-modal="true" aria-label="New thread">
@@ -117,8 +106,8 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
               spellcheck="false"
             />
             ${cwdInvalid
-              ? `<p class="form-hint form-hint--error">Path must be absolute (start with /)</p>`
-              : `<p class="form-hint">Absolute path to the project directory.</p>`}
+              ? `<p class="form-hint form-hint--error" id="cwd-hint">Path must be absolute (start with /)</p>`
+              : `<p class="form-hint" id="cwd-hint">Absolute path to the project directory.</p>`}
           </div>
 
           <div class="form-group">
@@ -177,7 +166,6 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
 let container: HTMLDivElement | null = null
 let onCreated: ((threadId: string) => void) | null = null
 
-// Mutable modal state (re-rendered on change)
 let modalState: ModalState = {
   selectedAgent: '',
   cwd: '',
@@ -206,8 +194,8 @@ function mount(cb: (threadId: string) => void): void {
   onCreated = cb
 
   const agents = store.get().agents
-  // Pre-select first available agent
   const firstAvailable = agents.find(a => a.status === 'available')
+
   modalState = {
     selectedAgent: firstAvailable?.id ?? (agents[0]?.id ?? ''),
     cwd: '',
@@ -232,59 +220,51 @@ function mount(cb: (threadId: string) => void): void {
 function bindEvents(): void {
   if (!container) return
 
-  // Backdrop click
   container.querySelector('#new-thread-overlay')?.addEventListener('click', e => {
     if ((e.target as HTMLElement).id === 'new-thread-overlay') unmount()
   })
 
-  // Close / cancel
   container.querySelector('#new-thread-close')?.addEventListener('click', unmount)
   container.querySelector('#new-thread-cancel')?.addEventListener('click', unmount)
 
-  // Escape key
   const onEsc = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { unmount(); document.removeEventListener('keydown', onEsc) }
   }
   document.addEventListener('keydown', onEsc)
 
-  // Agent radio
   container.querySelector('#agent-grid')?.addEventListener('change', e => {
     const radio = e.target as HTMLInputElement
     if (radio.name === 'agent') {
-      modalState = { ...modalState, selectedAgent: radio.value, error: '' }
-      // Update card highlights without full re-render
-      container?.querySelectorAll('.agent-card').forEach(card => {
-        const r = card.querySelector<HTMLInputElement>('input[type=radio]')
-        card.classList.toggle('agent-card--selected', r?.checked ?? false)
-      })
+      modalState = {
+        ...modalState,
+        selectedAgent: radio.value,
+        error: '',
+      }
+      refreshAgentSelection()
+      clearModalErrorBanner()
       refreshSubmitButton()
     }
   })
 
-  // CWD input
   container.querySelector<HTMLInputElement>('#cwd-input')?.addEventListener('input', e => {
     modalState = { ...modalState, cwd: (e.target as HTMLInputElement).value.trim(), error: '' }
     refreshCwdHint()
     refreshSubmitButton()
   })
 
-  // Title input
   container.querySelector<HTMLInputElement>('#title-input')?.addEventListener('input', e => {
     modalState = { ...modalState, title: (e.target as HTMLInputElement).value }
   })
 
-  // Agent options textarea
   container.querySelector<HTMLTextAreaElement>('#agent-options-input')?.addEventListener('input', e => {
     modalState = { ...modalState, agentOptionsRaw: (e.target as HTMLTextAreaElement).value }
   })
 
-  // Advanced toggle
   container.querySelector('#advanced-toggle')?.addEventListener('click', () => {
     modalState = { ...modalState, advancedOpen: !modalState.advancedOpen }
     container?.querySelector('.collapsible')?.classList.toggle('collapsible--open', modalState.advancedOpen)
   })
 
-  // Submit
   container.querySelector('#new-thread-submit')?.addEventListener('click', () => void submit())
 }
 
@@ -292,7 +272,7 @@ function bindEvents(): void {
 
 function refreshCwdHint(): void {
   const input = container?.querySelector<HTMLInputElement>('#cwd-input')
-  const hint  = container?.querySelector<HTMLElement>('.form-hint')
+  const hint = container?.querySelector<HTMLElement>('#cwd-hint')
   if (!input || !hint) return
   const invalid = input.value.length > 0 && !isAbsolutePath(input.value.trim())
   input.classList.toggle('settings-input--error', invalid)
@@ -309,12 +289,32 @@ function refreshSubmitButton(): void {
   btn.disabled = !ok
 }
 
+function refreshAgentSelection(): void {
+  const grid = container?.querySelector('#agent-grid')
+  if (!grid) return
+  const radios = grid.querySelectorAll<HTMLInputElement>('input[name="agent"]')
+  radios.forEach(radio => {
+    const selected = radio.value === modalState.selectedAgent
+    radio.checked = selected
+    const card = radio.closest('.agent-card')
+    if (card) {
+      card.classList.toggle('agent-card--selected', selected)
+    }
+  })
+}
+
+function clearModalErrorBanner(): void {
+  const banner = container?.querySelector('#modal-error')
+  if (banner) {
+    banner.remove()
+  }
+}
+
 // ── Submit ─────────────────────────────────────────────────────────────────
 
 async function submit(): Promise<void> {
   if (!container) return
 
-  // Parse optional agent options
   let agentOptions: Record<string, unknown> | undefined
   if (modalState.agentOptionsRaw.trim()) {
     try {
@@ -337,9 +337,12 @@ async function submit(): Promise<void> {
       agentOptions,
     })
 
-    // Refresh thread list in store
     const threads = await api.getThreads()
-    store.set({ threads, activeThreadId: threadId })
+    const state = store.get()
+    const nextMessages = Object.prototype.hasOwnProperty.call(state.messages, threadId)
+      ? state.messages
+      : { ...state.messages, [threadId]: [] }
+    store.set({ threads, activeThreadId: threadId, messages: nextMessages })
 
     unmount()
     onCreated?.(threadId)

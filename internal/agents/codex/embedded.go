@@ -16,6 +16,7 @@ import (
 
 	"github.com/beyond5959/acp-adapter/pkg/codexacp"
 	"github.com/beyond5959/go-acp-server/internal/agents"
+	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
 )
 
 const (
@@ -25,18 +26,20 @@ const (
 	methodSessionNew             = "session/new"
 	methodSessionPrompt          = "session/prompt"
 	methodSessionCancel          = "session/cancel"
+	methodSessionSetConfigOption = "session/set_config_option"
 	methodSessionUpdate          = "session/update"
 	methodSessionRequestApproval = "session/request_permission"
 )
 
 const (
-	defaultStartTimeout   = 8 * time.Second
+	defaultStartTimeout   = 30 * time.Second
 	defaultRequestTimeout = 15 * time.Second
 )
 
 // Config configures one embedded codex runtime provider instance.
 type Config struct {
 	Dir            string
+	ModelID        string
 	Name           string
 	RuntimeConfig  codexacp.RuntimeConfig
 	StartTimeout   time.Duration
@@ -45,8 +48,9 @@ type Config struct {
 
 // Client streams turn output through one in-process codex-acp runtime.
 type Client struct {
-	name string
-	dir  string
+	name    string
+	dir     string
+	modelID string
 
 	runtimeConfig  codexacp.RuntimeConfig
 	startTimeout   time.Duration
@@ -59,10 +63,13 @@ type Client struct {
 	runtime   *codexacp.EmbeddedRuntime
 	sessionID string
 
+	configOptions []agents.ConfigOption
+
 	requestSeq uint64
 }
 
 var _ agents.Streamer = (*Client)(nil)
+var _ agents.ConfigOptionManager = (*Client)(nil)
 var _ io.Closer = (*Client)(nil)
 
 // DefaultRuntimeConfig returns the default embedded runtime configuration.
@@ -152,6 +159,7 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		name:           name,
 		dir:            strings.TrimSpace(cfg.Dir),
+		modelID:        strings.TrimSpace(cfg.ModelID),
 		runtimeConfig:  runtimeCfg,
 		startTimeout:   startTimeout,
 		requestTimeout: requestTimeout,
@@ -164,6 +172,63 @@ func (c *Client) Name() string {
 		return "codex-embedded"
 	}
 	return c.name
+}
+
+// ConfigOptions returns current ACP session config options.
+func (c *Client) ConfigOptions(ctx context.Context) ([]agents.ConfigOption, error) {
+	if c == nil {
+		return nil, errors.New("codex: nil client")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, _, err := c.ensureInitialized(ctx); err != nil {
+		return nil, fmt.Errorf("codex: initialize runtime: %w", err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return acpmodel.CloneConfigOptions(c.configOptions), nil
+}
+
+// SetConfigOption applies one ACP session config option and returns latest options.
+func (c *Client) SetConfigOption(ctx context.Context, configID, value string) ([]agents.ConfigOption, error) {
+	if c == nil {
+		return nil, errors.New("codex: nil client")
+	}
+	configID = strings.TrimSpace(configID)
+	value = strings.TrimSpace(value)
+	if configID == "" {
+		return nil, errors.New("codex: configID is required")
+	}
+	if value == "" {
+		return nil, errors.New("codex: value is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	runtime, sessionID, err := c.ensureInitialized(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("codex: initialize runtime: %w", err)
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
+	defer cancel()
+	resp, err := c.clientRequest(reqCtx, runtime, methodSessionSetConfigOption, map[string]any{
+		"sessionId": sessionID,
+		"configId":  configID,
+		"value":     value,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("codex: session/set_config_option failed: %w", err)
+	}
+
+	options := acpmodel.ExtractConfigOptions(resp.Result)
+	c.mu.Lock()
+	c.configOptions = acpmodel.CloneConfigOptions(options)
+	c.mu.Unlock()
+	return acpmodel.CloneConfigOptions(options), nil
 }
 
 // Close closes the embedded runtime.
@@ -181,6 +246,7 @@ func (c *Client) Close() error {
 	runtime := c.runtime
 	c.runtime = nil
 	c.sessionID = ""
+	c.configOptions = nil
 	c.mu.Unlock()
 
 	if runtime != nil {
@@ -320,6 +386,7 @@ func (c *Client) resetRuntime() {
 	runtime := c.runtime
 	c.runtime = nil
 	c.sessionID = ""
+	c.configOptions = nil
 	c.mu.Unlock()
 
 	if runtime != nil {
@@ -458,9 +525,13 @@ func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRunti
 		return nil, "", err
 	}
 
-	sessionResp, err := c.clientRequest(startCtx, runtime, methodSessionNew, map[string]any{
+	newParams := map[string]any{
 		"cwd": c.dir,
-	})
+	}
+	if c.modelID != "" {
+		newParams["model"] = c.modelID
+	}
+	sessionResp, err := c.clientRequest(startCtx, runtime, methodSessionNew, newParams)
 	if err != nil {
 		_ = runtime.Close()
 		return nil, "", err
@@ -471,6 +542,7 @@ func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRunti
 		_ = runtime.Close()
 		return nil, "", err
 	}
+	configOptions := acpmodel.ExtractConfigOptions(sessionResp.Result)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -485,6 +557,7 @@ func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRunti
 
 	c.runtime = runtime
 	c.sessionID = sessionID
+	c.configOptions = acpmodel.CloneConfigOptions(configOptions)
 	return c.runtime, c.sessionID, nil
 }
 

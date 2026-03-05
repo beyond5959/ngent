@@ -339,6 +339,46 @@ func TestUpdateThreadSummaryAndInternalTurnFlag(t *testing.T) {
 	}
 }
 
+func TestUpdateThreadAgentOptions(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	defer func() {
+		_ = store.Close()
+	}()
+
+	if err := store.UpsertClient(ctx, "client-model"); err != nil {
+		t.Fatalf("UpsertClient(): %v", err)
+	}
+	_, err := store.CreateThread(ctx, CreateThreadParams{
+		ThreadID:         "th-model",
+		ClientID:         "client-model",
+		AgentID:          "codex",
+		CWD:              "/tmp/project-model",
+		Title:            "model-test",
+		AgentOptionsJSON: "{}",
+		Summary:          "",
+	})
+	if err != nil {
+		t.Fatalf("CreateThread(): %v", err)
+	}
+
+	if err := store.UpdateThreadAgentOptions(ctx, "th-model", `{"modelId":"gpt-5"}`); err != nil {
+		t.Fatalf("UpdateThreadAgentOptions(): %v", err)
+	}
+
+	thread, err := store.GetThread(ctx, "th-model")
+	if err != nil {
+		t.Fatalf("GetThread(th-model): %v", err)
+	}
+	if thread.AgentOptionsJSON != `{"modelId":"gpt-5"}` {
+		t.Fatalf("agent options = %q, want %q", thread.AgentOptionsJSON, `{"modelId":"gpt-5"}`)
+	}
+
+	if err := store.UpdateThreadAgentOptions(ctx, "missing-thread", `{"modelId":"gpt-5"}`); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("UpdateThreadAgentOptions(missing) err = %v, want ErrNotFound", err)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

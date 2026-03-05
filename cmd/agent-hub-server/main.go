@@ -112,6 +112,7 @@ func main() {
 		logger.Error("startup.invalid_allowed_roots", "error", err.Error())
 		os.Exit(1)
 	}
+	modelDiscoveryDir := resolveModelDiscoveryDir(allowedRoots)
 	if err := ensureDBPathParent(*dbPath); err != nil {
 		logger.Error("startup.invalid_db_path", "error", err.Error(), "dbPath", *dbPath)
 		os.Exit(1)
@@ -137,34 +138,76 @@ func main() {
 		Store:           store,
 		TurnController:  turnController,
 		TurnAgentFactory: func(thread storage.Thread) (agentimpl.Streamer, error) {
+			modelID := extractModelID(thread.AgentOptionsJSON)
 			switch thread.AgentID {
 			case "codex":
 				return codexagent.New(codexagent.Config{
 					Dir:           thread.CWD,
+					ModelID:       modelID,
 					Name:          "codex-embedded",
 					RuntimeConfig: codexRuntimeConfig,
 				})
 			case "opencode":
-				modelID := extractModelID(thread.AgentOptionsJSON)
 				return opencodeagent.New(opencodeagent.Config{
 					Dir:     thread.CWD,
 					ModelID: modelID,
 				})
 			case "gemini":
-				return geminiagent.New(geminiagent.Config{Dir: thread.CWD})
+				return geminiagent.New(geminiagent.Config{
+					Dir:     thread.CWD,
+					ModelID: modelID,
+				})
 			case "qwen":
-				modelID := extractModelID(thread.AgentOptionsJSON)
 				return qwenagent.New(qwenagent.Config{
 					Dir:     thread.CWD,
 					ModelID: modelID,
 				})
 			case "claude":
 				return claudeagent.New(claudeagent.Config{
-					Dir:  thread.CWD,
-					Name: "claude-embedded",
+					Dir:     thread.CWD,
+					ModelID: modelID,
+					Name:    "claude-embedded",
 				})
 			default:
 				return nil, fmt.Errorf("unsupported thread agent %q", thread.AgentID)
+			}
+		},
+		AgentModelsFactory: func(ctx context.Context, agentID string) ([]agentimpl.ModelOption, error) {
+			switch agentID {
+			case "codex":
+				if codexPreflightErr != nil {
+					return nil, codexPreflightErr
+				}
+				return codexagent.DiscoverModels(ctx, codexagent.Config{
+					Dir:           modelDiscoveryDir,
+					Name:          "codex-embedded",
+					RuntimeConfig: codexRuntimeConfig,
+				})
+			case "claude":
+				if claudePreflightErr != nil {
+					return nil, claudePreflightErr
+				}
+				return claudeagent.DiscoverModels(ctx, claudeagent.Config{
+					Dir:  modelDiscoveryDir,
+					Name: "claude-embedded",
+				})
+			case "gemini":
+				if geminiPreflightErr != nil {
+					return nil, geminiPreflightErr
+				}
+				return geminiagent.DiscoverModels(ctx, geminiagent.Config{Dir: modelDiscoveryDir})
+			case "qwen":
+				if qwenPreflightErr != nil {
+					return nil, qwenPreflightErr
+				}
+				return qwenagent.DiscoverModels(ctx, qwenagent.Config{Dir: modelDiscoveryDir})
+			case "opencode":
+				if opencodePreflightErr != nil {
+					return nil, opencodePreflightErr
+				}
+				return opencodeagent.DiscoverModels(ctx, opencodeagent.Config{Dir: modelDiscoveryDir})
+			default:
+				return nil, fmt.Errorf("unsupported agent %q", agentID)
 			}
 		},
 		ContextRecentTurns: *contextRecentTurns,
@@ -259,6 +302,24 @@ func supportedAgents(codexAvailable, opencodeAvailable, geminiAvailable, qwenAva
 		{ID: "qwen", Name: "Qwen Code", Status: qwenStatus},
 		{ID: "opencode", Name: "OpenCode", Status: opencodeStatus},
 	}
+}
+
+func resolveModelDiscoveryDir(allowedRoots []string) string {
+	for _, root := range allowedRoots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		info, err := os.Stat(root)
+		if err == nil && info.IsDir() {
+			return root
+		}
+	}
+	wd, err := os.Getwd()
+	if err == nil && strings.TrimSpace(wd) != "" {
+		return wd
+	}
+	return "/"
 }
 
 func validateListenAddr(listenAddr string, allowPublic bool) (string, int, error) {

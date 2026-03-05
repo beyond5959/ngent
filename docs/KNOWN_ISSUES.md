@@ -120,3 +120,21 @@
 - Symptom: deleting a thread permanently removes its thread/turn/event history and cannot be restored through server APIs.
 - Workaround: export needed history before delete.
 - Follow-up plan: evaluate optional soft-delete retention window and admin-only restore endpoint if product requirements demand recoverability.
+
+- ID: KI-012
+- Title: Model override id is accepted as free text
+- Status: Open
+- Severity: Low
+- Affects: thread create/update flows using `agentOptions.modelId`
+- Symptom: direct API clients can still submit any `modelId`; unsupported values fail later during provider/runtime execution instead of being rejected at create/update time.
+- Workaround: query `GET /v1/agents/{agentId}/models` first, then submit a returned model id (or omit `modelId` to use provider default model).
+- Follow-up plan: add optional server-side validation in create/update path against runtime-discovered model catalogs.
+
+- ID: KI-013
+- Title: Stdio providers apply config in transient ACP sessions
+- Status: Open
+- Severity: Low
+- Affects: `opencode` / `qwen` / `gemini` model switching behavior
+- Symptom: these providers are process-per-turn; `session/set_config_option` is applied during a short ACP config session and mirrored into persisted `agentOptions.modelId`, but there is no long-lived runtime session to mutate between turns.
+- Workaround: none required for normal usage; model selection is still effective for subsequent turns through persisted model id.
+- Follow-up plan: evaluate persistent per-thread ACP runtime for stdio agents if future product requirements need truly in-session config mutations beyond model selection.

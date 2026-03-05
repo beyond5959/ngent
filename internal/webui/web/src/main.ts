@@ -5,7 +5,7 @@ import { applyTheme, settingsPanel } from './components/settings-panel.ts'
 import { newThreadModal } from './components/new-thread-modal.ts'
 import { mountPermissionCard, PERMISSION_TIMEOUT_MS } from './components/permission-card.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
-import type { Thread, Message, Turn, StreamState } from './types.ts'
+import type { Thread, Message, ConfigOption, ConfigOptionValue, Turn, StreamState } from './types.ts'
 import type { TurnStream, PermissionRequiredPayload } from './sse.ts'
 import { escHtml, formatRelativeTime, formatTimestamp, generateUUID } from './utils.ts'
 
@@ -52,6 +52,106 @@ const geminiIconURL = '/gemini-icon.png'
 const claudeIconURL = '/claude-icon.png'
 const opencodeIconURL = '/opencode-icon.png'
 const qwenIconURL = '/qwen-icon.png'
+
+const threadConfigCache = new Map<string, ConfigOption[]>()
+const threadConfigInFlight = new Map<string, Promise<ConfigOption[]>>()
+const threadModelSwitching = new Set<string>()
+
+function cloneConfigOptions(options: ConfigOption[]): ConfigOption[] {
+  return options.map(option => ({
+    ...option,
+    options: [...(option.options ?? [])],
+  }))
+}
+
+function normalizeConfigOptions(options: ConfigOption[]): ConfigOption[] {
+  const byId = new Set<string>()
+  const normalized: ConfigOption[] = []
+
+  for (const rawOption of options) {
+    const id = rawOption.id?.trim() ?? ''
+    if (!id || byId.has(id)) continue
+    byId.add(id)
+
+    const seenValue = new Set<string>()
+    const values: ConfigOptionValue[] = []
+    for (const rawValue of rawOption.options ?? []) {
+      const value = rawValue.value?.trim() ?? ''
+      if (!value || seenValue.has(value)) continue
+      seenValue.add(value)
+      values.push({
+        value,
+        name: (rawValue.name || value).trim() || value,
+        description: rawValue.description?.trim() || undefined,
+      })
+    }
+
+    const currentValue = rawOption.currentValue?.trim() ?? ''
+    if (currentValue && !seenValue.has(currentValue)) {
+      values.unshift({ value: currentValue, name: currentValue })
+      seenValue.add(currentValue)
+    }
+
+    normalized.push({
+      id,
+      category: rawOption.category?.trim() || undefined,
+      name: rawOption.name?.trim() || id,
+      description: rawOption.description?.trim() || undefined,
+      type: rawOption.type?.trim() || undefined,
+      currentValue,
+      options: values,
+    })
+  }
+  return normalized
+}
+
+function cacheThreadConfigOptions(threadId: string, options: ConfigOption[]): ConfigOption[] {
+  const normalized = normalizeConfigOptions(options)
+  threadConfigCache.set(threadId, normalized)
+  return normalized
+}
+
+function findModelOption(options: ConfigOption[]): ConfigOption | null {
+  for (const option of options) {
+    const category = option.category?.trim().toLowerCase() ?? ''
+    const id = option.id.trim().toLowerCase()
+    if (category === 'model' || id === 'model') {
+      return option
+    }
+  }
+  return null
+}
+
+function fallbackThreadModelID(thread: Thread): string {
+  const model = thread.agentOptions?.modelId
+  return typeof model === 'string' ? model.trim() : ''
+}
+
+async function loadThreadConfigOptions(threadId: string): Promise<ConfigOption[]> {
+  const normalized = threadId.trim()
+  if (!normalized) return []
+
+  if (threadConfigCache.has(normalized)) {
+    return cloneConfigOptions(threadConfigCache.get(normalized) ?? [])
+  }
+  const inFlight = threadConfigInFlight.get(normalized)
+  if (inFlight) {
+    return inFlight
+  }
+
+  const task = api.getThreadConfigOptions(normalized)
+    .then(options => cloneConfigOptions(cacheThreadConfigOptions(normalized, options)))
+    .catch(err => {
+      threadConfigCache.set(normalized, [])
+      throw err
+    })
+    .finally(() => {
+      threadConfigInFlight.delete(normalized)
+    })
+
+  threadConfigInFlight.set(normalized, task)
+  return task
+}
 
 // ── Active stream state (DOM-managed, per thread) ──────────────────────────
 
@@ -122,9 +222,7 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   div.innerHTML = `
     <div class="message-avatar">${avatar}</div>
     <div class="message-group">
-      <div class="message-bubble message-bubble--streaming" id="${escHtml(bubbleID)}">
-        <div class="typing-indicator"><span></span><span></span><span></span></div>
-      </div>
+      <div class="message-bubble message-bubble--streaming" id="${escHtml(bubbleID)}"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
       <div class="message-meta">
         <span class="message-time">${formatTimestamp(startedAt)}</span>
       </div>
@@ -219,6 +317,93 @@ function skeletonItems(): string {
 function threadTitle(t: Thread): string {
   if (t.title) return t.title
   return t.cwd.split('/').filter(Boolean).pop() ?? t.cwd
+}
+
+type ModelPickerState = 'loading' | 'empty' | 'ready'
+
+interface ModelPickerOption {
+  value: string
+  name: string
+  description: string
+}
+
+function resolveModelPickerData(
+  modelOption: ConfigOption | null,
+  fallbackModelID: string,
+  loading: boolean,
+): {
+  state: ModelPickerState
+  selectedValue: string
+  selectedLabel: string
+  options: ModelPickerOption[]
+} {
+  if (loading) {
+    return { state: 'loading', selectedValue: '', selectedLabel: 'Loading models…', options: [] }
+  }
+
+  const rawOptions = modelOption?.options ?? []
+  const options: ModelPickerOption[] = rawOptions
+    .map(option => ({
+      value: option.value.trim(),
+      name: (option.name || option.value).trim() || option.value.trim(),
+      description: option.description?.trim() || '',
+    }))
+    .filter(option => !!option.value)
+
+  if (!options.length) {
+    if (fallbackModelID) {
+      return {
+        state: 'ready',
+        selectedValue: fallbackModelID,
+        selectedLabel: fallbackModelID,
+        options: [{ value: fallbackModelID, name: fallbackModelID, description: '' }],
+      }
+    }
+    return { state: 'empty', selectedValue: '', selectedLabel: 'No models available', options: [] }
+  }
+
+  const selectedValue = modelOption?.currentValue?.trim() || fallbackModelID || options[0].value
+  const selectedOption = options.find(option => option.value === selectedValue) ?? options[0]
+  return {
+    state: 'ready',
+    selectedValue: selectedOption.value,
+    selectedLabel: selectedOption.name,
+    options,
+  }
+}
+
+function renderModelMenuOptions(
+  options: ModelPickerOption[],
+  selectedValue: string,
+  state: ModelPickerState,
+): string {
+  if (state === 'loading') {
+    return `<div class="thread-model-option-item thread-model-option-item--disabled">
+      <div class="thread-model-option-name">Loading models…</div>
+    </div>`
+  }
+  if (state === 'empty' || !options.length) {
+    return `<div class="thread-model-option-item thread-model-option-item--disabled">
+      <div class="thread-model-option-name">No models available</div>
+    </div>`
+  }
+
+  return options.map(option => {
+    const activeClass = option.value === selectedValue ? ' thread-model-option-item--active' : ''
+    const descHTML = option.description
+      ? `<div class="thread-model-option-desc">${escHtml(option.description)}</div>`
+      : ''
+    return `<button
+      class="thread-model-option-item${activeClass}"
+      type="button"
+      data-value="${escHtml(option.value)}"
+      role="option"
+      aria-selected="${option.value === selectedValue ? 'true' : 'false'}"
+    >
+      <div class="thread-model-option-name">${escHtml(option.name)}</div>
+      ${descHTML}
+    </button>`
+  }).join('')
 }
 
 function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): string {
@@ -360,6 +545,9 @@ async function handleDeleteThread(threadId: string): Promise<void> {
     clearThreadStreamRuntime(threadId)
   }
   clearPendingPermissions(threadId)
+  threadConfigCache.delete(threadId)
+  threadConfigInFlight.delete(threadId)
+  threadModelSwitching.delete(threadId)
 
   store.set({
     threads: nextThreads,
@@ -432,12 +620,14 @@ async function loadHistory(threadId: string): Promise<void> {
 
 function renderMessage(msg: Message, agentAvatar: string): string {
   if (msg.role === 'user') {
+    const copyBtn = `<button class="msg-copy-btn" title="Copy message" aria-label="Copy message" type="button">⎘</button>`
     return `
       <div class="message message--user" data-msg-id="${escHtml(msg.id)}">
         <div class="message-group">
           <div class="message-bubble">${escHtml(msg.content)}</div>
           <div class="message-meta">
             <span class="message-time">${formatTimestamp(msg.timestamp)}</span>
+            ${copyBtn}
           </div>
         </div>
       </div>`
@@ -466,7 +656,7 @@ function renderMessage(msg: Message, agentAvatar: string): string {
   }
 
   const stopTag  = isCancelled ? `<span class="message-stop-reason">Cancelled</span>` : ''
-  const copyBtn  = isDone      ? `<button class="msg-copy-btn" title="Copy message" type="button">⎘</button>` : ''
+  const copyBtn  = isDone      ? `<button class="msg-copy-btn" title="Copy message" aria-label="Copy message" type="button">⎘</button>` : ''
 
   return `
     <div class="message message--agent" data-msg-id="${escHtml(msg.id)}">
@@ -522,9 +712,22 @@ function updateInputState(): void {
   const sendBtn  = document.getElementById('send-btn')   as HTMLButtonElement   | null
   const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement   | null
   const inputEl  = document.getElementById('message-input') as HTMLTextAreaElement | null
+  const modelTriggerEl = document.getElementById('thread-model-trigger') as HTMLButtonElement | null
+  const isSwitchingModel = !!activeThreadId && threadModelSwitching.has(activeThreadId)
 
-  if (sendBtn)  sendBtn.disabled  = isStreaming
-  if (inputEl)  inputEl.disabled  = isStreaming
+  if (sendBtn)  sendBtn.disabled  = isStreaming || isSwitchingModel
+  if (inputEl)  inputEl.disabled  = isStreaming || isSwitchingModel
+  if (modelTriggerEl) {
+    const pickerState = modelTriggerEl.dataset.state ?? 'empty'
+    const noSelectableModel = pickerState !== 'ready'
+    const disabled = isStreaming || isSwitchingModel || noSelectableModel
+    modelTriggerEl.disabled = disabled
+    if (disabled) {
+      modelTriggerEl.setAttribute('aria-expanded', 'false')
+      const menu = document.getElementById('thread-model-menu')
+      if (menu) menu.setAttribute('hidden', 'true')
+    }
+  }
   if (cancelBtn) {
     cancelBtn.style.display = isStreaming ? '' : 'none'
     cancelBtn.disabled      = isCancelling
@@ -551,6 +754,13 @@ function renderChatEmpty(): string {
 function renderChatThread(t: Thread): string {
   const titleLabel   = threadTitle(t)
   const createdLabel = t.createdAt ? `Created ${formatTimestamp(t.createdAt)}` : ''
+  const hasConfigCache = threadConfigCache.has(t.threadId)
+  const loadingConfig = !hasConfigCache || threadConfigInFlight.has(t.threadId)
+  const configOptions = threadConfigCache.get(t.threadId) ?? []
+  const modelOption = findModelOption(configOptions)
+  const fallbackModel = fallbackThreadModelID(t)
+  const modelPickerData = resolveModelPickerData(modelOption, fallbackModel, loadingConfig)
+  const isSwitching = threadModelSwitching.has(t.threadId)
 
   return `
     <div class="chat-header">
@@ -581,9 +791,30 @@ function renderChatThread(t: Thread): string {
           rows="1"
           aria-label="Message input"
         ></textarea>
-        <button class="btn btn-primary btn-send" id="send-btn">
-          Send ${iconSend}
-        </button>
+        <div class="input-compose-bar">
+          <div class="thread-model-switch thread-model-switch--composer">
+            <button
+              id="thread-model-trigger"
+              class="thread-model-trigger"
+              type="button"
+              data-state="${escHtml(modelPickerData.state)}"
+              data-selected-value="${escHtml(modelPickerData.selectedValue)}"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-label="Thread model"
+              ${isSwitching || modelPickerData.state !== 'ready' ? 'disabled' : ''}
+            >
+              <span class="thread-model-trigger-label">${escHtml(modelPickerData.selectedLabel)}</span>
+              <span class="thread-model-trigger-arrow">▾</span>
+            </button>
+            <div class="thread-model-menu" id="thread-model-menu" role="listbox" hidden>
+              ${renderModelMenuOptions(modelPickerData.options, modelPickerData.selectedValue, modelPickerData.state)}
+            </div>
+          </div>
+          <button class="btn btn-primary btn-send" id="send-btn" aria-label="Send message">
+            ${iconSend}
+          </button>
+        </div>
       </div>
       <div class="input-hint">Press <kbd>⌘ Enter</kbd> to send · <kbd>Esc</kbd> to cancel · <kbd>/</kbd> to search</div>
     </div>`
@@ -613,10 +844,10 @@ function updateChatArea(): void {
     document.getElementById('sidebar')?.classList.toggle('sidebar--open')
   })
 
-  // Show cached messages immediately (avoids spinner flash on revisit).
-  // If none yet, put up a loading spinner; loadHistory() will replace it.
-  const hasCached = !!(store.get().messages[thread.threadId]?.length)
-  if (hasCached) {
+  // Show locally loaded messages immediately (including empty threads).
+  // Only show spinner when history for this thread has never been loaded.
+  const hasLocalHistory = Object.prototype.hasOwnProperty.call(store.get().messages, thread.threadId)
+  if (hasLocalHistory) {
     updateMessageList()
   } else {
     const listEl = document.getElementById('message-list')
@@ -632,10 +863,160 @@ function updateChatArea(): void {
   bindInputResize()
   bindSendHandler()
   bindCancelHandler()
+  bindThreadModelSwitch(thread)
   bindScrollBottom()
 
   // Always reload history from server (keeps view fresh; guards against overwrites during streaming)
   void loadHistory(thread.threadId)
+}
+
+function bindThreadModelSwitch(thread: Thread): void {
+  const triggerEl = document.getElementById('thread-model-trigger') as HTMLButtonElement | null
+  const menuEl = document.getElementById('thread-model-menu') as HTMLDivElement | null
+  if (!triggerEl || !menuEl) return
+
+  const closeMenu = (): void => {
+    triggerEl.setAttribute('aria-expanded', 'false')
+    menuEl.setAttribute('hidden', 'true')
+  }
+  const openMenu = (): void => {
+    if (triggerEl.disabled) return
+    triggerEl.setAttribute('aria-expanded', 'true')
+    menuEl.removeAttribute('hidden')
+  }
+  const toggleMenu = (): void => {
+    const expanded = triggerEl.getAttribute('aria-expanded') === 'true'
+    if (expanded) {
+      closeMenu()
+    } else {
+      openMenu()
+    }
+  }
+
+  const renderModelUI = (): void => {
+    const latest = store.get().threads.find(item => item.threadId === thread.threadId)
+    if (!latest) return
+
+    const fallbackModel = fallbackThreadModelID(latest)
+    const loading = !threadConfigCache.has(thread.threadId) || threadConfigInFlight.has(thread.threadId)
+    const modelOption = findModelOption(threadConfigCache.get(thread.threadId) ?? [])
+    const pickerData = resolveModelPickerData(modelOption, fallbackModel, loading)
+    const isReady = pickerData.state === 'ready'
+    const disabled = loading || threadModelSwitching.has(thread.threadId) || !isReady
+
+    triggerEl.dataset.state = pickerData.state
+    triggerEl.dataset.selectedValue = pickerData.selectedValue
+    triggerEl.disabled = disabled
+    triggerEl.querySelector('.thread-model-trigger-label')!.textContent = pickerData.selectedLabel
+    menuEl.innerHTML = renderModelMenuOptions(pickerData.options, pickerData.selectedValue, pickerData.state)
+    if (!isReady || disabled) {
+      closeMenu()
+    }
+  }
+
+  const setSwitching = (switching: boolean): void => {
+    if (switching) {
+      threadModelSwitching.add(thread.threadId)
+    } else {
+      threadModelSwitching.delete(thread.threadId)
+    }
+    if (switching) closeMenu()
+    if (store.get().activeThreadId === thread.threadId) {
+      updateInputState()
+    }
+  }
+
+  renderModelUI()
+  if (!threadConfigCache.has(thread.threadId)) {
+    void loadThreadConfigOptions(thread.threadId)
+      .then(() => {
+        if (store.get().activeThreadId !== thread.threadId) return
+        renderModelUI()
+        updateInputState()
+      })
+      .catch(err => {
+        if (store.get().activeThreadId !== thread.threadId) return
+        renderModelUI()
+        const message = err instanceof Error ? err.message : String(err)
+        window.alert(`Failed to load model list: ${message}`)
+      })
+  }
+
+  const switchModel = async (nextModelID: string): Promise<void> => {
+    const activeThreadID = store.get().activeThreadId
+    if (!activeThreadID || activeThreadID !== thread.threadId) return
+    if (getThreadStreamState(activeThreadID)) return
+
+    const latest = store.get().threads.find(item => item.threadId === activeThreadID)
+    if (!latest) return
+
+    nextModelID = nextModelID.trim()
+    if (!nextModelID) return
+
+    const modelOption = findModelOption(threadConfigCache.get(activeThreadID) ?? [])
+    const currentModelID = modelOption?.currentValue || fallbackThreadModelID(latest)
+    if (nextModelID === currentModelID) return
+
+    setSwitching(true)
+    try {
+      const updatedOptions = await api.setThreadConfigOption(activeThreadID, {
+        configId: 'model',
+        value: nextModelID,
+      })
+      const normalized = cacheThreadConfigOptions(activeThreadID, updatedOptions)
+      const latestModelOption = findModelOption(normalized)
+      const appliedModelID = latestModelOption?.currentValue || nextModelID
+
+      const { threads } = store.get()
+      store.set({
+        threads: threads.map(item => (
+          item.threadId === activeThreadID
+            ? { ...item, agentOptions: { ...item.agentOptions, modelId: appliedModelID } }
+            : item
+        )),
+      })
+      renderModelUI()
+    } catch (err) {
+      renderModelUI()
+      const message = err instanceof Error ? err.message : String(err)
+      window.alert(`Failed to switch model: ${message}`)
+    } finally {
+      setSwitching(false)
+      renderModelUI()
+    }
+  }
+
+  triggerEl.addEventListener('click', e => {
+    e.preventDefault()
+    toggleMenu()
+  })
+
+  menuEl.addEventListener('click', e => {
+    const target = e.target as HTMLElement | null
+    const optionBtn = target?.closest('.thread-model-option-item[data-value]') as HTMLButtonElement | null
+    if (!optionBtn || optionBtn.disabled) return
+    const nextModelID = (optionBtn.dataset.value ?? '').trim()
+    closeMenu()
+    void switchModel(nextModelID)
+  })
+
+  const switchEl = triggerEl.closest('.thread-model-switch') as HTMLDivElement | null
+  switchEl?.addEventListener('focusout', e => {
+    const related = e.relatedTarget as Node | null
+    if (!related || !switchEl.contains(related)) {
+      closeMenu()
+    }
+  })
+
+  const onEsc = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMenu()
+      triggerEl.focus()
+    }
+  }
+  triggerEl.addEventListener('keydown', onEsc)
+  menuEl.addEventListener('keydown', onEsc)
 }
 
 // ── Scroll-to-bottom button ───────────────────────────────────────────────
@@ -660,9 +1041,10 @@ function bindScrollBottom(): void {
 function bindInputResize(): void {
   const input = document.getElementById('message-input') as HTMLTextAreaElement | null
   if (!input) return
+  const maxHeight = 220
   input.addEventListener('input', () => {
     input.style.height = 'auto'
-    input.style.height = Math.min(input.scrollHeight, 160) + 'px'
+    input.style.height = Math.min(input.scrollHeight, maxHeight) + 'px'
   })
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -731,9 +1113,7 @@ function handleSend(): void {
     div.innerHTML = `
       <div class="message-avatar">${agentAvatar}</div>
       <div class="message-group">
-        <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(agentMsgID)}">
-          <div class="typing-indicator"><span></span><span></span><span></span></div>
-        </div>
+        <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(agentMsgID)}"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
         <div class="message-meta">
           <span class="message-time">${formatTimestamp(now)}</span>
         </div>
@@ -847,9 +1227,7 @@ async function handleCancel(): Promise<void> {
 // ── New thread ────────────────────────────────────────────────────────────
 
 function openNewThread(): void {
-  newThreadModal.open(threadId => {
-    store.set({ activeThreadId: threadId })
-  })
+  newThreadModal.open()
 }
 
 // ── Static layout shell ───────────────────────────────────────────────────

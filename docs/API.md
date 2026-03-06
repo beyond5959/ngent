@@ -14,13 +14,14 @@ This document defines the current HTTP API contract.
 
 - Startup prints a human-readable multi-line summary on `stderr` with `Time`, `HTTP`, `Web`, `DB`, `Agents`, and `Help`.
 - Every HTTP request emits one structured completion log entry (`http.request.completed`) with:
-  - `requestTime`
+  - `req_time` (UTC `time.DateTime`, second precision)
   - `method`
   - `path`
   - `ip`
-  - `statusCode`
-  - `durationMs`
-  - `responseBytes`
+  - `status`
+  - `duration_ms`
+  - `resp_bytes`
+- Structured log `time` is emitted as UTC `time.DateTime` with second precision.
 
 ## Unified Error Envelope
 

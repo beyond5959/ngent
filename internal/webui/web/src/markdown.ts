@@ -7,7 +7,7 @@ import python from 'highlight.js/lib/languages/python'
 import bash from 'highlight.js/lib/languages/bash'
 import json from 'highlight.js/lib/languages/json'
 import yaml from 'highlight.js/lib/languages/yaml'
-import { escHtml } from './utils.ts'
+import { copyText, escHtml } from './utils.ts'
 
 // Register language subset to minimise bundle size
 hljs.registerLanguage('go',         go)
@@ -82,7 +82,8 @@ export function bindMarkdownControls(container: HTMLElement): void {
     .forEach(btn => {
       btn.dataset.bound = '1'
       btn.addEventListener('click', () => {
-        void navigator.clipboard.writeText(btn.dataset.code ?? '').then(() => {
+        void copyText(btn.dataset.code ?? '').then(copied => {
+          if (!copied) return
           btn.textContent = 'Copied ✓'
           btn.classList.add('code-copy-btn--copied')
           setTimeout(() => {
@@ -112,11 +113,21 @@ export function bindMarkdownControls(container: HTMLElement): void {
     .forEach(btn => {
       btn.dataset.bound = '1'
       btn.addEventListener('click', () => {
-        const text =
-          btn.closest('.message-group')
+        const encoded = btn.dataset.copyText ?? ''
+        const text = encoded
+          ? decodeURIComponent(encoded)
+          : btn.closest('.message-group')
             ?.querySelector('.message-bubble')
             ?.textContent ?? ''
-        void navigator.clipboard.writeText(text)
+        void copyText(text).then(copied => {
+          if (!copied) return
+          btn.textContent = '✓'
+          btn.classList.add('msg-copy-btn--copied')
+          setTimeout(() => {
+            btn.textContent = '⎘'
+            btn.classList.remove('msg-copy-btn--copied')
+          }, 1_500)
+        })
       })
     })
 }

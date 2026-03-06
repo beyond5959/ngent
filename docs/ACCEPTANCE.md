@@ -75,7 +75,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 10: Unified errors and structured logs
 
 - Operation: trigger auth failure/path policy failure and inspect request completion logs.
-- Expected: `UNAUTHORIZED` and `FORBIDDEN` error envelopes are stable; request logs include `requestTime`, `path`, `ip`, and `statusCode`.
+- Expected: `UNAUTHORIZED` and `FORBIDDEN` error envelopes are stable; request logs include `req_time`, `path`, `ip`, and `status`.
 - Verification command:
   - `go test ./internal/httpapi -run TestV1AuthToggle -count=1`
   - `go test ./internal/httpapi -run TestCreateThreadValidationCWDAllowedRoots -count=1`

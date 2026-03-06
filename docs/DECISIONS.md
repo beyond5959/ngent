@@ -378,7 +378,8 @@ Use this template for new decisions.
 - Decision:
   - print a concise multi-line startup summary to stderr with a QR code; print the service port and a concrete URL under the QR code.
   - keep structured request completion logs via `slog` for all HTTP traffic.
-  - include `requestTime`, `method`, `path`, `ip`, `statusCode`, `durationMs`, and `responseBytes` in completion logs.
+  - include `req_time`, `method`, `path`, `ip`, `status`, `duration_ms`, and `resp_bytes` in completion logs.
+  - standardize log `time` and request `req_time` to UTC `time.DateTime` second precision for easier human scanning and stable parsing.
 - Consequences:
   - local startup UX is easier to read without parsing JSON.
   - request observability is consistent across normal JSON responses and long-lived SSE requests.

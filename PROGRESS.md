@@ -95,7 +95,8 @@ This file is the source of milestone progress, validation commands, and next act
   - simplified README startup path to `agent-hub-server` with explicit `agent-hub-server --help` guidance.
 - `Post-M8` startup log UX simplification completed:
   - replaced startup JSON line with multi-line human-readable stderr summary (QR code + port and URL hint).
-  - added per-request completion logs containing `requestTime`, `method`, `path`, `ip`, `statusCode`, `durationMs`, and `responseBytes`.
+  - added per-request completion logs containing `req_time`, `method`, `path`, `ip`, `status`, `duration_ms`, and `resp_bytes`.
+  - normalized structured log `time` and request log `req_time` to UTC `time.DateTime` at second precision.
   - added unit test coverage for startup summary rendering and request completion log fields.
 - `Post-M8` LAN-friendly default bind completed:
   - changed default bind to `0.0.0.0:8686` and `--allow-public` default to `true` so other devices can connect via the startup QR code.
@@ -488,6 +489,30 @@ This file is the source of milestone progress, validation commands, and next act
     - current model config catalog into sqlite for reuse across threads/restarts
   - service startup now launches a background catalog refresher that silently re-queries built-in agents and refreshes stored model/reasoning catalogs without delaying frontend availability.
   - Web UI config cache is now keyed by `agent + selected model`, so different threads on the same agent no longer accidentally reuse the wrong reasoning list for another model.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` streaming bubble typing-indicator persistence completed:
+  - Web UI streaming agent bubble now keeps the three animated dots rendered at the bottom of the bubble after the first delta arrives, until the turn finishes.
+  - refactored transient streaming bubble DOM to use separate text and indicator regions so incremental `onDelta` updates no longer replace the indicator.
+
+- `Post-F9` Web UI clipboard fallback and message-copy fix completed:
+  - unified copy actions behind a best-effort clipboard helper that falls back to `document.execCommand('copy')` when `navigator.clipboard` is unavailable or blocked on LAN HTTP origins.
+  - message copy buttons now copy the original message text payload instead of scraping rendered DOM text, so agent markdown replies no longer pull in code-block chrome such as `Copy` labels.
+  - applied the same fallback path to code-block copy and settings-panel client-id copy to keep behavior consistent across the UI.
+
+- `Post-F9` streaming bubble empty-line removal:
+  - removed the blank spacer above the three animated dots before the first token arrives by hiding the empty text container in streaming bubbles.
+  - typing indicator now sits directly under the top padding until real content starts streaming.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` sidebar thread activity indicators completed:
+  - thread list now shows a live spinner for any thread with an in-flight turn, so background work stays visible after switching to another thread.
+  - when a background turn finishes, the spinner flips to a green check badge that stays on that thread until the user opens it again.
+  - slowed the sidebar thread spinner slightly so the activity indicator reads as background work instead of a high-frequency busy loop.
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`

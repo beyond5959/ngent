@@ -92,11 +92,22 @@ func TestRequestCompletionLogIncludesPathIPAndStatus(t *testing.T) {
 	if got := fmt.Sprintf("%v", entry["ip"]); got != "198.51.100.23" {
 		t.Fatalf("log ip = %q, want %q", got, "198.51.100.23")
 	}
-	if got := int(entry["statusCode"].(float64)); got != http.StatusOK {
-		t.Fatalf("log statusCode = %d, want %d", got, http.StatusOK)
+	if got := int(entry["status"].(float64)); got != http.StatusOK {
+		t.Fatalf("log status = %d, want %d", got, http.StatusOK)
 	}
-	if got := fmt.Sprintf("%v", entry["requestTime"]); strings.TrimSpace(got) == "" {
-		t.Fatalf("log requestTime is empty")
+	if got := fmt.Sprintf("%v", entry["req_time"]); strings.TrimSpace(got) == "" {
+		t.Fatalf("log req_time is empty")
+	}
+	reqTimeRaw := fmt.Sprintf("%v", entry["req_time"])
+	if strings.Contains(reqTimeRaw, ".") {
+		t.Fatalf("log req_time includes sub-second precision: %q", reqTimeRaw)
+	}
+	reqTime, err := time.Parse(time.DateTime, reqTimeRaw)
+	if err != nil {
+		t.Fatalf("log req_time parse error: %v (value=%q)", err, reqTimeRaw)
+	}
+	if !reqTime.Equal(reqTime.Truncate(time.Second)) {
+		t.Fatalf("log req_time is not second precision: %q", reqTimeRaw)
 	}
 }
 

@@ -284,13 +284,13 @@ func (s *Server) logRequestCompletion(r *http.Request, w *loggingResponseWriter,
 
 	s.logger.Info(
 		"http.request.completed",
-		"requestTime", startedAt.UTC().Format(time.RFC3339Nano),
+		"req_time", startedAt.UTC().Truncate(time.Second).Format(time.DateTime),
 		"method", r.Method,
 		"path", r.URL.Path,
 		"ip", requestClientIP(r),
-		"statusCode", w.StatusCode(),
-		"durationMs", time.Since(startedAt).Milliseconds(),
-		"responseBytes", w.BytesWritten(),
+		"status", w.StatusCode(),
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+		"resp_bytes", w.BytesWritten(),
 	)
 }
 

@@ -27,6 +27,7 @@ import (
 	opencodeagent "github.com/beyond5959/go-acp-server/internal/agents/opencode"
 	qwenagent "github.com/beyond5959/go-acp-server/internal/agents/qwen"
 	"github.com/beyond5959/go-acp-server/internal/httpapi"
+	"github.com/beyond5959/go-acp-server/internal/observability"
 	"github.com/beyond5959/go-acp-server/internal/runtime"
 	"github.com/beyond5959/go-acp-server/internal/storage"
 	"github.com/beyond5959/go-acp-server/internal/webui"
@@ -34,7 +35,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	logger := observability.NewJSONLogger(slog.LevelInfo)
 
 	defaultDBPath, err := resolveDefaultDBPath()
 	if err != nil {
@@ -321,7 +322,7 @@ func buildAgentConfigCatalogRefresher(
 		return nil
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		logger = observability.NewJSONLogger(slog.LevelInfo)
 	}
 
 	return &agentConfigCatalogRefresher{
@@ -758,7 +759,7 @@ func gracefulShutdown(
 		baseCtx = context.Background()
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		logger = observability.NewJSONLogger(slog.LevelInfo)
 	}
 	if timeout <= 0 {
 		timeout = 8 * time.Second

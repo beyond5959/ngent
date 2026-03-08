@@ -36,15 +36,8 @@ const iconMenu = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" ar
   <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 </svg>`
 
-const iconTrash = `<svg width="14" height="14" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-  <path d="M29.5 11.5V11c0-3-2.5-5.5-5.5-5.5S18.5 8 18.5 11v.5"
-    stroke="currentColor" stroke-width="3" stroke-miterlimit="10"/>
-  <line x1="7.5" y1="11.5" x2="40.5" y2="11.5"
-    stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-miterlimit="10"/>
-  <line x1="36.5" y1="27" x2="38" y2="11.5"
-    stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-miterlimit="10"/>
-  <path d="M10.7 18.6l2 20.3c.2 2.1 1.9 3.6 4 3.6h14.7c2.1 0 3.8-1.6 4-3.6l.5-4.8"
-    stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-miterlimit="10"/>
+const iconCheck = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
 const codexIconURL = '/codex-icon.png'
@@ -208,6 +201,9 @@ const pendingPermissionsByThread = new Map<string, Map<string, PendingPermission
 
 /** Last threadId that triggered a full chat-area re-render. */
 let lastRenderThreadId: string | null = null
+let openThreadActionMenuId: string | null = null
+let renamingThreadId: string | null = null
+let renamingThreadDraft = ''
 
 // ── Scroll helpers ────────────────────────────────────────────────────────
 
@@ -221,6 +217,252 @@ function isNearBottom(el: HTMLElement): boolean {
 function addMessageToStore(threadId: string, msg: Message): void {
   const { messages } = store.get()
   store.set({ messages: { ...messages, [threadId]: [...(messages[threadId] ?? []), msg] } })
+}
+
+function omitThreadCompletionBadge(
+  badges: Record<string, boolean>,
+  threadId: string,
+): Record<string, boolean> {
+  if (!threadId || !badges[threadId]) return badges
+  const next = { ...badges }
+  delete next[threadId]
+  return next
+}
+
+function markThreadCompletionBadge(threadId: string): void {
+  if (!threadId) return
+  const state = store.get()
+  if (state.activeThreadId === threadId || state.threadCompletionBadges[threadId]) return
+  store.set({
+    threadCompletionBadges: {
+      ...state.threadCompletionBadges,
+      [threadId]: true,
+    },
+  })
+}
+
+function activateThread(threadId: string): void {
+  if (!threadId) return
+  const state = store.get()
+  const clearedThreadActions = resetThreadActionMenuState()
+  const nextThreadCompletionBadges = omitThreadCompletionBadge(state.threadCompletionBadges, threadId)
+  if (threadId === state.activeThreadId) {
+    if (nextThreadCompletionBadges !== state.threadCompletionBadges) {
+      store.set({ threadCompletionBadges: nextThreadCompletionBadges })
+    } else if (clearedThreadActions) {
+      updateThreadList()
+    }
+    return
+  }
+
+  store.set({
+    activeThreadId: threadId,
+    threadCompletionBadges: nextThreadCompletionBadges,
+  })
+}
+
+function resetThreadActionMenuState(): boolean {
+  const changed = openThreadActionMenuId !== null || renamingThreadId !== null || renamingThreadDraft !== ''
+  if (!changed) return false
+  openThreadActionMenuId = null
+  renamingThreadId = null
+  renamingThreadDraft = ''
+  return true
+}
+
+function cancelThreadRename(threadId: string): void {
+  if (renamingThreadId !== threadId) return
+  renamingThreadId = null
+  renamingThreadDraft = ''
+  updateThreadList()
+}
+
+function toggleThreadActionMenu(threadId: string): void {
+  if (!threadId) return
+  if (openThreadActionMenuId === threadId) {
+    resetThreadActionMenuState()
+    updateThreadList()
+    return
+  }
+
+  openThreadActionMenuId = threadId
+  renamingThreadId = null
+  renamingThreadDraft = ''
+  updateThreadList()
+}
+
+function beginRenameThread(threadId: string): void {
+  const thread = store.get().threads.find(item => item.threadId === threadId)
+  if (!thread) return
+
+  openThreadActionMenuId = threadId
+  renamingThreadId = threadId
+  renamingThreadDraft = thread.title || threadTitle(thread)
+  updateThreadList()
+  requestAnimationFrame(() => {
+    const input = document.querySelector<HTMLInputElement>('.thread-rename-input')
+    input?.focus()
+    input?.select()
+  })
+}
+
+function getThreadMenuTrigger(threadId: string): HTMLButtonElement | null {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>('.thread-item-menu-trigger'))
+    .find(btn => btn.dataset.threadId === threadId) ?? null
+}
+
+function renderThreadActionPopover(t: Thread): string {
+  const isOpen = openThreadActionMenuId === t.threadId
+  if (!isOpen) return ''
+
+  if (renamingThreadId === t.threadId) {
+    return `
+      <div class="thread-action-popover thread-action-popover--rename" data-thread-id="${escHtml(t.threadId)}">
+        <form class="thread-rename-form" data-thread-id="${escHtml(t.threadId)}">
+          <input
+            class="thread-rename-input"
+            data-thread-id="${escHtml(t.threadId)}"
+            type="text"
+            value="${escHtml(renamingThreadDraft)}"
+            placeholder="Thread name"
+            maxlength="120"
+            aria-label="Rename thread"
+          />
+          <div class="thread-rename-actions">
+            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+            <button class="btn btn-ghost btn-sm thread-rename-cancel-btn" type="button" data-thread-id="${escHtml(t.threadId)}">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>`
+  }
+
+  return `
+    <div class="thread-action-popover thread-action-menu" data-thread-id="${escHtml(t.threadId)}" role="menu" aria-label="Thread actions">
+      <button class="thread-action-menu-item" type="button" data-thread-id="${escHtml(t.threadId)}" data-action="rename" role="menuitem">
+        Rename
+      </button>
+      <button
+        class="thread-action-menu-item thread-action-menu-item--danger"
+        type="button"
+        data-thread-id="${escHtml(t.threadId)}"
+        data-action="delete"
+        role="menuitem"
+      >
+        Delete
+      </button>
+    </div>`
+}
+
+function renderThreadActionLayer(): void {
+  const layer = document.getElementById('thread-action-layer')
+  if (!layer) return
+  if (!openThreadActionMenuId) {
+    layer.innerHTML = ''
+    layer.hidden = true
+    return
+  }
+
+  const thread = store.get().threads.find(item => item.threadId === openThreadActionMenuId)
+  const trigger = getThreadMenuTrigger(openThreadActionMenuId)
+  const sidebar = document.getElementById('sidebar')
+  if (!thread || !trigger || !sidebar) {
+    resetThreadActionMenuState()
+    layer.innerHTML = ''
+    layer.hidden = true
+    return
+  }
+
+  layer.hidden = false
+  layer.innerHTML = renderThreadActionPopover(thread)
+
+  const popover = layer.querySelector<HTMLElement>('.thread-action-popover')
+  if (!popover) return
+
+  const margin = 8
+  const offset = 8
+  const triggerRect = trigger.getBoundingClientRect()
+  const sidebarRect = sidebar.getBoundingClientRect()
+  const popoverWidth = popover.offsetWidth
+  const popoverHeight = popover.offsetHeight
+  const maxLeft = Math.max(margin, sidebar.clientWidth - popoverWidth - margin)
+  const maxTop = Math.max(margin, sidebar.clientHeight - popoverHeight - margin)
+
+  let left = triggerRect.right - sidebarRect.left - popoverWidth
+  left = Math.min(Math.max(left, margin), maxLeft)
+
+  let top = triggerRect.bottom - sidebarRect.top + offset
+  if (top > maxTop) {
+    top = triggerRect.top - sidebarRect.top - popoverHeight - offset
+  }
+  top = Math.min(Math.max(top, margin), maxTop)
+
+  popover.style.left = `${left}px`
+  popover.style.top = `${top}px`
+
+  popover.addEventListener('click', e => e.stopPropagation())
+  popover.addEventListener('keydown', e => e.stopPropagation())
+
+  layer.querySelectorAll<HTMLButtonElement>('.thread-action-menu-item').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = btn.dataset.threadId ?? ''
+      if (!id) return
+      if (btn.dataset.action === 'rename') {
+        beginRenameThread(id)
+        return
+      }
+      if (btn.dataset.action === 'delete') {
+        void handleDeleteThread(id)
+      }
+    })
+  })
+
+  layer.querySelectorAll<HTMLFormElement>('.thread-rename-form').forEach(form => {
+    form.addEventListener('submit', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const threadId = form.dataset.threadId ?? ''
+      const input = form.querySelector<HTMLInputElement>('.thread-rename-input')
+      if (!threadId || !input) return
+
+      const controls = Array.from(form.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button'))
+      controls.forEach(control => { control.disabled = true })
+      void handleRenameThread(threadId, input.value).finally(() => {
+        controls.forEach(control => {
+          if (control.isConnected) control.disabled = false
+        })
+      })
+    })
+  })
+
+  layer.querySelectorAll<HTMLInputElement>('.thread-rename-input').forEach(input => {
+    input.addEventListener('input', () => {
+      const threadId = input.dataset.threadId ?? ''
+      if (!threadId || renamingThreadId !== threadId) return
+      renamingThreadDraft = input.value
+    })
+    input.addEventListener('keydown', e => {
+      e.stopPropagation()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        const threadId = input.dataset.threadId ?? ''
+        if (threadId) cancelThreadRename(threadId)
+      }
+    })
+  })
+
+  layer.querySelectorAll<HTMLButtonElement>('.thread-rename-cancel-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = btn.dataset.threadId ?? ''
+      if (!id) return
+      cancelThreadRename(id)
+    })
+  })
 }
 
 function getThreadStreamState(threadId: string | null): StreamState | null {
@@ -262,7 +504,7 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   div.innerHTML = `
     <div class="message-avatar">${avatar}</div>
     <div class="message-group">
-      <div class="message-bubble message-bubble--streaming" id="${escHtml(bubbleID)}"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
+      ${renderStreamingBubbleHTML(bubbleID)}
       <div class="message-meta">
         <span class="message-time">${formatTimestamp(startedAt)}</span>
       </div>
@@ -273,11 +515,7 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
 
   const buffered = streamBufferByThread.get(thread.threadId) ?? ''
   if (buffered) {
-    const bubbleEl = document.getElementById(bubbleID)
-    if (bubbleEl) {
-      bubbleEl.classList.remove('message-bubble--streaming')
-      bubbleEl.textContent = buffered
-    }
+    updateStreamingBubbleContent(streamState.messageId, buffered)
   }
   listEl.scrollTop = listEl.scrollHeight
 }
@@ -628,12 +866,45 @@ function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): stri
   return escHtml((agentId || 'A').slice(0, 1).toUpperCase())
 }
 
-function renderThreadItem(t: Thread, activeId: string | null, query: string): string {
-  const isActive     = t.threadId === activeId
-  const avatar       = renderAgentAvatar(t.agent ?? '', 'thread')
+type ThreadActivityIndicator = 'loading' | 'done' | null
+
+function renderThreadStatusIndicator(status: ThreadActivityIndicator): string {
+  if (status === 'loading') {
+    return `
+      <span
+        class="thread-status-indicator thread-status-indicator--loading"
+        role="status"
+        aria-label="Thread is working"
+        title="Thread is working"
+      >
+        <span class="thread-status-spinner" aria-hidden="true"></span>
+      </span>`
+  }
+  if (status === 'done') {
+    return `
+      <span
+        class="thread-status-indicator thread-status-indicator--done"
+        role="img"
+        aria-label="Latest turn finished"
+        title="Latest turn finished"
+      >
+        ${iconCheck}
+      </span>`
+  }
+  return ''
+}
+
+function renderThreadItem(
+  t: Thread,
+  activeId: string | null,
+  query: string,
+  activityIndicator: ThreadActivityIndicator,
+): string {
+  const isActive = t.threadId === activeId
+  const isMenuOpen = openThreadActionMenuId === t.threadId
+  const avatar = renderAgentAvatar(t.agent ?? '', 'thread')
   const displayTitle = threadTitle(t)
-  const relTime      = t.updatedAt ? formatRelativeTime(t.updatedAt) : ''
-  const deleteLabel  = `Delete thread ${displayTitle}`
+  const relTime = t.updatedAt ? formatRelativeTime(t.updatedAt) : ''
 
   const titleHtml = query
     ? escHtml(displayTitle).replace(
@@ -643,7 +914,7 @@ function renderThreadItem(t: Thread, activeId: string | null, query: string): st
     : escHtml(displayTitle)
 
   return `
-    <div class="thread-item ${isActive ? 'thread-item--active' : ''}"
+    <div class="thread-item ${isActive ? 'thread-item--active' : ''} ${isMenuOpen ? 'thread-item--menu-open' : ''}"
          data-thread-id="${escHtml(t.threadId)}"
          role="button"
          tabindex="0"
@@ -658,11 +929,12 @@ function renderThreadItem(t: Thread, activeId: string | null, query: string): st
         </div>
       </div>
       <div class="thread-item-actions">
-        <button class="btn btn-icon thread-delete-btn" type="button"
+        ${renderThreadStatusIndicator(activityIndicator)}
+        <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
                 data-thread-id="${escHtml(t.threadId)}"
-                aria-label="${escHtml(deleteLabel)}"
-                title="${escHtml(deleteLabel)}">
-          ${iconTrash}
+                aria-expanded="${isMenuOpen ? 'true' : 'false'}"
+                aria-label="Thread actions">
+          ...
         </button>
       </div>
     </div>`
@@ -672,7 +944,7 @@ function updateThreadList(): void {
   const el = document.getElementById('thread-list')
   if (!el) return
 
-  const { threads, activeThreadId, searchQuery } = store.get()
+  const { threads, activeThreadId, searchQuery, streamStates, threadCompletionBadges } = store.get()
   const q        = searchQuery.trim().toLowerCase()
   const filtered = q
     ? threads.filter(t =>
@@ -685,36 +957,77 @@ function updateThreadList(): void {
       <div class="thread-list-empty">
         ${q ? `No threads matching "<strong>${escHtml(q)}</strong>"` : 'No threads yet.<br>Click <strong>+</strong> to start one.'}
       </div>`
+    renderThreadActionLayer()
     return
   }
 
   el.innerHTML = filtered
-    .map(t => renderThreadItem(t, activeThreadId, q))
+    .map(t => {
+      const isActive = t.threadId === activeThreadId
+      const activityIndicator: ThreadActivityIndicator = streamStates[t.threadId]
+        ? 'loading'
+        : (!isActive && threadCompletionBadges[t.threadId] ? 'done' : null)
+      return renderThreadItem(t, activeThreadId, q, activityIndicator)
+    })
     .join('')
 
-  el.querySelectorAll<HTMLButtonElement>('.thread-delete-btn').forEach(btn => {
+  el.querySelectorAll<HTMLButtonElement>('.thread-item-menu-trigger').forEach(btn => {
     btn.addEventListener('click', e => {
       e.preventDefault()
       e.stopPropagation()
       const id = btn.dataset.threadId ?? ''
       if (!id) return
-      void handleDeleteThread(id)
+      toggleThreadActionMenu(id)
     })
     btn.addEventListener('keydown', e => e.stopPropagation())
   })
 
   el.querySelectorAll<HTMLElement>('.thread-item').forEach(item => {
-    const handler = () => {
+    const handler = (event?: Event) => {
+      const target = event?.target as HTMLElement | null
+      if (target?.closest('.thread-item-menu-trigger') || target?.closest('.thread-action-popover')) return
       const id = item.dataset.threadId ?? ''
-      if (id && id !== store.get().activeThreadId) {
-        store.set({ activeThreadId: id })
-      }
+      activateThread(id)
       // Close mobile sidebar on thread select
       document.getElementById('sidebar')?.classList.remove('sidebar--open')
     }
     item.addEventListener('click', handler)
-    item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') handler() })
+    item.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') handler(e)
+    })
   })
+
+  renderThreadActionLayer()
+}
+
+async function handleRenameThread(threadId: string, nextTitle: string): Promise<void> {
+  const snapshot = store.get()
+  const thread = snapshot.threads.find(t => t.threadId === threadId)
+  if (!thread) return
+
+  const title = nextTitle.trim()
+  if (title === thread.title) {
+    cancelThreadRename(threadId)
+    return
+  }
+
+  let updatedThread: Thread
+  try {
+    updatedThread = await api.updateThread(threadId, { title })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    window.alert(`Failed to rename thread: ${message}`)
+    return
+  }
+
+  resetThreadActionMenuState()
+  const state = store.get()
+  store.set({
+    threads: state.threads.map(item => (item.threadId === threadId ? updatedThread : item)),
+  })
+  if (state.activeThreadId === threadId) {
+    updateChatArea()
+  }
 }
 
 async function handleDeleteThread(threadId: string): Promise<void> {
@@ -733,12 +1046,14 @@ async function handleDeleteThread(threadId: string): Promise<void> {
     return
   }
 
+  resetThreadActionMenuState()
   const state = store.get()
   const nextThreads = state.threads.filter(t => t.threadId !== threadId)
   const nextMessages = { ...state.messages }
   delete nextMessages[threadId]
 
   const deletingActive = state.activeThreadId === threadId
+  const nextActiveThreadId = deletingActive ? (nextThreads[0]?.threadId ?? null) : state.activeThreadId
   const deletingStream = !!streamsByThread.get(threadId)
 
   if (deletingStream) {
@@ -748,11 +1063,16 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   clearPendingPermissions(threadId)
   threadConfigCache.delete(threadId)
   threadConfigSwitching.delete(threadId)
+  let nextThreadCompletionBadges = omitThreadCompletionBadge(state.threadCompletionBadges, threadId)
+  if (nextActiveThreadId) {
+    nextThreadCompletionBadges = omitThreadCompletionBadge(nextThreadCompletionBadges, nextActiveThreadId)
+  }
 
   store.set({
     threads: nextThreads,
     messages: nextMessages,
-    activeThreadId: deletingActive ? (nextThreads[0]?.threadId ?? null) : state.activeThreadId,
+    activeThreadId: nextActiveThreadId,
+    threadCompletionBadges: nextThreadCompletionBadges,
   })
 }
 
@@ -819,8 +1139,17 @@ async function loadHistory(threadId: string): Promise<void> {
 // ── Message rendering ─────────────────────────────────────────────────────
 
 function renderMessage(msg: Message, agentAvatar: string): string {
+  const renderMessageCopyBtn = (text: string): string => `
+    <button
+      class="msg-copy-btn"
+      data-copy-text="${escHtml(encodeURIComponent(text))}"
+      title="Copy message"
+      aria-label="Copy message"
+      type="button"
+    >⎘</button>`
+
   if (msg.role === 'user') {
-    const copyBtn = `<button class="msg-copy-btn" title="Copy message" aria-label="Copy message" type="button">⎘</button>`
+    const copyBtn = renderMessageCopyBtn(msg.content)
     return `
       <div class="message message--user" data-msg-id="${escHtml(msg.id)}">
         <div class="message-group">
@@ -856,7 +1185,7 @@ function renderMessage(msg: Message, agentAvatar: string): string {
   }
 
   const stopTag  = isCancelled ? `<span class="message-stop-reason">Cancelled</span>` : ''
-  const copyBtn  = isDone      ? `<button class="msg-copy-btn" title="Copy message" aria-label="Copy message" type="button">⎘</button>` : ''
+  const copyBtn  = isDone      ? renderMessageCopyBtn(bodyText) : ''
 
   return `
     <div class="message message--agent" data-msg-id="${escHtml(msg.id)}">
@@ -870,6 +1199,22 @@ function renderMessage(msg: Message, agentAvatar: string): string {
         </div>
       </div>
     </div>`
+}
+
+function renderStreamingBubbleHTML(bubbleID: string, content = ''): string {
+  return `
+    <div class="message-bubble message-bubble--streaming" id="${escHtml(bubbleID)}">
+      <div class="message-bubble__text">${escHtml(content)}</div>
+      <div class="typing-indicator" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>`
+}
+
+function updateStreamingBubbleContent(messageID: string, content: string): void {
+  const bubbleEl = document.getElementById(`bubble-${messageID}`)
+  if (!bubbleEl) return
+  const contentEl = bubbleEl.querySelector('.message-bubble__text')
+  if (!contentEl) return
+  contentEl.textContent = content
 }
 
 function updateMessageList(): void {
@@ -1350,7 +1695,7 @@ function handleSend(): void {
     div.innerHTML = `
       <div class="message-avatar">${agentAvatar}</div>
       <div class="message-group">
-        <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(agentMsgID)}"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
+        ${renderStreamingBubbleHTML(`bubble-${agentMsgID}`)}
         <div class="message-meta">
           <span class="message-time">${formatTimestamp(now)}</span>
         </div>
@@ -1374,15 +1719,9 @@ function handleSend(): void {
       streamBufferByThread.set(capturedThreadID, next)
 
       if (store.get().activeThreadId !== capturedThreadID) return
-      const bubbleEl = document.getElementById(`bubble-${agentMsgID}`)
-      if (!bubbleEl) return
       const list      = document.getElementById('message-list')
       const atBottom  = !list || isNearBottom(list)
-      // Replace typing indicator with first delta
-      if (bubbleEl.querySelector('.typing-indicator')) {
-        bubbleEl.classList.remove('message-bubble--streaming')
-      }
-      bubbleEl.textContent = next
+      updateStreamingBubbleContent(agentMsgID, next)
       if (atBottom && list) list.scrollTop = list.scrollHeight
     },
 
@@ -1396,6 +1735,7 @@ function handleSend(): void {
       const finalContent = streamBufferByThread.get(capturedThreadID) ?? ''
       clearThreadStreamRuntime(capturedThreadID)
       clearPendingPermissions(capturedThreadID)
+      markThreadCompletionBadge(capturedThreadID)
 
       addMessageToStore(capturedThreadID, {
         id:         agentMsgID,
@@ -1505,6 +1845,8 @@ function renderShell(): void {
             ${iconSettings} Settings
           </button>
         </div>
+
+        <div class="thread-action-layer" id="thread-action-layer" hidden></div>
       </aside>
 
       <main class="chat" id="chat">
@@ -1555,7 +1897,14 @@ function bindGlobalShortcuts(): void {
         sidebar.classList.remove('sidebar--open')
         return
       }
-      // (2) clear search if focused
+      // (2) close thread action menu if open
+      if (openThreadActionMenuId) {
+        e.preventDefault()
+        resetThreadActionMenuState()
+        updateThreadList()
+        return
+      }
+      // (3) clear search if focused
       const searchEl = document.getElementById('search-input') as HTMLInputElement | null
       if (searchEl && document.activeElement === searchEl) {
         searchEl.value = ''
@@ -1563,7 +1912,7 @@ function bindGlobalShortcuts(): void {
         searchEl.blur()
         return
       }
-      // (3) cancel active stream
+      // (4) cancel active stream
       const { activeThreadId } = store.get()
       const streamState = getThreadStreamState(activeThreadId)
       if (streamState?.turnId) {
@@ -1578,6 +1927,19 @@ function bindGlobalShortcuts(): void {
 async function init(): Promise<void> {
   renderShell()
   bindGlobalShortcuts()
+  const repositionThreadActionLayer = (): void => {
+    if (!openThreadActionMenuId) return
+    renderThreadActionLayer()
+  }
+  document.getElementById('thread-list')?.addEventListener('scroll', repositionThreadActionLayer, { passive: true })
+  window.addEventListener('resize', repositionThreadActionLayer)
+  document.addEventListener('click', e => {
+    if (!openThreadActionMenuId) return
+    const target = e.target as HTMLElement | null
+    if (target?.closest('.thread-item-menu-trigger') || target?.closest('.thread-action-popover')) return
+    resetThreadActionMenuState()
+    updateThreadList()
+  })
 
   store.subscribe(() => {
     const { activeThreadId } = store.get()

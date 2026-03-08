@@ -10,11 +10,12 @@ permissions:
 
 jobs:
   release:
-    name: goreleaser
+    name: Build and Release
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0   # goreleaser needs full history for changelog
 
@@ -39,3 +40,26 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create source zip archive
+        run: |
+          # Get version from tag (e.g., v0.1.0)
+          VERSION=${GITHUB_REF_NAME}
+          # Create a clean temp directory
+          mkdir -p /tmp/ngent-source
+          # Export source code using git archive
+          git archive --format=zip --prefix=ngent-${VERSION}/ --output=/tmp/ngent-${VERSION}-source.zip HEAD
+          echo "Created source zip: /tmp/ngent-${VERSION}-source.zip"
+          # List contents for verification
+          unzip -l /tmp/ngent-${VERSION}-source.zip | head -20
+
+      - name: Upload source zip to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          SOURCE_ZIP="/tmp/ngent-${VERSION}-source.zip"
+          
+          # Upload the source zip to the release
+          gh release upload "${VERSION}" "${SOURCE_ZIP}" --clobber
+          echo "Uploaded ${SOURCE_ZIP} to release ${VERSION}"

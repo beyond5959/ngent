@@ -1,6 +1,6 @@
 version: 2
 
-project_name: agent-hub-server
+project_name: ngent
 
 before:
   hooks:
@@ -9,9 +9,9 @@ before:
     - make build-web
 
 builds:
-  - id: agent-hub-server
-    main: ./cmd/agent-hub-server
-    binary: agent-hub-server
+  - id: ngent
+    main: ./cmd/ngent
+    binary: ngent
     env:
       - CGO_ENABLED=0
     goos:
@@ -31,14 +31,23 @@ builds:
       - -X main.date={{.Date}}
 
 archives:
-  - id: default
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: binary
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ if eq .Arch \"arm64\" }}aarch64{{ else if eq .Arch \"amd64\" }}x86_64{{ else }}{{ .Arch }}{{ end }}-{{ .Os }}"
+    format: tar.gz
     format_overrides:
       - goos: windows
-        formats: ["zip"]
+        format: zip
+    files:
+      # Only include the binary, no other files
+      - none*
+
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}-{{ .Version }}-source"
+  format: tar.gz
 
 checksum:
-  name_template: checksums.txt
+  name_template: "{{ .ProjectName }}-{{ .Version }}-checksums.txt"
 
 changelog:
   sort: asc

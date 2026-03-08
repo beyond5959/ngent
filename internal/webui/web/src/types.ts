@@ -130,6 +130,8 @@ export interface AppState {
   messages: Record<string, Message[]>
   /** Keyed by threadId */
   streamStates: Record<string, StreamState>
+  /** Keyed by threadId; shown after a background turn finishes until revisited */
+  threadCompletionBadges: Record<string, boolean>
 
   // — UI flags —
   settingsOpen: boolean

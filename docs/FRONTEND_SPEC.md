@@ -174,7 +174,7 @@ build: build-web
 	go build ./...
 
 run: build-web
-	go run ./cmd/agent-hub-server
+	go run ./cmd/ngent
 ```
 
 ## 7. API 使用映射

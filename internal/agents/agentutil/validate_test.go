@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/beyond5959/go-acp-server/internal/agents/agentutil"
+	"github.com/beyond5959/ngent/internal/agents/agentutil"
 )
 
 func TestRequireDir(t *testing.T) {
@@ -41,7 +41,7 @@ func TestPreflightBinary(t *testing.T) {
 	})
 
 	t.Run("missing binary", func(t *testing.T) {
-		err := agentutil.PreflightBinary("definitely-missing-binary-for-go-acp-server-tests")
+		err := agentutil.PreflightBinary("definitely-missing-binary-for-ngent-tests")
 		if err == nil {
 			t.Fatalf("PreflightBinary() error = nil, want non-nil")
 		}

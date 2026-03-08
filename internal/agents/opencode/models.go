@@ -8,9 +8,9 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpstdio"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/agents/acpstdio"
 )
 
 // DiscoverModels starts one ACP session/new handshake and returns model options.
@@ -53,7 +53,7 @@ func DiscoverModels(ctx context.Context, cfg Config) ([]agents.ModelOption, erro
 
 	if _, err := conn.Call(ctx, "initialize", map[string]any{
 		"clientInfo": map[string]any{
-			"name":    "agent-hub-server",
+			"name":    "ngent",
 			"version": "0.1.0",
 		},
 		"protocolVersion": 1,

@@ -1,6 +1,6 @@
 import { store } from '../store.ts'
 import type { Theme } from '../types.ts'
-import { debounce, escHtml } from '../utils.ts'
+import { copyText, debounce, escHtml } from '../utils.ts'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 
@@ -151,13 +151,14 @@ function bindEvents(): void {
   // Copy client ID
   container.querySelector('#copy-client-id-btn')?.addEventListener('click', () => {
     const id = store.get().clientId
-    navigator.clipboard.writeText(id).then(() => {
+    void copyText(id).then(copied => {
+      if (!copied) return
       const btn = container?.querySelector('#copy-client-id-btn')
       if (btn) {
         btn.textContent = '✓'
         setTimeout(() => { if (btn) btn.innerHTML = iconCopy }, 1500)
       }
-    }).catch(() => { /* clipboard access denied, ignore */ })
+    })
   })
 
   // Reset client ID (with confirmation)

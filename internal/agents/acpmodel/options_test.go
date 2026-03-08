@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents"
 )
 
 func TestExtractModelOptionsFromConfigOptions(t *testing.T) {

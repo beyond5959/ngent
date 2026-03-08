@@ -19,22 +19,23 @@ import (
 	"time"
 
 	"github.com/beyond5959/acp-adapter/pkg/codexacp"
-	agentimpl "github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
-	claudeagent "github.com/beyond5959/go-acp-server/internal/agents/claude"
-	codexagent "github.com/beyond5959/go-acp-server/internal/agents/codex"
-	geminiagent "github.com/beyond5959/go-acp-server/internal/agents/gemini"
-	opencodeagent "github.com/beyond5959/go-acp-server/internal/agents/opencode"
-	qwenagent "github.com/beyond5959/go-acp-server/internal/agents/qwen"
-	"github.com/beyond5959/go-acp-server/internal/httpapi"
-	"github.com/beyond5959/go-acp-server/internal/runtime"
-	"github.com/beyond5959/go-acp-server/internal/storage"
-	"github.com/beyond5959/go-acp-server/internal/webui"
+	agentimpl "github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	claudeagent "github.com/beyond5959/ngent/internal/agents/claude"
+	codexagent "github.com/beyond5959/ngent/internal/agents/codex"
+	geminiagent "github.com/beyond5959/ngent/internal/agents/gemini"
+	opencodeagent "github.com/beyond5959/ngent/internal/agents/opencode"
+	qwenagent "github.com/beyond5959/ngent/internal/agents/qwen"
+	"github.com/beyond5959/ngent/internal/httpapi"
+	"github.com/beyond5959/ngent/internal/observability"
+	"github.com/beyond5959/ngent/internal/runtime"
+	"github.com/beyond5959/ngent/internal/storage"
+	"github.com/beyond5959/ngent/internal/webui"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	logger := observability.NewJSONLogger(slog.LevelInfo)
 
 	defaultDBPath, err := resolveDefaultDBPath()
 	if err != nil {
@@ -321,7 +322,7 @@ func buildAgentConfigCatalogRefresher(
 		return nil
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		logger = observability.NewJSONLogger(slog.LevelInfo)
 	}
 
 	return &agentConfigCatalogRefresher{
@@ -758,7 +759,7 @@ func gracefulShutdown(
 		baseCtx = context.Background()
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		logger = observability.NewJSONLogger(slog.LevelInfo)
 	}
 	if timeout <= 0 {
 		timeout = 8 * time.Second

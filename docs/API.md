@@ -14,13 +14,14 @@ This document defines the current HTTP API contract.
 
 - Startup prints a human-readable multi-line summary on `stderr` with `Time`, `HTTP`, `Web`, `DB`, `Agents`, and `Help`.
 - Every HTTP request emits one structured completion log entry (`http.request.completed`) with:
-  - `requestTime`
+  - `req_time` (UTC `time.DateTime`, second precision)
   - `method`
   - `path`
   - `ip`
-  - `statusCode`
-  - `durationMs`
-  - `responseBytes`
+  - `status`
+  - `duration_ms`
+  - `resp_bytes`
+- Structured log `time` is emitted as UTC `time.DateTime` with second precision.
 
 ## Unified Error Envelope
 
@@ -184,6 +185,7 @@ All errors use:
 
 ```json
 {
+  "title": "optional new title",
   "agentOptions": {
     "modelId": "gpt-5"
   }
@@ -191,9 +193,10 @@ All errors use:
 ```
 
 - Behavior:
-  - updates persisted `thread.agentOptions` and `updatedAt`.
+  - when `title` is present, trims surrounding whitespace, persists `thread.title`, and updates `updatedAt`.
+  - when `agentOptions` is present, updates persisted `thread.agentOptions` and `updatedAt`.
   - if the thread has an active turn, returns `409 CONFLICT`.
-  - closes cached thread-level agent provider so the next turn uses updated options.
+  - closes cached thread-level agent provider only when `agentOptions` is updated, so the next turn uses updated options.
 - Response `200`:
 
 ```json

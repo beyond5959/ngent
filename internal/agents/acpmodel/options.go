@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents"
 )
 
 // ExtractConfigOptions parses ACP session config options from session/new or

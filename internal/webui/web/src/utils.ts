@@ -71,6 +71,59 @@ export function escHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+// ── Clipboard ──────────────────────────────────────────────────────────────
+
+/**
+ * Best-effort clipboard copy that works on localhost and LAN HTTP pages.
+ * Falls back to execCommand for browsers that block navigator.clipboard on
+ * non-secure origins.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Fall through to the legacy copy path.
+    }
+  }
+
+  if (typeof document === 'undefined' || !document.body) return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '0'
+  textarea.style.left = '-9999px'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+
+  const activeEl = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  const selection = typeof window !== 'undefined' ? window.getSelection() : null
+  const ranges = selection
+    ? Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i).cloneRange())
+    : []
+
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, textarea.value.length)
+
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    textarea.remove()
+    if (selection) {
+      selection.removeAllRanges()
+      ranges.forEach(range => selection.addRange(range))
+    }
+    activeEl?.focus()
+  }
+}
+
 // ── Debounce ───────────────────────────────────────────────────────────────
 
 export function debounce<T extends (...args: Parameters<T>) => void>(

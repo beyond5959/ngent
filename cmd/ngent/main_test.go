@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	agentimpl "github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/runtime"
-	"github.com/beyond5959/go-acp-server/internal/storage"
+	agentimpl "github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/runtime"
+	"github.com/beyond5959/ngent/internal/storage"
 )
 
 func TestValidateListenAddr(t *testing.T) {
@@ -478,7 +478,7 @@ func TestPrintStartupSummary(t *testing.T) {
 		}
 	}
 
-	for _, notWant := range []string{"Time:", "DB:", "Agents:", "Help:", "agent-hub-server --help", "HTTP:", "Web:", "LAN:"} {
+	for _, notWant := range []string{"Time:", "DB:", "Agents:", "Help:", "ngent --help", "HTTP:", "Web:", "LAN:"} {
 		if strings.Contains(text, notWant) {
 			t.Fatalf("startup summary unexpectedly contains %q; got:\n%s", notWant, text)
 		}

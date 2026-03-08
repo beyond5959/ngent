@@ -11,6 +11,14 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
+## Latest Update (2026-03-06)
+
+- codex embedded compatibility hotfix integrated:
+  - patched local dependency `../acp-adapter` to handle newer codex app-server approval request methods (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`) and to avoid misleading `-32601 method not found` on unsupported server requests.
+- validation:
+  - pass: `go test ./...` (in `../acp-adapter`)
+  - pass: `go test ./...` (in this repository)
+
 ## Status
 
 ### Done
@@ -66,7 +74,7 @@ This file is the source of milestone progress, validation commands, and next act
   - validated SSE disconnect fail-closed behavior and non-hanging turn convergence.
   - updated acceptance checklist with executable `go test` and `curl` verification commands.
 - `Post-M8` maintenance completed:
-  - finalized canonical Go module path as `github.com/beyond5959/go-acp-server`.
+  - finalized canonical Go module path as `github.com/beyond5959/ngent`.
   - replaced placeholder import path references across in-repo Go sources/tests.
 - `Post-M8` embedded codex migration completed:
   - switched codex provider from external `codex-acp-go` path-based process spawning to embedded `github.com/beyond5959/acp-adapter/pkg/codexacp`.
@@ -95,7 +103,8 @@ This file is the source of milestone progress, validation commands, and next act
   - simplified README startup path to `agent-hub-server` with explicit `agent-hub-server --help` guidance.
 - `Post-M8` startup log UX simplification completed:
   - replaced startup JSON line with multi-line human-readable stderr summary (QR code + port and URL hint).
-  - added per-request completion logs containing `requestTime`, `method`, `path`, `ip`, `statusCode`, `durationMs`, and `responseBytes`.
+  - added per-request completion logs containing `req_time`, `method`, `path`, `ip`, `status`, `duration_ms`, and `resp_bytes`.
+  - normalized structured log `time` and request log `req_time` to UTC `time.DateTime` at second precision.
   - added unit test coverage for startup summary rendering and request completion log fields.
 - `Post-M8` LAN-friendly default bind completed:
   - changed default bind to `0.0.0.0:8686` and `--allow-public` default to `true` so other devices can connect via the startup QR code.
@@ -107,7 +116,7 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
     - pass: `qwen --version` (`0.11.0`)
     - pass: `go test ./internal/agents/qwen -count=1`
-    - pass: `go test ./cmd/agent-hub-server ./internal/httpapi -count=1`
+    - pass: `go test ./cmd/ngent ./internal/httpapi -count=1`
     - pass: `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s`
 - `Post-M8` ACP stdio transport refactor completed:
   - extracted shared transport package `internal/agents/acpstdio` (JSON-RPC stdio call/notify, inbound request handling, parse helpers, process termination helper).
@@ -276,7 +285,7 @@ This file is the source of milestone progress, validation commands, and next act
   - `qwen --version`
   - `go test ./internal/agents/qwen -count=1`
   - `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s`
-  - `go test ./cmd/agent-hub-server ./internal/httpapi -count=1`
+  - `go test ./cmd/ngent ./internal/httpapi -count=1`
   - `go test ./...`
 - Result:
   - opencode/qwen package tests: pass
@@ -372,7 +381,7 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Notes
 
-- Canonical module path is now finalized as `github.com/beyond5959/go-acp-server`.
+- Canonical module path is now finalized as `github.com/beyond5959/ngent`.
 - All in-repo Go import paths were updated from placeholder path to canonical path.
 
 - `Post-F9` Web UI multi-thread streaming behavior fixed:
@@ -492,4 +501,49 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
 
+- `Post-F9` streaming bubble typing-indicator persistence completed:
+  - Web UI streaming agent bubble now keeps the three animated dots rendered at the bottom of the bubble after the first delta arrives, until the turn finishes.
+  - refactored transient streaming bubble DOM to use separate text and indicator regions so incremental `onDelta` updates no longer replace the indicator.
+
+- `Post-F9` Web UI clipboard fallback and message-copy fix completed:
+  - unified copy actions behind a best-effort clipboard helper that falls back to `document.execCommand('copy')` when `navigator.clipboard` is unavailable or blocked on LAN HTTP origins.
+  - message copy buttons now copy the original message text payload instead of scraping rendered DOM text, so agent markdown replies no longer pull in code-block chrome such as `Copy` labels.
+  - applied the same fallback path to code-block copy and settings-panel client-id copy to keep behavior consistent across the UI.
+
+- `Post-F9` streaming bubble empty-line removal:
+  - removed the blank spacer above the three animated dots before the first token arrives by hiding the empty text container in streaming bubbles.
+  - typing indicator now sits directly under the top padding until real content starts streaming.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` sidebar thread activity indicators completed:
+  - thread list now shows a live spinner for any thread with an in-flight turn, so background work stays visible after switching to another thread.
+  - when a background turn finishes, the spinner flips to a green check badge that stays on that thread until the user opens it again.
+  - slowed the sidebar thread spinner slightly so the activity indicator reads as background work instead of a high-frequency busy loop.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` sidebar thread drawer actions and rename completed:
+  - replaced the direct delete icon in sidebar thread rows with a drawer trigger.
+  - added drawer actions for inline rename and delete, with rename ordered before delete and delete styled as the only dangerous text action.
+  - extended `PATCH /v1/threads/{threadId}` so thread title updates reuse the existing ownership and active-turn conflict model.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-F9` sidebar thread action popover refinement completed:
+  - replaced the expanding inline drawer with a floating popover anchored to the three-dot trigger, so opening thread actions no longer changes sidebar row height.
+  - kept rename and delete in the same order, with rename editing rendered in a floating panel and delete remaining the red dangerous action.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
  
+- 2026-03-06: Removed the thread action trigger's per-thread actionLabel/title tooltip in the Web UI popover menu; the three-dot button now uses a neutral `aria-label` only, without hover text tied to the thread title.
+- 2026-03-06: Moved the sidebar thread action menu and rename form into a sidebar-level floating layer instead of rendering them inside each thread row, so the rename UI is no longer clipped by the thread list or sidebar overflow.
+- 2026-03-06: fixed embedded codex permission bridge timeout mismatch by aligning adapter-side `session/request_permission` wait window to 2h (was 30s), matching hub default timeout and avoiding premature fail-closed during manual approval.
+- 2026-03-06: fixed embedded codex server-request compatibility for tool interaction:
+  - `item/tool/requestUserInput` now returns schema-compatible answers (auto-select first option label per question) instead of `-32000 not supported`.
+  - `item/tool/call` now returns structured tool failure payload (`success=false`) instead of JSON-RPC method error, so app-server no longer aborts the whole flow on this request type.

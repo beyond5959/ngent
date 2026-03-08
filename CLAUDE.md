@@ -8,7 +8,7 @@ This repository implements the **Code Agent Hub Server** — a local-first Go se
 make test          # go test ./...
 make fmt           # gofmt -w all .go files
 make build-web     # cd web && npm ci && npm run build  (generates web/dist)
-make run           # build-web + go run ./cmd/agent-hub-server
+make run           # build-web + go run ./cmd/ngent
 go build ./...     # compile check
 ```
 
@@ -16,7 +16,7 @@ go build ./...     # compile check
 
 | Package | Responsibility |
 |---|---|
-| `cmd/agent-hub-server` | Entry point, CLI flags, startup summary |
+| `cmd/ngent` | Entry point, CLI flags, startup summary |
 | `internal/httpapi` | Routing, request validation, error encoding |
 | `internal/runtime` | Thread controller, turn state machine, cancel coordination |
 | `internal/agents` | Agent providers: fake, ACP stdio, embedded codex |
@@ -27,7 +27,7 @@ go build ./...     # compile check
 
 ## Mandatory Constraints
 
-- Use **Go 1.24**. Module path: `github.com/beyond5959/go-acp-server`.
+- Use **Go 1.24**. Module path: `github.com/beyond5959/ngent`.
 - `go test ./...` must pass for every change.
 - Input validation:
   - `agent` must be in the server allowlist.

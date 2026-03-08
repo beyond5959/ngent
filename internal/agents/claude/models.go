@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/beyond5959/acp-adapter/pkg/claudeacp"
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
 )
 
 // DiscoverModels queries ACP session/new and returns selectable model options.
@@ -37,7 +37,7 @@ func DiscoverModels(ctx context.Context, cfg Config) ([]agents.ModelOption, erro
 
 	if _, err := client.clientRequest(requestCtx, runtime, methodInitialize, map[string]any{
 		"client": map[string]any{
-			"name": "go-acp-server",
+			"name": "ngent",
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("claude: initialize for model discovery: %w", err)

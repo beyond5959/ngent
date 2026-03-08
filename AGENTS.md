@@ -44,7 +44,7 @@ Milestones F0–F9 are complete. The frontend is a no-framework Vite + TypeScrip
 - **Build targets** (Makefile):
   - `make build-web` — `npm ci && npm run build` inside `internal/webui/web/`.
   - `make build` — `build-web` then `go build ./...`.
-  - `make run` — `build-web` then `go run ./cmd/agent-hub-server`.
+  - `make run` — `build-web` then `go run ./cmd/ngent`.
 
 ### Source file map
 
@@ -116,7 +116,7 @@ store.subscribe(() => {
 
 - **`.github/workflows/ci.yml`** — triggers on every push/PR (non-tag). Steps: set up Go + Node.js 20, `make build-web`, gofmt check, `go test ./...`.
 - **`.github/workflows/release.yml`** — triggers on `v*.*.*` tags. Runs `goreleaser release --clean` which executes `make build-web` (via `.goreleaser.yml` `before.hooks`) then cross-compiles for linux/darwin/windows (amd64 + arm64) with `CGO_ENABLED=0`.
-- **`.goreleaser.yml`** — produces `agent-hub-server_VERSION_OS_ARCH.tar.gz` archives + `checksums.txt` and publishes to GitHub Releases.
+- **`.goreleaser.yml`** — produces `ngent_VERSION_OS_ARCH.tar.gz` archives + `checksums.txt` and publishes to GitHub Releases.
 - To cut a release: `git tag v0.x.y && git push origin v0.x.y`.
 
 - MUST run `npm run build` (i.e. `tsc -b && vite build`) and confirm zero TypeScript errors before committing.

@@ -51,6 +51,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 
 - Operation: trigger permission-required flow; test approved, timeout, and disconnect cases.
 - Expected: `permission_required` emitted; timeout/disconnect fails closed.
+  - embedded codex command-approval flow should not fail with adapter-side `-32601 method not found` when using updated app-server request methods.
 - Verification command:
   - `go test ./internal/httpapi -run TestTurnPermissionRequiredSSEEvent -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionApprovedContinuesAndCompletes -count=1`
@@ -62,20 +63,20 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Operation: validate listen address policy with/without allow-public.
 - Expected: non-loopback bind is allowed by default; `--allow-public=false` restricts to loopback only.
 - Verification command:
-  - `go test ./cmd/agent-hub-server -run TestValidateListenAddr -count=1`
+  - `go test ./cmd/ngent -run TestValidateListenAddr -count=1`
 
 ## Requirement 9: Startup logging contract
 
 - Operation: start server and inspect startup output on stderr.
 - Expected: startup output is multi-line, human-readable, includes a QR code (when public bind is enabled), and prints the service port + a concrete URL under the QR code.
 - Verification command:
-  - `go test ./cmd/agent-hub-server -count=1`
-  - manual run: `go run ./cmd/agent-hub-server`
+  - `go test ./cmd/ngent -count=1`
+  - manual run: `go run ./cmd/ngent`
 
 ## Requirement 10: Unified errors and structured logs
 
 - Operation: trigger auth failure/path policy failure and inspect request completion logs.
-- Expected: `UNAUTHORIZED` and `FORBIDDEN` error envelopes are stable; request logs include `requestTime`, `path`, `ip`, and `statusCode`.
+- Expected: `UNAUTHORIZED` and `FORBIDDEN` error envelopes are stable; request logs include `req_time`, `path`, `ip`, and `status`.
 - Verification command:
   - `go test ./internal/httpapi -run TestV1AuthToggle -count=1`
   - `go test ./internal/httpapi -run TestCreateThreadValidationCWDAllowedRoots -count=1`
@@ -95,7 +96,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected: idle thread agent is reclaimed and closed; shutdown force-cancels active turns on timeout.
 - Verification command:
   - `go test ./internal/httpapi -run TestAgentIdleTTLReclaimsThreadAgent -count=1`
-  - `go test ./cmd/agent-hub-server -run TestGracefulShutdownForceCancelsTurns -count=1`
+  - `go test ./cmd/ngent -run TestGracefulShutdownForceCancelsTurns -count=1`
 
 ## Requirement 13: Embedded Web UI
 
@@ -141,7 +142,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `qwen --version` (pass, `0.11.0`)
   - `go test ./internal/agents/qwen -count=1` (pass)
   - `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s` (pass, real prompt returns `PONG`)
-  - `go test ./cmd/agent-hub-server ./internal/httpapi -count=1` (pass)
+  - `go test ./cmd/ngent ./internal/httpapi -count=1` (pass)
 
 ## Requirement 17: Thread Delete Lifecycle
 
@@ -203,10 +204,27 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/httpapi -run TestThreadConfigOptionsPersistConfigOverrides -count=1`
   - `go test ./internal/httpapi -run TestV1AgentModelsUsesStoredCatalog -count=1`
   - `go test ./internal/agents/acpmodel -count=1`
-  - `go test ./cmd/agent-hub-server -run TestAgentConfigCatalogRefresher -count=1`
-  - `go test ./cmd/agent-hub-server -run TestExtractConfigOverrides -count=1`
+  - `go test ./cmd/ngent -run TestAgentConfigCatalogRefresher -count=1`
+  - `go test ./cmd/ngent -run TestExtractConfigOverrides -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
+
+## Requirement 20: Thread Drawer Actions and Rename
+
+- Operation:
+  - open sidebar thread actions from a thread-row drawer trigger.
+  - rename a thread inline from the drawer.
+  - delete a thread from the same drawer.
+- Expected:
+  - thread row exposes a drawer trigger instead of a direct delete icon button.
+  - drawer lists `Rename` before `Delete`.
+  - delete is text-only and styled as the dangerous action.
+  - rename persists `thread.title` through `PATCH /v1/threads/{threadId}` and returns the updated thread payload.
+  - rename/delete continue to respect active-turn safety (`409 CONFLICT` while the thread is running).
+- Verification commands (executed 2026-03-06):
+  - `go test ./internal/storage -run TestUpdateThreadTitle -count=1`
+  - `go test ./internal/httpapi -run TestUpdateThreadTitle -count=1`
+  - `cd internal/webui/web && npm run build`
 
 ## Current Acceptance Result (Integration Update, 2026-03-03)
 
@@ -217,3 +235,16 @@ This checklist defines executable acceptance checks for requirements 1-16.
     - server/httpapi wiring tests passed (includes qwen allowlist coverage).
   - real qwen smoke in host environment: `Passed`.
   - Requirement 16 status: `Accepted`.
+
+## Requirement 21: Embedded Codex Tool User-Input Request Compatibility
+
+- Operation:
+  - trigger codex app-server request path that emits `item/tool/requestUserInput` (for example MCP tool interaction requiring follow-up selection).
+  - observe adapter response and downstream behavior.
+- Expected:
+  - adapter no longer returns JSON-RPC hard error `-32000 ... requestUserInput is not supported`.
+  - request receives schema-compatible `answers` payload.
+  - `item/tool/call` fallback returns structured response (`success=false`) instead of hard method error.
+- Verification commands (executed 2026-03-06):
+  - `go test ./...`
+  - `cd internal/webui/web && npm run build`

@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acp"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
-	runtimectl "github.com/beyond5959/go-acp-server/internal/runtime"
-	"github.com/beyond5959/go-acp-server/internal/storage"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acp"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	runtimectl "github.com/beyond5959/ngent/internal/runtime"
+	"github.com/beyond5959/ngent/internal/storage"
 )
 
 func TestHealthz(t *testing.T) {
@@ -92,11 +92,22 @@ func TestRequestCompletionLogIncludesPathIPAndStatus(t *testing.T) {
 	if got := fmt.Sprintf("%v", entry["ip"]); got != "198.51.100.23" {
 		t.Fatalf("log ip = %q, want %q", got, "198.51.100.23")
 	}
-	if got := int(entry["statusCode"].(float64)); got != http.StatusOK {
-		t.Fatalf("log statusCode = %d, want %d", got, http.StatusOK)
+	if got := int(entry["status"].(float64)); got != http.StatusOK {
+		t.Fatalf("log status = %d, want %d", got, http.StatusOK)
 	}
-	if got := fmt.Sprintf("%v", entry["requestTime"]); strings.TrimSpace(got) == "" {
-		t.Fatalf("log requestTime is empty")
+	if got := fmt.Sprintf("%v", entry["req_time"]); strings.TrimSpace(got) == "" {
+		t.Fatalf("log req_time is empty")
+	}
+	reqTimeRaw := fmt.Sprintf("%v", entry["req_time"])
+	if strings.Contains(reqTimeRaw, ".") {
+		t.Fatalf("log req_time includes sub-second precision: %q", reqTimeRaw)
+	}
+	reqTime, err := time.Parse(time.DateTime, reqTimeRaw)
+	if err != nil {
+		t.Fatalf("log req_time parse error: %v (value=%q)", err, reqTimeRaw)
+	}
+	if !reqTime.Equal(reqTime.Truncate(time.Second)) {
+		t.Fatalf("log req_time is not second precision: %q", reqTimeRaw)
 	}
 }
 
@@ -491,6 +502,61 @@ func TestUpdateThreadAgentOptionsCrossClientReturnsNotFound(t *testing.T) {
 		t.Fatalf("cross-client update status = %d, want %d", updateRR.Code, http.StatusNotFound)
 	}
 	assertErrorCode(t, updateRR.Body.Bytes(), "NOT_FOUND")
+}
+
+func TestUpdateThreadTitle(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+
+	createRR := performJSONRequest(t, h, http.MethodPost, "/v1/threads", map[string]any{
+		"agent": "codex",
+		"cwd":   root,
+		"title": "before",
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if createRR.Code != http.StatusOK {
+		t.Fatalf("create status code = %d, want %d", createRR.Code, http.StatusOK)
+	}
+	threadID := extractThreadID(t, createRR.Body.Bytes())
+
+	updateRR := performJSONRequest(t, h, http.MethodPatch, "/v1/threads/"+threadID, map[string]any{
+		"title": "after",
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if updateRR.Code != http.StatusOK {
+		t.Fatalf("update status code = %d, want %d", updateRR.Code, http.StatusOK)
+	}
+
+	var updateBody struct {
+		Thread struct {
+			ThreadID string `json:"threadId"`
+			Title    string `json:"title"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(updateRR.Body.Bytes(), &updateBody); err != nil {
+		t.Fatalf("unmarshal update response: %v", err)
+	}
+	if updateBody.Thread.ThreadID != threadID {
+		t.Fatalf("updated threadId = %q, want %q", updateBody.Thread.ThreadID, threadID)
+	}
+	if updateBody.Thread.Title != "after" {
+		t.Fatalf("updated title = %q, want %q", updateBody.Thread.Title, "after")
+	}
+
+	getRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID, nil, map[string]string{"X-Client-ID": "client-a"})
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get status code = %d, want %d", getRR.Code, http.StatusOK)
+	}
+
+	var getBody struct {
+		Thread struct {
+			Title string `json:"title"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &getBody); err != nil {
+		t.Fatalf("unmarshal get response: %v", err)
+	}
+	if getBody.Thread.Title != "after" {
+		t.Fatalf("persisted title = %q, want %q", getBody.Thread.Title, "after")
+	}
 }
 
 func TestThreadAccessAcrossClientsReturnsNotFound(t *testing.T) {

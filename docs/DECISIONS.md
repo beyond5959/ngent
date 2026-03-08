@@ -30,6 +30,8 @@
 - ADR-026: Thread-level model override update API and provider reset. (Accepted)
 - ADR-027: ACP-backed agent model catalog endpoint and UI dropdown wiring. (Accepted)
 - ADR-028: Persist thread config overrides and surface reasoning control in Web UI. (Accepted)
+- ADR-029: Consolidate sidebar thread actions into a drawer and reuse thread patch for rename. (Accepted)
+- ADR-030: Pin local acp-adapter hotfix for codex app-server server-request compatibility. (Accepted)
 
 ## ADR-018: Embedded Web UI via Go embed
 
@@ -312,9 +314,9 @@ Use this template for new decisions.
 
 - Status: Accepted
 - Date: 2026-02-28
-- Context: repository ownership and canonical GitHub path are now stable (`github.com/beyond5959/go-acp-server`), while source imports still used a placeholder module path.
+- Context: repository ownership and canonical GitHub path are now stable (`github.com/beyond5959/ngent`), while source imports still used a placeholder module path.
 - Decision:
-  - set `go.mod` module path to `github.com/beyond5959/go-acp-server`.
+  - set `go.mod` module path to `github.com/beyond5959/ngent`.
   - update all in-repo imports from `github.com/example/code-agent-hub-server/...` to canonical module path.
 - Consequences: local builds/tests and downstream module consumers resolve a single stable import path; placeholder path drift is removed.
 - Alternatives considered: keep placeholder path longer and defer until post-release.
@@ -378,7 +380,8 @@ Use this template for new decisions.
 - Decision:
   - print a concise multi-line startup summary to stderr with a QR code; print the service port and a concrete URL under the QR code.
   - keep structured request completion logs via `slog` for all HTTP traffic.
-  - include `requestTime`, `method`, `path`, `ip`, `statusCode`, `durationMs`, and `responseBytes` in completion logs.
+  - include `req_time`, `method`, `path`, `ip`, `status`, `duration_ms`, and `resp_bytes` in completion logs.
+  - standardize log `time` and request `req_time` to UTC `time.DateTime` second precision for easier human scanning and stable parsing.
 - Consequences:
   - local startup UX is easier to read without parsing JSON.
   - request observability is consistent across normal JSON responses and long-lived SSE requests.
@@ -569,3 +572,40 @@ Use this template for new decisions.
   - keep catalogs only in frontend memory and re-query on restart.
   - store only an agent-level flat reasoning list (rejected because reasoning is model-dependent).
   - block startup until all agents refresh live catalogs (rejected because it would directly impact frontend responsiveness).
+
+## ADR-029: Consolidate sidebar thread actions into a drawer and reuse thread patch for rename
+
+- Status: Accepted
+- Date: 2026-03-06
+- Context:
+  - sidebar thread rows already show dense metadata and activity state; a direct delete affordance makes the list visually noisy and increases the chance of accidental destructive clicks.
+  - thread rename is metadata-only and should share the existing thread ownership/conflict semantics instead of adding a dedicated endpoint.
+- Decision:
+  - replace the direct sidebar delete button with a per-thread drawer trigger.
+  - render drawer actions as text-only controls in this order:
+    - `Rename`
+    - `Delete` (danger styling)
+  - extend `PATCH /v1/threads/{threadId}` to accept optional `title` in addition to `agentOptions`.
+  - keep rename under the same active-turn conflict guard as other thread mutations.
+- Consequences:
+  - sidebar actions are less visually noisy and destructive actions are one click deeper.
+  - rename and thread metadata/config mutations now share one API contract.
+  - users must wait for a running turn to finish, or cancel it, before renaming the thread.
+
+## ADR-030: Handle codex `item/tool/requestUserInput` and `item/tool/call` without hard RPC failure
+
+- Status: Accepted
+- Date: 2026-03-06
+- Context:
+  - codex app-server may emit server requests `item/tool/requestUserInput` and `item/tool/call` during MCP-related operations.
+  - previous bridge behavior returned `-32000 ... is not supported`, which caused app-server-side hard errors and interrupted command flow.
+- Decision:
+  - implement a compatibility fallback in embedded adapter path:
+    - for `item/tool/requestUserInput`: return schema-compatible `answers` payload by auto-selecting the first option label for each question.
+    - for `item/tool/call`: return schema-compatible `DynamicToolCallResponse` with `success=false` and one text content item, instead of throwing RPC method error.
+- Consequences:
+  - removes immediate `-32000` hard-fail class for these methods and allows app-server to continue handling tool flow.
+  - behavior is still a fallback (not full interactive user-input / dynamic-tool execution support).
+- Alternatives considered:
+  - keep fail-closed `-32000` hard error (rejected: user-facing breakage for MCP flows).
+  - fully implement interactive user-input/dynamic tool execution end-to-end in hub UI + protocol bridge in one step (rejected for hotfix scope).

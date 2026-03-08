@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/beyond5959/go-acp-server/internal/webui"
+	"github.com/beyond5959/ngent/internal/webui"
 )
 
 func TestHandlerServesIndexHTML(t *testing.T) {

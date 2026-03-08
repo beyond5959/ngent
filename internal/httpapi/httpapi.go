@@ -19,11 +19,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
-	"github.com/beyond5959/go-acp-server/internal/runtime"
-	"github.com/beyond5959/go-acp-server/internal/sse"
-	"github.com/beyond5959/go-acp-server/internal/storage"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/runtime"
+	"github.com/beyond5959/ngent/internal/sse"
+	"github.com/beyond5959/ngent/internal/storage"
 )
 
 // AgentInfo describes one supported agent entry returned by /v1/agents.

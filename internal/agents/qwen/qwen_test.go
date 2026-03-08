@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	qwen "github.com/beyond5959/go-acp-server/internal/agents/qwen"
+	"github.com/beyond5959/ngent/internal/agents"
+	qwen "github.com/beyond5959/ngent/internal/agents/qwen"
 )
 
 // TestPreflight verifies that Preflight returns nil when the qwen binary exists.

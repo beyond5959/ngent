@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acp"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
-	runtimectl "github.com/beyond5959/go-acp-server/internal/runtime"
-	"github.com/beyond5959/go-acp-server/internal/storage"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acp"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	runtimectl "github.com/beyond5959/ngent/internal/runtime"
+	"github.com/beyond5959/ngent/internal/storage"
 )
 
 func TestHealthz(t *testing.T) {

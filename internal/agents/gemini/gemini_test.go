@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	gemini "github.com/beyond5959/go-acp-server/internal/agents/gemini"
+	gemini "github.com/beyond5959/ngent/internal/agents/gemini"
 )
 
 // TestPreflight verifies that Preflight returns nil when the gemini binary exists.

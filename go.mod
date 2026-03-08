@@ -1,4 +1,4 @@
-module github.com/beyond5959/go-acp-server
+module github.com/beyond5959/ngent
 
 go 1.24
 

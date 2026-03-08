@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	agentimpl "github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/runtime"
-	"github.com/beyond5959/go-acp-server/internal/storage"
+	agentimpl "github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/runtime"
+	"github.com/beyond5959/ngent/internal/storage"
 )
 
 func TestValidateListenAddr(t *testing.T) {

@@ -314,9 +314,9 @@ Use this template for new decisions.
 
 - Status: Accepted
 - Date: 2026-02-28
-- Context: repository ownership and canonical GitHub path are now stable (`github.com/beyond5959/go-acp-server`), while source imports still used a placeholder module path.
+- Context: repository ownership and canonical GitHub path are now stable (`github.com/beyond5959/ngent`), while source imports still used a placeholder module path.
 - Decision:
-  - set `go.mod` module path to `github.com/beyond5959/go-acp-server`.
+  - set `go.mod` module path to `github.com/beyond5959/ngent`.
   - update all in-repo imports from `github.com/example/code-agent-hub-server/...` to canonical module path.
 - Consequences: local builds/tests and downstream module consumers resolve a single stable import path; placeholder path drift is removed.
 - Alternatives considered: keep placeholder path longer and defer until post-release.

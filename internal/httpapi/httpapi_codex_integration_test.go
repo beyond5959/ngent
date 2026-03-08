@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	codexagent "github.com/beyond5959/go-acp-server/internal/agents/codex"
-	"github.com/beyond5959/go-acp-server/internal/storage"
+	"github.com/beyond5959/ngent/internal/agents"
+	codexagent "github.com/beyond5959/ngent/internal/agents/codex"
+	"github.com/beyond5959/ngent/internal/storage"
 )
 
 func TestE2ECodexSmoke(t *testing.T) {

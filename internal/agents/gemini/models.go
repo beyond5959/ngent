@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
 )
 
 // DiscoverModels starts one ACP session/new handshake and returns model options.

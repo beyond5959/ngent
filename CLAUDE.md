@@ -27,7 +27,7 @@ go build ./...     # compile check
 
 ## Mandatory Constraints
 
-- Use **Go 1.24**. Module path: `github.com/beyond5959/go-acp-server`.
+- Use **Go 1.24**. Module path: `github.com/beyond5959/ngent`.
 - `go test ./...` must pass for every change.
 - Input validation:
   - `agent` must be in the server allowlist.

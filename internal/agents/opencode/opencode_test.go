@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	opencode "github.com/beyond5959/go-acp-server/internal/agents/opencode"
+	opencode "github.com/beyond5959/ngent/internal/agents/opencode"
 )
 
 // TestPreflight verifies that Preflight returns nil when the opencode binary exists.

@@ -74,7 +74,7 @@ This file is the source of milestone progress, validation commands, and next act
   - validated SSE disconnect fail-closed behavior and non-hanging turn convergence.
   - updated acceptance checklist with executable `go test` and `curl` verification commands.
 - `Post-M8` maintenance completed:
-  - finalized canonical Go module path as `github.com/beyond5959/go-acp-server`.
+  - finalized canonical Go module path as `github.com/beyond5959/ngent`.
   - replaced placeholder import path references across in-repo Go sources/tests.
 - `Post-M8` embedded codex migration completed:
   - switched codex provider from external `codex-acp-go` path-based process spawning to embedded `github.com/beyond5959/acp-adapter/pkg/codexacp`.
@@ -381,7 +381,7 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Notes
 
-- Canonical module path is now finalized as `github.com/beyond5959/go-acp-server`.
+- Canonical module path is now finalized as `github.com/beyond5959/ngent`.
 - All in-repo Go import paths were updated from placeholder path to canonical path.
 
 - `Post-F9` Web UI multi-thread streaming behavior fixed:

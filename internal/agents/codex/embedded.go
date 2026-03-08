@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/beyond5959/acp-adapter/pkg/codexacp"
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
 )
 
 const (
@@ -536,7 +536,7 @@ func (c *Client) ensureInitialized(ctx context.Context) (*codexacp.EmbeddedRunti
 
 	if _, err := c.clientRequest(startCtx, runtime, methodInitialize, map[string]any{
 		"client": map[string]any{
-			"name": "go-acp-server",
+			"name": "ngent",
 		},
 	}); err != nil {
 		_ = runtime.Close()

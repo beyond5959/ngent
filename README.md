@@ -1,8 +1,8 @@
-# Go ACP Server
+# Ngent
 
 ## Project Goal 🎯
 
-`go-acp-server` is a local-first Code Agent Hub Server that provides:
+`ngent` is a local-first Code Agent Hub Server that provides:
 
 - HTTP/JSON APIs with SSE streaming for agent turns
 - Multi-thread conversation state persisted in SQLite
@@ -28,7 +28,7 @@ By default, the server listens on `0.0.0.0` and prints a QR code so other device
 
 ### Download pre-built binary (recommended)
 
-Download the latest release for your platform from the [GitHub Releases](https://github.com/beyond5959/go-acp-server/releases) page.
+Download the latest release for your platform from the [GitHub Releases](https://github.com/beyond5959/ngent/releases) page.
 
 Supported platforms:
 
@@ -45,8 +45,8 @@ Extract the archive and place `agent-hub-server` on your `$PATH`.
 Requirements: Go `1.24+`, Node.js `20+`, npm.
 
 ```bash
-git clone https://github.com/beyond5959/go-acp-server.git
-cd go-acp-server
+git clone https://github.com/beyond5959/ngent.git
+cd ngent
 make build          # builds frontend then Go binary → bin/agent-hub-server
 ```
 

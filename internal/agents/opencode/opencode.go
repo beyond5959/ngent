@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beyond5959/go-acp-server/internal/agents"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpmodel"
-	"github.com/beyond5959/go-acp-server/internal/agents/acpstdio"
-	"github.com/beyond5959/go-acp-server/internal/agents/agentutil"
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/agents/acpstdio"
+	"github.com/beyond5959/ngent/internal/agents/agentutil"
 )
 
 const (

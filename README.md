@@ -1,15 +1,38 @@
 # Ngent
 
-## Project Goal 🎯
+[![CI](https://github.com/beyond5959/ngent/actions/workflows/ci.yml/badge.svg)](https://github.com/beyond5959/ngent/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/beyond5959/ngent)](https://go.dev/)
+[![License](https://img.shields.io/github/license/beyond5959/ngent)](LICENSE)
 
-`ngent` is a local-first Code Agent Hub Server that provides:
+> **Web Service Wrapper for ACP-compatible Agents**
+>
+> Ngent wraps command-line agents that speak the [Agent Client Protocol (ACP)](https://github.com/beyond5959/acp-adapter) into a web service, making them accessible via HTTP API and Web UI.
 
-- HTTP/JSON APIs with SSE streaming for agent turns
-- Multi-thread conversation state persisted in SQLite
-- ACP-compatible agent provider architecture (for example Claude Code, Gemini, OpenCode, Qwen Code, Codex)
-- Strict runtime controls: one active turn per thread, fast cancel, and fail-closed permission handling
+## What is Ngent?
 
-By default, the server listens on `0.0.0.0` and prints a QR code so other devices on the same LAN can connect.
+Ngent acts as a bridge between **ACP-compatible agents** (like Claude Code, Codex, Gemini CLI) and **web clients**:
+
+```
+┌─────────────┐     HTTP/WebSocket     ┌─────────┐     JSON-RPC (ACP)     ┌──────────────┐
+│  Web UI     │ ◄────────────────────► │  Ngent  │ ◄────────────────────► │  CLI Agent   │
+│  /v1/* API  │   SSE streaming        │  Server │   stdio                │  (ACP-based) │
+└─────────────┘                        └─────────┘                        └──────────────┘
+```
+
+### How it Works
+
+1. **ACP Protocol**: Agents like Claude Code and Codex expose their capabilities through the Agent Client Protocol (ACP) — a JSON-RPC protocol over stdio
+2. **Ngent Bridge**: Ngent spawns these CLI agents as child processes and translates their ACP protocol into HTTP/JSON APIs
+3. **Web Interface**: Provides a built-in Web UI and REST API for creating conversations, sending prompts, and managing permissions
+
+### Features
+
+- 🔌 **Multi-Agent Support**: Works with any ACP-compatible agent (Codex, Claude Code, Gemini, Qwen, OpenCode)
+- 🌐 **Web API**: HTTP/JSON endpoints with Server-Sent Events (SSE) for streaming responses
+- 🖥️ **Built-in UI**: No separate frontend deployment needed — the web UI is embedded in the binary
+- 🔒 **Permission Control**: Fine-grained approval system for agent file/system operations
+- 💾 **Persistent State**: SQLite-backed conversation history across sessions
+- 📱 **Mobile Friendly**: QR code for easy access from mobile devices on the same network
 
 
 ## Supported Agents
@@ -26,83 +49,43 @@ By default, the server listens on `0.0.0.0` and prints a QR code so other device
 
 ## Installation
 
-### Download pre-built binary (recommended)
-
-Download the latest release for your platform from the [GitHub Releases](https://github.com/beyond5959/ngent/releases) page.
-
-Supported platforms:
-
-| OS      | Architecture |
-|---------|-------------|
-| Linux   | amd64, arm64 |
-| macOS   | amd64 (Intel), arm64 (Apple Silicon) |
-| Windows | amd64 |
-
-Extract the archive and place `ngent` on your `$PATH`.
-
-### Build from source
-
-Requirements: Go `1.24+`, Node.js `20+`, npm.
+### Quick Install (recommended for Linux/macOS)
 
 ```bash
-git clone https://github.com/beyond5959/ngent.git
-cd ngent
-make build          # builds frontend then Go binary → bin/ngent
+curl -sSL https://raw.githubusercontent.com/beyond5959/ngent/master/install.sh | bash
+
+# Or install to a custom directory:
+curl -sSL https://raw.githubusercontent.com/beyond5959/ngent/master/install.sh | INSTALL_DIR=~/.local/bin bash
 ```
 
 ## Run
 
-This README uses the default DB home path:
-
-- `DB_HOME=$HOME/.go-agent-server`
-- `DB_PATH=$HOME/.go-agent-server/agent-hub.db`
-
-Development (LAN-accessible) startup:
-
-```bash
-make run
-```
-
-Recommended startup:
+Start with default settings (LAN-accessible):
 
 ```bash
 ngent
 ```
 
-Local-only startup (no public bind):
+Local-only mode (recommended for security):
 
 ```bash
 ngent --listen 127.0.0.1:8686 --allow-public=false
 ```
 
-Show all CLI options:
+With authentication:
+
+```bash
+ngent --auth-token "your-token"
+```
+
+Show all options:
 
 ```bash
 ngent --help
 ```
 
-`--db-path` is optional. If omitted, the server uses:
-
-- `$HOME/.go-agent-server/agent-hub.db`
-- The server automatically creates `$HOME/.go-agent-server` if it does not exist.
-
-With bearer auth token:
-
-```bash
-ngent \
-  --listen 127.0.0.1:8686 \
-  --db-path "$HOME/.go-agent-server/agent-hub.db" \
-  --auth-token "your-token"
-```
-
-Local-only bind (explicitly opt out):
-
-```bash
-ngent \
-  --listen 127.0.0.1:8686 \
-  --allow-public=false \
-  --db-path "$HOME/.go-agent-server/agent-hub.db"
-```
+**Default paths:**
+- Database: `$HOME/.go-agent-server/agent-hub.db`
 
 Notes:
 
@@ -117,29 +100,24 @@ curl -s -H "X-Client-ID: demo" http://127.0.0.1:8686/v1/agents
 
 ## Web UI
 
-After starting the server, open your browser at the address shown in the startup summary:
+Once started, open the URL shown in the startup output:
 
 ```
 Agent Hub Server started
   [QR Code]
 Port: 8686
 URL:  http://192.168.1.10:8686/
-On your local network, scan the QR code above or open the URL.
 ```
 
-The built-in web UI lets you:
+Scan the QR code or open the URL in your browser.
 
-- Create threads (choose agent, set working directory)
-- Send messages and view streaming agent responses
-- Approve or deny runtime permission requests inline
-- Browse turn history across sessions
-- Switch between light, dark, and system themes
+**Features:**
 
-No Node.js is required at runtime — the UI is compiled and embedded in the server binary.
+- Create threads with any supported agent
+- Chat with streaming responses
+- Approve/deny permission requests inline
+- Browse conversation history
+- Light / dark / system themes
+- Works on desktop and mobile
 
-To rebuild the frontend after local changes:
-
-```bash
-make build-web
-go build ./...
-```
+The Web UI is embedded in the binary — no separate installation needed.

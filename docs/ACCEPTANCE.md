@@ -101,9 +101,10 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 13: Embedded Web UI
 
 - Operation: start server; open browser at `http://127.0.0.1:8686/`.
-- Expected: UI loads, threads can be created, turns stream in real time, permissions can be resolved, history is browsable.
+- Expected: UI loads, threads can be created, turns stream in real time, ACP plan updates render as a live plan card, permissions can be resolved, and history is browsable.
 - Verification command:
   - `go test ./internal/webui -count=1` (checks `GET /` returns 200 with `text/html` content-type and SPA fallback)
+  - `cd internal/webui/web && npm run build`
   - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device
 
 ## Global Gate
@@ -112,6 +113,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected: formatting and tests are green.
 - Verification command:
   - `gofmt -w $(find . -name '*.go' -type f)`
+  - `cd internal/webui/web && npm run build`
   - `go test ./...`
 
 ## Requirement 14: OpenCode Agent
@@ -152,8 +154,10 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - thread creation accepts `agent=kimi`.
   - turn streaming emits `message_delta` and finishes with `turn_completed` (or explicit upstream error envelope).
   - provider tolerates current upstream ACP startup variants `kimi acp` and `kimi --acp`.
+  - thread config/model discovery avoids creating extra empty Kimi sessions when local Kimi config is available.
 - Verification commands:
   - `go test ./internal/agents/kimi -count=1`
+  - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2EDoesNotCreateSession -v -timeout 120s`
   - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiE2ESmoke -v -timeout 120s`
   - `go test ./cmd/ngent ./internal/httpapi -count=1`
 

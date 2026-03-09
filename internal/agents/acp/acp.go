@@ -152,16 +152,22 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		if msg.Method != "session/update" {
 			return nil
 		}
-		var payload struct {
-			Delta string `json:"delta"`
-		}
 		if len(msg.Params) == 0 {
 			return nil
 		}
-		if err := json.Unmarshal(msg.Params, &payload); err != nil {
-			return fmt.Errorf("acp: decode session/update: %w", err)
+		update, err := agents.ParseACPUpdate(msg.Params)
+		if err != nil {
+			return fmt.Errorf("acp: %w", err)
 		}
-		return onDelta(payload.Delta)
+		switch update.Type {
+		case agents.ACPUpdateTypeMessageChunk:
+			return onDelta(update.Delta)
+		case agents.ACPUpdateTypePlan:
+			if handler, ok := agents.PlanHandlerFromContext(ctx); ok {
+				return handler(ctx, update.PlanEntries)
+			}
+		}
+		return nil
 	})
 
 	conn.SetRequestHandler(func(msg rpcMessage) error {

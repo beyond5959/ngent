@@ -1,3 +1,5 @@
+import type { PlanEntry } from './types.ts'
+
 // ── SSE event payloads (mirror server API contract) ───────────────────────
 
 export interface TurnStartedPayload {
@@ -12,6 +14,11 @@ export interface MessageDeltaPayload {
 export interface TurnCompletedPayload {
   turnId: string
   stopReason: string
+}
+
+export interface PlanUpdatePayload {
+  turnId: string
+  entries: PlanEntry[]
 }
 
 export interface TurnErrorPayload {
@@ -33,6 +40,7 @@ export interface PermissionRequiredPayload {
 export interface TurnStreamCallbacks {
   onTurnStarted?:        (e: TurnStartedPayload) => void
   onDelta?:              (e: MessageDeltaPayload) => void
+  onPlanUpdate?:         (e: PlanUpdatePayload) => void
   onCompleted?:          (e: TurnCompletedPayload) => void
   onError?:              (e: TurnErrorPayload) => void
   onPermissionRequired?: (e: PermissionRequiredPayload) => void
@@ -150,6 +158,9 @@ export class TurnStream {
         break
       case 'message_delta':
         this.callbacks.onDelta?.(payload as unknown as MessageDeltaPayload)
+        break
+      case 'plan_update':
+        this.callbacks.onPlanUpdate?.(payload as unknown as PlanUpdatePayload)
         break
       case 'turn_completed':
         this.terminated = true

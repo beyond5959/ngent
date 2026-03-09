@@ -1208,6 +1208,94 @@ func TestTurnsSSEAndHistory(t *testing.T) {
 	}
 }
 
+func TestTurnsSSEIncludesPlanUpdatesAndPersistsHistory(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		agent:        &planStreamer{},
+	})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+
+	turnRR := performJSONRequest(t, h, http.MethodPost, "/v1/threads/"+threadID+"/turns", map[string]any{
+		"input":  "show plan",
+		"stream": true,
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if turnRR.Code != http.StatusOK {
+		t.Fatalf("turn status code = %d, want %d", turnRR.Code, http.StatusOK)
+	}
+
+	events := parseSSEEvents(t, turnRR.Body.String())
+	var lastPlanEntries []any
+	planCount := 0
+	for _, ev := range events {
+		if ev.Event != "plan_update" {
+			continue
+		}
+		planCount++
+		rawEntries, ok := ev.Data["entries"].([]any)
+		if !ok {
+			t.Fatalf("plan_update.entries type = %T, want []any", ev.Data["entries"])
+		}
+		lastPlanEntries = rawEntries
+	}
+	if planCount != 2 {
+		t.Fatalf("plan_update count = %d, want %d", planCount, 2)
+	}
+	if got := len(lastPlanEntries); got != 2 {
+		t.Fatalf("len(lastPlanEntries) = %d, want %d", got, 2)
+	}
+	lastEntry, ok := lastPlanEntries[1].(map[string]any)
+	if !ok {
+		t.Fatalf("last plan entry type = %T, want map[string]any", lastPlanEntries[1])
+	}
+	if got := stringField(lastEntry, "content"); got != "Apply patch" {
+		t.Fatalf("last plan entry content = %q, want %q", got, "Apply patch")
+	}
+
+	historyRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID+"/history?includeEvents=true", nil, map[string]string{"X-Client-ID": "client-a"})
+	if historyRR.Code != http.StatusOK {
+		t.Fatalf("history status code = %d, want %d", historyRR.Code, http.StatusOK)
+	}
+
+	var history struct {
+		Turns []struct {
+			ResponseText string `json:"responseText"`
+			Events       []struct {
+				Type string         `json:"type"`
+				Data map[string]any `json:"data"`
+			} `json:"events"`
+		} `json:"turns"`
+	}
+	if err := json.Unmarshal(historyRR.Body.Bytes(), &history); err != nil {
+		t.Fatalf("unmarshal history: %v", err)
+	}
+	if got, want := len(history.Turns), 1; got != want {
+		t.Fatalf("len(history.turns) = %d, want %d", got, want)
+	}
+	if got := history.Turns[0].ResponseText; got != "final answer" {
+		t.Fatalf("history responseText = %q, want %q", got, "final answer")
+	}
+
+	seenPlanUpdate := false
+	for _, event := range history.Turns[0].Events {
+		if event.Type != "plan_update" {
+			continue
+		}
+		seenPlanUpdate = true
+		rawEntries, ok := event.Data["entries"].([]any)
+		if !ok {
+			t.Fatalf("history plan_update.entries type = %T, want []any", event.Data["entries"])
+		}
+		if len(rawEntries) == 0 {
+			t.Fatalf("history plan_update.entries is empty")
+		}
+	}
+	if !seenPlanUpdate {
+		t.Fatalf("missing persisted plan_update event")
+	}
+}
+
 func TestCodexTurnWorksWithoutBinaryPathConfig(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
@@ -2055,6 +2143,43 @@ func assertErrorCode(t *testing.T, payload []byte, wantCode string) {
 type httpTurnStreamResult struct {
 	StatusCode int
 	Body       string
+}
+
+type planStreamer struct{}
+
+func (s *planStreamer) Name() string {
+	return "plan-streamer"
+}
+
+func (s *planStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = input
+	if handler, ok := agents.PlanHandlerFromContext(ctx); ok {
+		if err := handler(ctx, []agents.PlanEntry{{
+			Content:  "Inspect files",
+			Status:   "in_progress",
+			Priority: "high",
+		}}); err != nil {
+			return agents.StopReasonEndTurn, err
+		}
+		if err := handler(ctx, []agents.PlanEntry{
+			{
+				Content:  "Inspect files",
+				Status:   "completed",
+				Priority: "high",
+			},
+			{
+				Content:  "Apply patch",
+				Status:   "pending",
+				Priority: "medium",
+			},
+		}); err != nil {
+			return agents.StopReasonEndTurn, err
+		}
+	}
+	if err := onDelta("final answer"); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	return agents.StopReasonEndTurn, nil
 }
 
 type countingClosableStreamer struct {

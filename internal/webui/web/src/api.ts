@@ -122,7 +122,7 @@ class ApiClient {
   async getHistory(threadId: string): Promise<Turn[]> {
     const data = await this.request<HistoryResponse>(
       'GET',
-      `/v1/threads/${encodeURIComponent(threadId)}/history`,
+      `/v1/threads/${encodeURIComponent(threadId)}/history?includeEvents=1`,
     )
     return data.turns
   }

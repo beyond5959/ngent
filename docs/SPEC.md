@@ -149,6 +149,7 @@ and upstream ACP schema:
 - `session/update` notifications:
   - stream deltas from `update.sessionUpdate == "agent_message_chunk"`
   - consume text from `update.content.text` only.
+  - map `update.sessionUpdate == "plan"` into hub `plan_update` SSE events; each `entries[]` payload replaces the current plan list.
 - permission request/response:
   - handle `session/request_permission` request from provider.
   - reply with ACP outcome shape:
@@ -235,6 +236,10 @@ and upstream ACP schema:
 - startup command:
   - official Kimi docs currently show both `kimi acp` and `kimi --acp`.
   - the hub must try `kimi acp` first and fall back to `kimi --acp` when ACP initialization closes immediately.
+- local config sourcing:
+  - model catalog and default thinking state should be read from local Kimi config (`config.toml`) when available.
+  - avoid creating ACP `session/new` calls for model discovery or thread config queries that do not send a real prompt, to prevent empty Kimi sessions.
+  - if local config is unavailable or cannot be parsed, fall back to ACP handshake-based discovery/query behavior.
 - ACP flow:
   - `initialize` with `protocolVersion: 1` and `clientCapabilities.fs`.
   - `session/new` with `cwd` and `mcpServers: []`.
@@ -242,6 +247,7 @@ and upstream ACP schema:
 - streaming:
   - consume `session/update` deltas only when `update.sessionUpdate == "agent_message_chunk"`.
   - delta text is read from `update.content.text`.
+  - map `update.sessionUpdate == "plan"` into hub `plan_update` SSE events; each `entries[]` payload replaces the current plan list.
 - permissions and cancellation:
   - handle `session/request_permission` with fail-closed approval mapping.
   - on context cancellation, send `session/cancel` quickly and converge to `stopReason=cancelled`.
@@ -326,6 +332,7 @@ and upstream ACP schema:
 - frontend cache is keyed by `agent + selected model`, so same-agent threads can reuse the same model-specific catalog without incorrectly sharing another model's reasoning list.
 - Option descriptions are rendered inside the dropdown menus for selectable values.
 - During streaming or in-flight switch request, both controls are disabled to preserve turn/config safety.
+- ACP `plan_update` events render as a live plan card above the active agent bubble, and the latest persisted plan is restored when reloading thread history.
 - Sidebar thread actions now live behind a thread-row drawer:
   - trigger stays in the row action area.
   - drawer contains inline `Rename` and `Delete` actions.

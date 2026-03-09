@@ -14,11 +14,14 @@ func DiscoverModels(ctx context.Context, cfg Config) ([]agents.ModelOption, erro
 	if err != nil {
 		return nil, err
 	}
+	if localCfg, err := loadLocalConfig(); err == nil {
+		return localCfg.ModelOptions(), nil
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	conn, cleanup, _, err := client.openConn(ctx, client.CurrentModelID())
+	conn, cleanup, _, err := client.openConn(ctx, client.CurrentModelID(), client.CurrentConfigOverrides())
 	if err != nil {
 		return nil, err
 	}

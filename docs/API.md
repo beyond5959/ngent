@@ -252,9 +252,11 @@ All errors use:
 - SSE event types:
   - `turn_started`: `{"turnId":"..."}`
   - `message_delta`: `{"turnId":"...","delta":"..."}`
+  - `plan_update`: `{"turnId":"...","entries":[{"content":"...","status":"pending|in_progress|completed","priority":"low|medium|high"}]}`
   - `permission_required`: `{"turnId":"...","permissionId":"...","approval":"command|file|network|mcp","command":"...","requestId":"..."}`
   - `turn_completed`: `{"turnId":"...","stopReason":"end_turn|cancelled|error"}`
   - `error`: `{"turnId":"...","code":"...","message":"..."}`
+  - for ACP `sessionUpdate == "plan"`, the server emits `plan_update` and treats each payload as a full replacement of the current plan list.
 
 - Permission fail-closed contract:
   - permission request timeout or disconnected stream defaults to `declined`.

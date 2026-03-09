@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	updateTypeMessageChunk       = "agent_message_chunk"
 	methodSessionSetConfigOption = "session/set_config_option"
 
 	defaultPermissionTimeout = 15 * time.Second
@@ -224,26 +223,21 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		if len(msg.Params) == 0 {
 			return nil
 		}
-		var payload struct {
-			Update struct {
-				SessionUpdate string `json:"sessionUpdate"`
-				Content       struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"update"`
-		}
-		if err := json.Unmarshal(msg.Params, &payload); err != nil {
+		update, err := agents.ParseACPUpdate(msg.Params)
+		if err != nil {
 			return nil // Ignore malformed update notifications.
 		}
-		if payload.Update.SessionUpdate != updateTypeMessageChunk {
-			return nil
+		switch update.Type {
+		case agents.ACPUpdateTypeMessageChunk:
+			if update.Delta != "" {
+				return onDelta(update.Delta)
+			}
+		case agents.ACPUpdateTypePlan:
+			if handler, ok := agents.PlanHandlerFromContext(ctx); ok {
+				return handler(ctx, update.PlanEntries)
+			}
 		}
-		text := payload.Update.Content.Text
-		if text == "" {
-			return nil
-		}
-		return onDelta(text)
+		return nil
 	})
 
 	// 5) send session/cancel quickly when context is cancelled.

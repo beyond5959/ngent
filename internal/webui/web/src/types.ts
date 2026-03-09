@@ -50,6 +50,12 @@ export interface TurnEvent {
   createdAt: string
 }
 
+export interface PlanEntry {
+  content: string
+  status?: string
+  priority?: string
+}
+
 export interface Turn {
   turnId: string
   requestText: string
@@ -84,6 +90,8 @@ export interface Message {
   turnId?: string
   /** Populated when the agent emits permission_required */
   permissionRequest?: PermissionRequest
+  /** Populated when the agent emits plan_update */
+  planEntries?: PlanEntry[]
 }
 
 // ── Permission ─────────────────────────────────────────────────────────────

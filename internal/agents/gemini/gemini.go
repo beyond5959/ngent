@@ -26,7 +26,6 @@ import (
 const (
 	jsonRPCVersion               = "2.0"
 	methodNotFound               = -32601
-	updateTypeMessageChunk       = "agent_message_chunk"
 	methodSessionSetConfigOption = "session/set_config_option"
 )
 
@@ -184,23 +183,21 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		if msg.Method != "session/update" {
 			return nil
 		}
-		var payload struct {
-			Update struct {
-				SessionUpdate string `json:"sessionUpdate"`
-				Content       struct {
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"update"`
-		}
 		if len(msg.Params) == 0 {
 			return nil
 		}
-		if err := json.Unmarshal(msg.Params, &payload); err != nil {
+		update, err := agents.ParseACPUpdate(msg.Params)
+		if err != nil {
 			return nil // ignore malformed updates
 		}
-		if payload.Update.SessionUpdate == updateTypeMessageChunk {
-			if text := payload.Update.Content.Text; text != "" {
-				return onDelta(text)
+		switch update.Type {
+		case agents.ACPUpdateTypeMessageChunk:
+			if update.Delta != "" {
+				return onDelta(update.Delta)
+			}
+		case agents.ACPUpdateTypePlan:
+			if handler, ok := agents.PlanHandlerFromContext(ctx); ok {
+				return handler(ctx, update.PlanEntries)
 			}
 		}
 		return nil

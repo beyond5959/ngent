@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,25 @@ import (
 	"github.com/beyond5959/ngent/internal/agents"
 	kimi "github.com/beyond5959/ngent/internal/agents/kimi"
 )
+
+func setEmptyKimiHome(t *testing.T, base string) {
+	t.Helper()
+	kimiHome := filepath.Join(base, "empty-kimi-home")
+	if err := os.MkdirAll(kimiHome, 0o755); err != nil {
+		t.Fatalf("mkdir KIMI_HOME: %v", err)
+	}
+	t.Setenv("KIMI_HOME", kimiHome)
+}
+
+func writeKimiConfigFile(t *testing.T, kimiHome, body string) {
+	t.Helper()
+	if err := os.MkdirAll(kimiHome, 0o755); err != nil {
+		t.Fatalf("mkdir KIMI_HOME: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(kimiHome, "config.toml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+}
 
 func TestPreflight(t *testing.T) {
 	if _, err := exec.LookPath("kimi"); err != nil {
@@ -106,6 +126,7 @@ for line in sys.stdin:
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
+	setEmptyKimiHome(t, tmpDir)
 
 	c, err := kimi.New(kimi.Config{Dir: tmpDir})
 	if err != nil {
@@ -196,6 +217,7 @@ for line in sys.stdin:
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
+	setEmptyKimiHome(t, tmpDir)
 
 	c, err := kimi.New(kimi.Config{
 		Dir:     tmpDir,
@@ -274,6 +296,7 @@ for line in sys.stdin:
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
+	setEmptyKimiHome(t, tmpDir)
 
 	models, err := kimi.DiscoverModels(context.Background(), kimi.Config{Dir: tmpDir})
 	if err != nil {
@@ -350,6 +373,7 @@ for line in sys.stdin:
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
+	setEmptyKimiHome(t, tmpDir)
 
 	client, err := kimi.New(kimi.Config{Dir: tmpDir})
 	if err != nil {
@@ -453,6 +477,7 @@ for line in sys.stdin:
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
+	setEmptyKimiHome(t, tmpDir)
 
 	tests := []struct {
 		name       string
@@ -568,6 +593,7 @@ for line in sys.stdin:
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
+	setEmptyKimiHome(t, tmpDir)
 
 	c, err := kimi.New(kimi.Config{Dir: tmpDir})
 	if err != nil {
@@ -590,6 +616,180 @@ for line in sys.stdin:
 	}
 	if got := strings.Join(deltas, ""); !strings.Contains(got, "FALLBACK_OK") {
 		t.Fatalf("deltas = %q, want contains %q", got, "FALLBACK_OK")
+	}
+}
+
+func TestConfigOptionsUseLocalConfigWithoutACP(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("KIMI_HOME", tmpDir)
+	writeKimiConfigFile(t, tmpDir, `
+default_model = "kimi-code/default"
+default_thinking = true
+
+[models."kimi-code/default"]
+model = "Kimi Default"
+capabilities = ["thinking"]
+
+[models."kimi-code/fast"]
+model = "Kimi Fast"
+capabilities = []
+`)
+
+	client, err := kimi.New(kimi.Config{
+		Dir:             tmpDir,
+		ConfigOverrides: map[string]string{"reasoning": "disabled"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	options, err := client.ConfigOptions(context.Background())
+	if err != nil {
+		t.Fatalf("ConfigOptions: %v", err)
+	}
+	if got, want := len(options), 2; got != want {
+		t.Fatalf("len(options) = %d, want %d", got, want)
+	}
+	if got := strings.TrimSpace(options[0].CurrentValue); got != "kimi-code/default" {
+		t.Fatalf("model currentValue = %q, want %q", got, "kimi-code/default")
+	}
+	if got := strings.TrimSpace(options[1].ID); got != "reasoning" {
+		t.Fatalf("reasoning option id = %q, want %q", got, "reasoning")
+	}
+	if got := strings.TrimSpace(options[1].CurrentValue); got != "disabled" {
+		t.Fatalf("reasoning currentValue = %q, want %q", got, "disabled")
+	}
+}
+
+func TestSetConfigOptionUsesLocalConfigWithoutACP(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("KIMI_HOME", tmpDir)
+	writeKimiConfigFile(t, tmpDir, `
+default_model = "kimi-code/default"
+default_thinking = false
+
+[models."kimi-code/default"]
+model = "Kimi Default"
+capabilities = ["thinking"]
+
+[models."kimi-code/fast"]
+model = "Kimi Fast"
+capabilities = []
+`)
+
+	client, err := kimi.New(kimi.Config{Dir: tmpDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	options, err := client.SetConfigOption(context.Background(), "model", "kimi-code/fast")
+	if err != nil {
+		t.Fatalf("SetConfigOption(model): %v", err)
+	}
+	if got := strings.TrimSpace(client.CurrentModelID()); got != "kimi-code/fast" {
+		t.Fatalf("CurrentModelID() = %q, want %q", got, "kimi-code/fast")
+	}
+	if got, want := len(options), 1; got != want {
+		t.Fatalf("len(options) after model switch = %d, want %d", got, want)
+	}
+
+	options, err = client.SetConfigOption(context.Background(), "model", "kimi-code/default")
+	if err != nil {
+		t.Fatalf("SetConfigOption(model->default): %v", err)
+	}
+	if got, want := len(options), 2; got != want {
+		t.Fatalf("len(options) after switching back = %d, want %d", got, want)
+	}
+
+	options, err = client.SetConfigOption(context.Background(), "reasoning", "enabled")
+	if err != nil {
+		t.Fatalf("SetConfigOption(reasoning): %v", err)
+	}
+	if got := strings.TrimSpace(options[1].CurrentValue); got != "enabled" {
+		t.Fatalf("reasoning currentValue = %q, want %q", got, "enabled")
+	}
+}
+
+func TestDiscoverModelsUsesLocalConfigWithoutACP(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("KIMI_HOME", tmpDir)
+	writeKimiConfigFile(t, tmpDir, `
+default_model = "kimi-code/default"
+default_thinking = false
+
+[models."kimi-code/default"]
+model = "Kimi Default"
+capabilities = ["thinking"]
+
+[models."kimi-code/fast"]
+model = "Kimi Fast"
+capabilities = []
+`)
+
+	models, err := kimi.DiscoverModels(context.Background(), kimi.Config{Dir: tmpDir})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if got, want := len(models), 2; got != want {
+		t.Fatalf("len(models) = %d, want %d", got, want)
+	}
+	if got := strings.TrimSpace(models[0].ID); got != "kimi-code/default" {
+		t.Fatalf("models[0].id = %q, want %q", got, "kimi-code/default")
+	}
+}
+
+func TestKimiConfigOptionsE2EDoesNotCreateSession(t *testing.T) {
+	if os.Getenv("E2E_KIMI") != "1" {
+		t.Skip("set E2E_KIMI=1 to run")
+	}
+	if err := kimi.Preflight(); err != nil {
+		t.Skipf("kimi not available: %v", err)
+	}
+
+	kimiHome := strings.TrimSpace(os.Getenv("KIMI_HOME"))
+	if kimiHome == "" {
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatalf("UserHomeDir: %v", err)
+		}
+		kimiHome = filepath.Join(userHome, ".kimi")
+	}
+	sessionsDir := filepath.Join(kimiHome, "sessions")
+
+	before, err := os.ReadDir(sessionsDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("ReadDir(before): %v", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+
+	client, err := kimi.New(kimi.Config{Dir: cwd})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	options, err := client.ConfigOptions(ctx)
+	if err != nil {
+		t.Fatalf("ConfigOptions: %v", err)
+	}
+	if len(options) == 0 {
+		t.Fatal("ConfigOptions returned no options")
+	}
+
+	after, err := os.ReadDir(sessionsDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("ReadDir(after): %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("ConfigOptions created session directories: before=%d after=%d", len(before), len(after))
 	}
 }
 

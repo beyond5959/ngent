@@ -34,6 +34,8 @@
 - ADR-030: Pin local acp-adapter hotfix for codex app-server server-request compatibility. (Accepted)
 - ADR-031: Kimi CLI ACP stdio provider with dual startup syntax fallback. (Accepted)
 - ADR-032: Shared common agent config/state helper without protocol unification. (Accepted)
+- ADR-033: Surface ACP plan updates as first-class SSE and Web UI state. (Accepted)
+- ADR-034: Source Kimi config catalogs from local config to avoid empty sessions. (Accepted)
 
 ## ADR-018: Embedded Web UI via Go embed
 
@@ -662,3 +664,44 @@ Use this template for new decisions.
 - Alternatives considered:
   - create one generic ACP provider with pluggable commands and hooks (rejected: protocol differences are too large and already visible across current providers).
   - leave duplicated `Config`/`Client` state in place (rejected: ongoing maintenance cost and drift risk).
+
+## ADR-033: Surface ACP plan updates as first-class SSE and Web UI state
+
+- Status: Accepted
+- Date: 2026-03-09
+- Context:
+  - ACP agents can emit `session/update` notifications with `sessionUpdate == "plan"` and a full `entries[]` list describing the current execution plan.
+  - the hub previously only mapped `agent_message_chunk` into `message_delta`, so users could not see plan progress in the Web UI and history reloads lost that context entirely.
+- Decision:
+  - normalize ACP `session/update` payloads in shared agent code, recognizing both `agent_message_chunk` and `plan`.
+  - route plan replacements through a new per-turn `PlanHandler` context callback, parallel to the existing permission callback pattern.
+  - emit and persist a dedicated SSE/history event `plan_update` with payload `{"turnId","entries":[]}`.
+  - render `plan_update` in the Web UI as a live plan card above the streaming agent bubble, and rebuild the final plan state from persisted turn events when loading history.
+- Consequences:
+  - ACP plan state is now visible during live execution without overloading `message_delta`.
+  - history replay preserves the last known plan instead of dropping it on refresh.
+  - empty `entries[]` remains meaningful as "clear the current plan", so the hub must preserve replacement semantics instead of merging incrementally.
+- Alternatives considered:
+  - fold plan text into `message_delta` (rejected: mixes distinct ACP concepts and loses replacement semantics).
+  - keep plan rendering purely transient in the browser (rejected: history reload would still discard plan state).
+
+## ADR-034: Source Kimi config catalogs from local config to avoid empty sessions
+
+- Status: Accepted
+- Date: 2026-03-09
+- Context:
+  - Kimi CLI persists ACP `session/new` handshakes as local session history, even when the hub only wants model/config metadata and never sends a prompt.
+  - the previous Kimi provider queried models and thread config options through `session/new`, which polluted `~/.kimi/sessions` with empty sessions during startup catalog refresh, thread config loads, and model changes.
+  - local Kimi config already exposes the needed metadata: `default_model`, `default_thinking`, and model capabilities.
+- Decision:
+  - read Kimi model catalog and default thinking state from local `config.toml` when available.
+  - synthesize thread `ConfigOptions` and `DiscoverModels()` results from that local config instead of ACP `session/new`.
+  - apply reasoning overrides for real prompt turns through Kimi startup flags (`--thinking` / `--no-thinking`) and keep model selection on `--model`.
+  - retain ACP fallback only when local config cannot be read or parsed.
+- Consequences:
+  - Kimi thread config queries and startup catalog refresh no longer create empty session history entries in normal local setups.
+  - Kimi keeps real ACP turns for actual prompts, permissions, streaming, and cancellation behavior.
+  - local config structure becomes part of the provider compatibility surface, so future Kimi config schema drift must be monitored.
+- Alternatives considered:
+  - keep ACP-only config discovery (rejected: side effect creates noisy empty sessions).
+  - disable Kimi config/model catalog refresh entirely (rejected: would regress model picker accuracy).

@@ -5,8 +5,8 @@ import { applyTheme, settingsPanel } from './components/settings-panel.ts'
 import { newThreadModal } from './components/new-thread-modal.ts'
 import { mountPermissionCard, PERMISSION_TIMEOUT_MS } from './components/permission-card.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
-import type { Thread, Message, ConfigOption, ConfigOptionValue, Turn, StreamState } from './types.ts'
-import type { TurnStream, PermissionRequiredPayload } from './sse.ts'
+import type { Thread, Message, ConfigOption, ConfigOptionValue, Turn, StreamState, TurnEvent, PlanEntry } from './types.ts'
+import type { TurnStream, PermissionRequiredPayload, PlanUpdatePayload } from './sse.ts'
 import { escHtml, formatRelativeTime, formatTimestamp, generateUUID } from './utils.ts'
 
 // ── Theme ─────────────────────────────────────────────────────────────────
@@ -116,6 +116,48 @@ function normalizeAgentConfigCatalogKey(agentId: string, modelId = ''): string {
   return `${normalizedAgentID}::${normalizedModelID}`
 }
 
+function clonePlanEntries(entries: PlanEntry[] | null | undefined): PlanEntry[] | undefined {
+  if (!entries?.length) return undefined
+
+  const cloned: PlanEntry[] = []
+  for (const entry of entries) {
+    const content = entry.content?.trim() ?? ''
+    if (!content) continue
+    cloned.push({
+      content,
+      status: entry.status?.trim() || undefined,
+      priority: entry.priority?.trim() || undefined,
+    })
+  }
+  return cloned.length ? cloned : undefined
+}
+
+function parsePlanEntries(value: unknown): PlanEntry[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const parsed: PlanEntry[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const entry = item as Record<string, unknown>
+    const content = typeof entry.content === 'string' ? entry.content : ''
+    if (!content.trim()) continue
+    parsed.push({
+      content,
+      status: typeof entry.status === 'string' ? entry.status : undefined,
+      priority: typeof entry.priority === 'string' ? entry.priority : undefined,
+    })
+  }
+  return clonePlanEntries(parsed)
+}
+
+function extractTurnPlanEntries(events: TurnEvent[] | undefined): PlanEntry[] | undefined {
+  let latest: PlanEntry[] | undefined
+  for (const event of events ?? []) {
+    if (event.type !== 'plan_update') continue
+    latest = parsePlanEntries(event.data.entries)
+  }
+  return clonePlanEntries(latest)
+}
+
 function hasAgentConfigCatalog(agentId: string, modelId = ''): boolean {
   const key = normalizeAgentConfigCatalogKey(agentId, modelId)
   return !!key && agentConfigCatalogCache.has(key)
@@ -196,6 +238,7 @@ async function loadThreadConfigOptions(threadId: string): Promise<ConfigOption[]
 let activeStreamMsgId: string | null = null
 const streamsByThread = new Map<string, TurnStream>()
 const streamBufferByThread = new Map<string, string>()
+const streamPlanByThread = new Map<string, PlanEntry[]>()
 const streamStartedAtByThread = new Map<string, string>()
 type PendingPermission = PermissionRequiredPayload & { deadlineMs: number }
 const pendingPermissionsByThread = new Map<string, Map<string, PendingPermission>>()
@@ -502,10 +545,11 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   const div = document.createElement('div')
   div.className = 'message message--agent'
   div.dataset.msgId = streamState.messageId
+  const livePlanEntries = streamPlanByThread.get(thread.threadId)
   div.innerHTML = `
     <div class="message-avatar">${avatar}</div>
     <div class="message-group">
-      ${renderStreamingBubbleHTML(bubbleID)}
+      ${renderStreamingBubbleHTML(streamState.messageId, '', livePlanEntries)}
       <div class="message-meta">
         <span class="message-time">${formatTimestamp(startedAt)}</span>
       </div>
@@ -518,12 +562,14 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   if (buffered) {
     updateStreamingBubbleContent(streamState.messageId, buffered)
   }
+  updateStreamingBubblePlan(streamState.messageId, livePlanEntries)
   listEl.scrollTop = listEl.scrollHeight
 }
 
 function clearThreadStreamRuntime(threadId: string): void {
   streamsByThread.delete(threadId)
   streamBufferByThread.delete(threadId)
+  streamPlanByThread.delete(threadId)
   streamStartedAtByThread.delete(threadId)
   setThreadStreamState(threadId, null)
   if (store.get().activeThreadId === threadId) {
@@ -628,6 +674,22 @@ function findReasoningOption(options: ConfigOption[]): ConfigOption | null {
     }
   }
   return null
+}
+
+function countConfigOptionChoices(configOption: ConfigOption | null): number {
+  if (!configOption) return 0
+
+  const values = new Set<string>()
+  for (const option of configOption.options ?? []) {
+    const value = option.value?.trim() ?? ''
+    if (!value) continue
+    values.add(value)
+  }
+  return values.size
+}
+
+function shouldShowReasoningSwitch(configOption: ConfigOption | null): boolean {
+  return countConfigOptionChoices(configOption) > 1
 }
 
 function fallbackThreadConfigValue(thread: Thread, configId: string): string {
@@ -1100,6 +1162,7 @@ function turnsToMessages(turns: Turn[]): Message[] {
     }
 
     if (t.status !== 'running') {
+      const planEntries = extractTurnPlanEntries(t.events)
       const agentStatus: Message['status'] =
         t.status === 'cancelled' ? 'cancelled' :
         t.status === 'error'     ? 'error'     :
@@ -1114,6 +1177,7 @@ function turnsToMessages(turns: Turn[]): Message[] {
         turnId:       t.turnId,
         stopReason:   t.stopReason   || undefined,
         errorMessage: t.errorMessage || undefined,
+        planEntries,
       })
     }
   }
@@ -1141,6 +1205,43 @@ async function loadHistory(threadId: string): Promise<void> {
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────
+
+function formatPlanLabel(value: string | undefined): string {
+  return (value ?? '').replace(/_/g, ' ').trim()
+}
+
+function planStatusClassName(status: string | undefined): string {
+  const normalized = (status ?? '').trim().toLowerCase()
+  if (!normalized || !/^[a-z_]+$/.test(normalized)) return ''
+  return ` message-plan__item--${normalized}`
+}
+
+function renderPlanInnerHTML(entries: PlanEntry[]): string {
+  return `
+    <div class="message-plan__header">Plan</div>
+    <ol class="message-plan__list">
+      ${entries.map(entry => {
+        const status = formatPlanLabel(entry.status)
+        const priority = formatPlanLabel(entry.priority)
+        const meta = [status, priority]
+          .filter(Boolean)
+          .map(text => `<span class="message-plan__tag">${escHtml(text)}</span>`)
+          .join('')
+        const statusClass = planStatusClassName(entry.status)
+        return `
+          <li class="message-plan__item${statusClass}">
+            <span class="message-plan__content">${escHtml(entry.content)}</span>
+            ${meta ? `<span class="message-plan__meta">${meta}</span>` : ''}
+          </li>`
+      }).join('')}
+    </ol>`
+}
+
+function renderPlanSectionHTML(entries: PlanEntry[] | undefined, extraClass = ''): string {
+  const normalized = clonePlanEntries(entries)
+  if (!normalized?.length) return ''
+  return `<div class="message-plan${extraClass}">${renderPlanInnerHTML(normalized)}</div>`
+}
 
 function renderMessage(msg: Message, agentAvatar: string): string {
   const renderMessageCopyBtn = (text: string): string => `
@@ -1173,6 +1274,8 @@ function renderMessage(msg: Message, agentAvatar: string): string {
   const bodyText = isError
     ? (msg.errorCode ? `[${msg.errorCode}] ` : '') + (msg.errorMessage ?? 'Unknown error')
     : (msg.content || '…')
+  const planHTML = renderPlanSectionHTML(msg.planEntries)
+  const shouldRenderBubble = !(isDone && !msg.content && !!msg.planEntries?.length)
 
   // Render markdown only for finalised done messages
   let bubbleExtra = ''
@@ -1189,13 +1292,17 @@ function renderMessage(msg: Message, agentAvatar: string): string {
   }
 
   const stopTag  = isCancelled ? `<span class="message-stop-reason">Cancelled</span>` : ''
-  const copyBtn  = isDone      ? renderMessageCopyBtn(bodyText) : ''
+  const copyBtn  = isDone && msg.content ? renderMessageCopyBtn(bodyText) : ''
+  const bubbleHTML = shouldRenderBubble
+    ? `<div class="message-bubble${bubbleExtra}">${bubbleContent}</div>`
+    : ''
 
   return `
     <div class="message message--agent" data-msg-id="${escHtml(msg.id)}">
       <div class="message-avatar">${agentAvatar}</div>
       <div class="message-group">
-        <div class="message-bubble${bubbleExtra}">${bubbleContent}</div>
+        ${planHTML}
+        ${bubbleHTML}
         <div class="message-meta">
           <span class="message-time">${formatTimestamp(msg.timestamp)}</span>
           ${stopTag}
@@ -1205,9 +1312,12 @@ function renderMessage(msg: Message, agentAvatar: string): string {
     </div>`
 }
 
-function renderStreamingBubbleHTML(bubbleID: string, content = ''): string {
+function renderStreamingBubbleHTML(messageID: string, content = '', planEntries?: PlanEntry[]): string {
+  const normalizedPlanEntries = clonePlanEntries(planEntries)
+  const planHiddenAttr = normalizedPlanEntries?.length ? '' : ' hidden'
   return `
-    <div class="message-bubble message-bubble--streaming" id="${escHtml(bubbleID)}">
+    <div class="message-plan message-plan--streaming" id="plan-${escHtml(messageID)}"${planHiddenAttr}>${normalizedPlanEntries ? renderPlanInnerHTML(normalizedPlanEntries) : ''}</div>
+    <div class="message-bubble message-bubble--streaming" id="bubble-${escHtml(messageID)}">
       <div class="message-bubble__text">${escHtml(content)}</div>
       <div class="typing-indicator" aria-hidden="true"><span></span><span></span><span></span></div>
     </div>`
@@ -1219,6 +1329,18 @@ function updateStreamingBubbleContent(messageID: string, content: string): void 
   const contentEl = bubbleEl.querySelector('.message-bubble__text')
   if (!contentEl) return
   contentEl.textContent = content
+}
+
+function updateStreamingBubblePlan(messageID: string, entries: PlanEntry[] | undefined): void {
+  const planEl = document.getElementById(`plan-${messageID}`)
+  if (!planEl) return
+  const normalized = clonePlanEntries(entries)
+  planEl.hidden = !normalized?.length
+  if (!normalized?.length) {
+    planEl.innerHTML = ''
+    return
+  }
+  planEl.innerHTML = renderPlanInnerHTML(normalized)
 }
 
 function updateMessageList(): void {
@@ -1322,6 +1444,7 @@ function renderChatThread(t: Thread): string {
     loadingConfig,
     reasoningPickerLabels,
   )
+  const showReasoningSwitch = shouldShowReasoningSwitch(reasoningOption)
   const isSwitching = threadConfigSwitching.has(t.threadId)
 
   return `
@@ -1356,7 +1479,9 @@ function renderChatThread(t: Thread): string {
         <div class="input-compose-bar">
           <div class="thread-config-switches">
             ${renderComposerConfigSwitch('model', 'Model', modelPickerData, modelPickerLabels, isSwitching)}
-            ${renderComposerConfigSwitch('reasoning', 'Reasoning', reasoningPickerData, reasoningPickerLabels, isSwitching)}
+            ${showReasoningSwitch
+              ? renderComposerConfigSwitch('reasoning', 'Reasoning', reasoningPickerData, reasoningPickerLabels, isSwitching)
+              : ''}
           </div>
           <button class="btn btn-primary btn-send" id="send-btn" aria-label="Send message">
             ${iconSend}
@@ -1456,12 +1581,22 @@ function bindThreadConfigSwitches(thread: Thread): void {
       model: modelPickerLabels,
       reasoning: reasoningPickerLabels,
     } as const
+    const visibleByKey = {
+      model: true,
+      reasoning: shouldShowReasoningSwitch(reasoningOption),
+    } as const
 
     switchEls.forEach(switchEl => {
       const key = (switchEl.dataset.pickerKey === 'reasoning' ? 'reasoning' : 'model')
       const triggerEl = switchEl.querySelector<HTMLButtonElement>('.thread-model-trigger')
       const menuEl = switchEl.querySelector<HTMLDivElement>('.thread-model-menu')
       if (!triggerEl || !menuEl) return
+
+      switchEl.hidden = !visibleByKey[key]
+      if (switchEl.hidden) {
+        closeMenu(switchEl)
+        return
+      }
 
       const pickerData = pickerDataByKey[key]
       const labels = labelsByKey[key]
@@ -1681,6 +1816,7 @@ function handleSend(): void {
   const agentMsgID = generateUUID()
   activeStreamMsgId = agentMsgID
   streamBufferByThread.set(capturedThreadID, '')
+  streamPlanByThread.delete(capturedThreadID)
   streamStartedAtByThread.set(capturedThreadID, now)
   setThreadStreamState(capturedThreadID, {
     turnId: '',
@@ -1699,7 +1835,7 @@ function handleSend(): void {
     div.innerHTML = `
       <div class="message-avatar">${agentAvatar}</div>
       <div class="message-group">
-        ${renderStreamingBubbleHTML(`bubble-${agentMsgID}`)}
+        ${renderStreamingBubbleHTML(agentMsgID)}
         <div class="message-meta">
           <span class="message-time">${formatTimestamp(now)}</span>
         </div>
@@ -1729,6 +1865,17 @@ function handleSend(): void {
       if (atBottom && list) list.scrollTop = list.scrollHeight
     },
 
+    onPlanUpdate({ entries }: PlanUpdatePayload) {
+      const nextPlanEntries = clonePlanEntries(entries) ?? []
+      streamPlanByThread.set(capturedThreadID, nextPlanEntries)
+
+      if (store.get().activeThreadId !== capturedThreadID) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubblePlan(agentMsgID, nextPlanEntries)
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
     onPermissionRequired(event) {
       const pending = upsertPendingPermission(capturedThreadID, event)
       mountPendingPermissionCard(capturedThreadID, pending)
@@ -1737,6 +1884,7 @@ function handleSend(): void {
     onCompleted({ stopReason }) {
       // Clear stream tracking BEFORE addMessageToStore (so subscribe calls updateMessageList)
       const finalContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      const finalPlanEntries = clonePlanEntries(streamPlanByThread.get(capturedThreadID))
       clearThreadStreamRuntime(capturedThreadID)
       clearPendingPermissions(capturedThreadID)
       markThreadCompletionBadge(capturedThreadID)
@@ -1748,11 +1896,13 @@ function handleSend(): void {
         timestamp:  now,
         status:     stopReason === 'cancelled' ? 'cancelled' : 'done',
         stopReason,
+        planEntries: finalPlanEntries,
       })
     },
 
     onError({ code, message: msg }) {
       const partialContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      const finalPlanEntries = clonePlanEntries(streamPlanByThread.get(capturedThreadID))
       clearThreadStreamRuntime(capturedThreadID)
       clearPendingPermissions(capturedThreadID)
 
@@ -1764,11 +1914,13 @@ function handleSend(): void {
         status:       'error',
         errorCode:    code,
         errorMessage: msg,
+        planEntries:  finalPlanEntries,
       })
     },
 
     onDisconnect() {
       const partialContent = streamBufferByThread.get(capturedThreadID) ?? ''
+      const finalPlanEntries = clonePlanEntries(streamPlanByThread.get(capturedThreadID))
       clearThreadStreamRuntime(capturedThreadID)
       clearPendingPermissions(capturedThreadID)
 
@@ -1779,6 +1931,7 @@ function handleSend(): void {
         timestamp:    now,
         status:       'error',
         errorMessage: 'Connection lost',
+        planEntries:  finalPlanEntries,
       })
     },
   })

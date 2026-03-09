@@ -556,6 +556,14 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
 
+- `Post-F9` ACP plan streaming in Web UI completed:
+  - added shared ACP `session/update` parsing for both `agent_message_chunk` and `plan`, with plan routed through a new per-turn `PlanHandler` context callback.
+  - introduced SSE/history event `plan_update` so ACP plans are persisted alongside other turn events instead of being dropped at provider boundaries.
+  - updated the Web UI to render live plan cards during streaming and restore the latest plan from turn history on reload.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
  
 - 2026-03-06: Removed the thread action trigger's per-thread actionLabel/title tooltip in the Web UI popover menu; the three-dot button now uses a neutral `aria-label` only, without hover text tied to the thread title.
 - 2026-03-06: Moved the sidebar thread action menu and rename form into a sidebar-level floating layer instead of rendering them inside each thread row, so the rename UI is no longer clipped by the thread list or sidebar overflow.
@@ -563,3 +571,6 @@ This file is the source of milestone progress, validation commands, and next act
 - 2026-03-06: fixed embedded codex server-request compatibility for tool interaction:
   - `item/tool/requestUserInput` now returns schema-compatible answers (auto-select first option label per question) instead of `-32000 not supported`.
   - `item/tool/call` now returns structured tool failure payload (`success=false`) instead of JSON-RPC method error, so app-server no longer aborts the whole flow on this request type.
+- 2026-03-09: unified ACP message-chunk constant usage across stdio providers by removing per-provider `updateTypeMessageChunk` definitions and reusing `agents.ACPUpdateTypeMessageChunk`.
+- 2026-03-09: hid the Web UI Reasoning switch when the active agent exposes fewer than two reasoning choices, so agents without switchable reasoning no longer show a dead control.
+- 2026-03-09: switched Kimi model/reasoning catalog queries to local `config.toml` when available, so startup catalog refresh and thread config/model operations no longer create empty Kimi sessions; real prompt turns still use ACP.

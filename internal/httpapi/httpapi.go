@@ -756,6 +756,17 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 		outcome := s.waitPermissionOutcome(permissionCtx, pending)
 		return agents.PermissionResponse{Outcome: outcome}, nil
 	})
+	turnCtx = agents.WithPlanHandler(turnCtx, func(planCtx context.Context, entries []agents.PlanEntry) error {
+		_ = planCtx
+		payloadEntries := agents.ClonePlanEntries(entries)
+		if payloadEntries == nil {
+			payloadEntries = []agents.PlanEntry{}
+		}
+		return emit("plan_update", map[string]any{
+			"turnId":  turnID,
+			"entries": payloadEntries,
+		})
+	})
 
 	if err := emit("turn_started", map[string]any{"turnId": turnID}); err != nil {
 		s.finalizeTurnWithBestEffort(persistCtx, turnID, "failed", "error", "", err.Error())
@@ -883,6 +894,17 @@ func (s *Server) handleCompactThread(w http.ResponseWriter, r *http.Request, cli
 	}
 
 	aggregated := strings.Builder{}
+	turnCtx = agents.WithPlanHandler(turnCtx, func(planCtx context.Context, entries []agents.PlanEntry) error {
+		_ = planCtx
+		payloadEntries := agents.ClonePlanEntries(entries)
+		if payloadEntries == nil {
+			payloadEntries = []agents.PlanEntry{}
+		}
+		return appendOnlyEvent("plan_update", map[string]any{
+			"turnId":  turnID,
+			"entries": payloadEntries,
+		})
+	})
 	stopReason, streamErr := streamAgent.Stream(turnCtx, compactPrompt, func(delta string) error {
 		aggregated.WriteString(delta)
 		return appendOnlyEvent("message_delta", map[string]any{

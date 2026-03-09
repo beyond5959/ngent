@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	updateTypeMessageChunk       = "agent_message_chunk"
 	methodSessionSetConfigOption = "session/set_config_option"
 
 	defaultPermissionTimeout = 15 * time.Second
@@ -65,6 +64,9 @@ func (c *Client) ConfigOptions(ctx context.Context) ([]agents.ConfigOption, erro
 	if c == nil {
 		return nil, errors.New("kimi: nil client")
 	}
+	if localCfg, err := loadLocalConfig(); err == nil {
+		return localCfg.ConfigOptions(c.CurrentModelID(), c.CurrentConfigOverrides()), nil
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -83,6 +85,15 @@ func (c *Client) SetConfigOption(ctx context.Context, configID, value string) ([
 	}
 	if value == "" {
 		return nil, errors.New("kimi: value is required")
+	}
+
+	if localCfg, err := loadLocalConfig(); err == nil {
+		options, localErr := c.setLocalConfigOption(localCfg, configID, value)
+		if localErr != nil {
+			return nil, localErr
+		}
+		c.ApplyConfigOptionResult(configID, value, options)
+		return options, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -111,7 +122,7 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 	modelID := c.CurrentModelID()
 	configOverrides := c.CurrentConfigOverrides()
 
-	conn, cleanup, _, err := c.openConn(ctx, modelID)
+	conn, cleanup, _, err := c.openConn(ctx, modelID, configOverrides)
 	if err != nil {
 		return agents.StopReasonEndTurn, err
 	}
@@ -180,26 +191,21 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		if msg.Method != "session/update" || len(msg.Params) == 0 {
 			return nil
 		}
-		var payload struct {
-			Update struct {
-				SessionUpdate string `json:"sessionUpdate"`
-				Content       struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"update"`
-		}
-		if err := json.Unmarshal(msg.Params, &payload); err != nil {
+		update, err := agents.ParseACPUpdate(msg.Params)
+		if err != nil {
 			return nil
 		}
-		if payload.Update.SessionUpdate != updateTypeMessageChunk {
-			return nil
+		switch update.Type {
+		case agents.ACPUpdateTypeMessageChunk:
+			if update.Delta != "" {
+				return onDelta(update.Delta)
+			}
+		case agents.ACPUpdateTypePlan:
+			if handler, ok := agents.PlanHandlerFromContext(ctx); ok {
+				return handler(ctx, update.PlanEntries)
+			}
 		}
-		text := payload.Update.Content.Text
-		if text == "" {
-			return nil
-		}
-		return onDelta(text)
+		return nil
 	})
 
 	stopCancelWatch := make(chan struct{})
@@ -305,7 +311,7 @@ func (c *Client) runConfigSession(
 		sessionModelID = value
 	}
 
-	conn, cleanup, _, err := c.openConn(ctx, sessionModelID)
+	conn, cleanup, _, err := c.openConn(ctx, sessionModelID, configOverrides)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +390,7 @@ func (c *Client) applyConfigOverrides(
 	return current, nil
 }
 
-func (c *Client) openConn(ctx context.Context, modelID string) (*acpstdio.Conn, func(), string, error) {
+func (c *Client) openConn(ctx context.Context, modelID string, configOverrides map[string]string) (*acpstdio.Conn, func(), string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -392,7 +398,7 @@ func (c *Client) openConn(ctx context.Context, modelID string) (*acpstdio.Conn, 
 	specs := commandCandidates()
 	var attemptErrors []string
 	for idx, spec := range specs {
-		conn, cleanup, err := c.openConnWithCommand(ctx, spec, modelID)
+		conn, cleanup, err := c.openConnWithCommand(ctx, spec, modelID, configOverrides)
 		if err == nil {
 			return conn, cleanup, spec.label, nil
 		}
@@ -408,8 +414,13 @@ func (c *Client) openConn(ctx context.Context, modelID string) (*acpstdio.Conn, 
 	)
 }
 
-func (c *Client) openConnWithCommand(ctx context.Context, spec commandSpec, modelID string) (*acpstdio.Conn, func(), error) {
-	cmd := exec.Command("kimi", spec.args(modelID)...)
+func (c *Client) openConnWithCommand(
+	ctx context.Context,
+	spec commandSpec,
+	modelID string,
+	configOverrides map[string]string,
+) (*acpstdio.Conn, func(), error) {
+	cmd := exec.Command("kimi", spec.args(modelID, kimiThinkingArg(modelID, configOverrides))...)
 	cmd.Dir = c.Dir()
 	cmd.Env = os.Environ()
 
@@ -464,10 +475,13 @@ func commandCandidates() []commandSpec {
 	}
 }
 
-func (s commandSpec) args(modelID string) []string {
-	args := make([]string, 0, 3)
+func (s commandSpec) args(modelID, thinkingArg string) []string {
+	args := make([]string, 0, 4)
 	if strings.TrimSpace(modelID) != "" {
 		args = append(args, "--model", strings.TrimSpace(modelID))
+	}
+	if thinkingArg != "" {
+		args = append(args, thinkingArg)
 	}
 	switch s.mode {
 	case "flag":
@@ -476,6 +490,48 @@ func (s commandSpec) args(modelID string) []string {
 		args = append(args, "acp")
 	}
 	return args
+}
+
+func kimiThinkingArg(modelID string, configOverrides map[string]string) string {
+	reasoningValue, ok := normalizeThinkingValue(configOverrides[reasoningConfigID])
+	if !ok {
+		return ""
+	}
+
+	if localCfg, err := loadLocalConfig(); err == nil && !localCfg.SupportsThinking(modelID) {
+		return ""
+	}
+	if reasoningValue == reasoningValueEnabled {
+		return "--thinking"
+	}
+	return "--no-thinking"
+}
+
+func (c *Client) setLocalConfigOption(cfg localConfig, configID, value string) ([]agents.ConfigOption, error) {
+	switch {
+	case strings.EqualFold(configID, "model"):
+		if _, ok := cfg.modelByID(value); !ok {
+			return nil, fmt.Errorf("kimi: unsupported model %q", value)
+		}
+		return cfg.ConfigOptions(value, c.CurrentConfigOverrides()), nil
+	case strings.EqualFold(configID, reasoningConfigID):
+		reasoningValue, ok := normalizeThinkingValue(value)
+		if !ok {
+			return nil, fmt.Errorf("kimi: unsupported reasoning value %q", value)
+		}
+		modelID := c.CurrentModelID()
+		if !cfg.SupportsThinking(modelID) {
+			return nil, errors.New("kimi: current model does not support reasoning")
+		}
+		overrides := c.CurrentConfigOverrides()
+		if overrides == nil {
+			overrides = make(map[string]string)
+		}
+		overrides[reasoningConfigID] = reasoningValue
+		return cfg.ConfigOptions(modelID, overrides), nil
+	default:
+		return nil, fmt.Errorf("kimi: config option %q is not supported without ACP session", configID)
+	}
 }
 
 func sessionNewParams(dir, modelID string) map[string]any {

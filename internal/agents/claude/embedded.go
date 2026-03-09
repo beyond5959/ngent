@@ -380,16 +380,29 @@ func (c *Client) handleUpdate(
 	onDelta func(delta string) error,
 ) error {
 	if msg.Method == methodSessionUpdate {
-		delta, err := parseSessionDelta(msg.Params)
+		update, err := agents.ParseACPUpdate(msg.Params)
 		if err != nil {
-			return err
+			return fmt.Errorf("claude: %w", err)
 		}
-		if delta == "" {
+		switch update.Type {
+		case agents.ACPUpdateTypeMessageChunk:
+			if update.Delta == "" {
+				return nil
+			}
+			if err := onDelta(update.Delta); err != nil {
+				c.sendSessionCancel(runtime, c.currentSessionID())
+				return err
+			}
 			return nil
-		}
-		if err := onDelta(delta); err != nil {
-			c.sendSessionCancel(runtime, c.currentSessionID())
-			return err
+		case agents.ACPUpdateTypePlan:
+			handler, ok := agents.PlanHandlerFromContext(ctx)
+			if !ok {
+				return nil
+			}
+			if err := handler(ctx, update.PlanEntries); err != nil {
+				c.sendSessionCancel(runtime, c.currentSessionID())
+				return err
+			}
 		}
 		return nil
 	}
@@ -658,28 +671,6 @@ func parsePromptStopReason(raw json.RawMessage) (string, error) {
 		stopReason = string(agents.StopReasonEndTurn)
 	}
 	return stopReason, nil
-}
-
-func parseSessionDelta(raw json.RawMessage) (string, error) {
-	if len(raw) == 0 {
-		return "", nil
-	}
-	var payload struct {
-		Update struct {
-			SessionUpdate string `json:"sessionUpdate"`
-			Content       struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"update"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", fmt.Errorf("claude: decode session/update payload: %w", err)
-	}
-	if payload.Update.SessionUpdate == "agent_message_chunk" && payload.Update.Content.Type == "text" {
-		return payload.Update.Content.Text, nil
-	}
-	return "", nil
 }
 
 func mapString(values map[string]any, key string) string {

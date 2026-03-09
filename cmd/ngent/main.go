@@ -274,13 +274,13 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	startedAt := time.Now()
-	printStartupSummary(os.Stderr, startedAt)
-	lanURL, qrPrinted := printLANQRCode(os.Stderr, listenAddr)
+	printLogo(os.Stderr)
+	lanURL, isLAN := getLANURL(listenAddr)
 	_, _ = fmt.Fprintf(os.Stderr, "Port: %d\n", port)
-	if qrPrinted {
+	if isLAN {
 		_, _ = fmt.Fprintf(os.Stderr, "URL:  %s\n", lanURL)
-		_, _ = fmt.Fprintln(os.Stderr, "On your local network, scan the QR code above or open the URL.")
+		_, _ = fmt.Fprintln(os.Stderr, "On your local network, scan the QR code below or open the URL.")
+		printQRCode(os.Stderr, lanURL)
 	} else {
 		_, _ = fmt.Fprintf(os.Stderr, "URL:  http://127.0.0.1:%d/\n", port)
 		_, _ = fmt.Fprintln(os.Stderr, "Local-only mode: QR code is not available for this bind address.")
@@ -880,19 +880,26 @@ func ensureDBPathParent(dbPath string) error {
 	return nil
 }
 
-func printStartupSummary(out io.Writer, startedAt time.Time) {
+// printLogo prints the Ngent ASCII art logo to out.
+func printLogo(out io.Writer) {
 	if out == nil {
 		return
 	}
-	_, _ = fmt.Fprintf(
-		out,
-		"Agent Hub Server started\n",
-	)
+	logo := `
+███╗   ██╗ ██████╗ ███████╗███╗   ██╗████████╗
+████╗  ██║██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+██╔██╗ ██║██║  ███╗█████╗  ██╔██╗ ██║   ██║   
+██║╚██╗██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   
+██║ ╚████║╚██████╔╝███████╗██║ ╚████║   ██║   
+╚═╝  ╚═══╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   
+`
+	_, _ = fmt.Fprint(out, logo)
 }
 
-// printLANQRCode prints a QR code for the LAN-accessible URL to out.
-// It is a no-op when the server listens only on loopback.
-func printLANQRCode(out io.Writer, listenAddr string) (string, bool) {
+// getLANURL returns the LAN-accessible URL for the given listen address.
+// It returns the URL and true if the server is listening on a LAN-accessible interface.
+// It returns empty string and false for loopback-only binds.
+func getLANURL(listenAddr string) (string, bool) {
 	host, port, err := net.SplitHostPort(strings.TrimSpace(listenAddr))
 	if err != nil {
 		return "", false
@@ -917,13 +924,20 @@ func printLANQRCode(out io.Writer, listenAddr string) (string, bool) {
 	}
 
 	url := "http://" + net.JoinHostPort(lanIP, port) + "/"
+	return url, true
+}
+
+// printQRCode prints a QR code for the given URL to out.
+func printQRCode(out io.Writer, url string) {
+	if out == nil || url == "" {
+		return
+	}
 	qr, err := qrcode.New(url, qrcode.Medium)
 	if err != nil {
-		return "", false
+		return
 	}
 	qr.DisableBorder = true
 	_, _ = fmt.Fprintf(out, "%s", qrHalfBlocks(qr))
-	return url, true
 }
 
 // qrHalfBlocks renders a QR code using Unicode half-block characters so that

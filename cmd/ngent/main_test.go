@@ -475,34 +475,20 @@ func TestGracefulShutdownForceCancelsTurns(t *testing.T) {
 	}
 }
 
-func TestPrintStartupSummary(t *testing.T) {
-	var out bytes.Buffer
-	startedAt := time.Date(2026, time.February, 28, 18, 1, 2, 0, time.FixedZone("UTC+8", 8*3600))
-	printStartupSummary(&out, startedAt)
-
-	text := out.String()
-	checks := []string{
-		"Agent Hub Server started",
+func TestGetLANURLReturnsFalseForLoopback(t *testing.T) {
+	url, ok := getLANURL("127.0.0.1:8686")
+	if ok {
+		t.Fatalf("getLANURL should return false for loopback")
 	}
-	for _, want := range checks {
-		if !strings.Contains(text, want) {
-			t.Fatalf("startup summary missing %q; got:\n%s", want, text)
-		}
-	}
-
-	for _, notWant := range []string{"Time:", "DB:", "Agents:", "Help:", "ngent --help", "HTTP:", "Web:", "LAN:"} {
-		if strings.Contains(text, notWant) {
-			t.Fatalf("startup summary unexpectedly contains %q; got:\n%s", notWant, text)
-		}
+	if url != "" {
+		t.Fatalf("expected empty URL for loopback, got %q", url)
 	}
 }
 
-func TestPrintLANQRCodeDoesNotPrintURLOrLabels(t *testing.T) {
+func TestPrintQRCodeDoesNothingForEmptyURL(t *testing.T) {
 	var out bytes.Buffer
-	if _, ok := printLANQRCode(&out, "127.0.0.1:8686"); ok {
-		t.Fatalf("printLANQRCode should be a no-op on loopback")
-	}
+	printQRCode(&out, "")
 	if got := out.String(); got != "" {
-		t.Fatalf("printLANQRCode unexpectedly wrote output for loopback:\n%s", got)
+		t.Fatalf("printQRCode should write nothing for empty URL, got:\n%s", got)
 	}
 }

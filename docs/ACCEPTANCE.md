@@ -58,12 +58,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/httpapi -run TestTurnPermissionTimeoutFailClosed -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionSSEDisconnectFailClosed -count=1`
 
-## Requirement 8: Public-by-default bind with local-only opt-out
+## Requirement 8: Localhost-by-default bind with public opt-in
 
 - Operation: validate listen address policy with/without allow-public.
-- Expected: non-loopback bind is allowed by default; `--allow-public=false` restricts to loopback only.
+- Expected: only loopback bind is allowed by default; `--allow-public=true` allows non-loopback binds.
 - Verification command:
-  - `go test ./cmd/ngent -run TestValidateListenAddr -count=1`
+  - `go test ./cmd/ngent -run TestResolveListenAddr -count=1`
 
 ## Requirement 9: Startup logging contract
 

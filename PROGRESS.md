@@ -102,10 +102,10 @@ This file is the source of milestone progress, validation commands, and next act
   - updated context composer so first turn with empty summary/history passes raw input, preserving slash-command semantics for embedded acp-adapter flows.
   - executed real HTTP/SSE regression with required prompts plus same-thread conflict (`409`), cancel convergence, and permission round-trip (`approved` + `declined`) using `/mcp call` on fresh threads.
 - `Post-M8` docs refresh completed:
-  - added root `README.md` in English with project goal, `go install` instructions, and startup examples (local/public/auth) using default DB home `$HOME/.go-agent-server`.
-  - removed manual `mkdir` steps from README startup examples and documented that server auto-creates `$HOME/.go-agent-server` for default db path.
+  - added root `README.md` in English with project goal, `go install` instructions, and startup examples (local/public/auth) using default DB home `$HOME/.ngent`.
+  - removed manual `mkdir` steps from README startup examples and documented that server auto-creates `$HOME/.ngent` for default db path.
 - `Post-M8` db-path default improvement completed:
-  - changed default `--db-path` from relative `./agent-hub.db` to `$HOME/.go-agent-server/agent-hub.db`.
+  - changed default `--db-path` from relative `./agent-hub.db` to `$HOME/.ngent/ngent.db`.
   - added startup auto-create for db parent directory so users can run without explicitly passing `--db-path`.
   - added unit tests for default path resolution and db parent directory creation.
 - `Post-M8` cwd policy simplification completed:

@@ -44,8 +44,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	listenAddrFlag := flag.String("listen", "0.0.0.0:8686", "server listen address")
-	allowPublic := flag.Bool("allow-public", true, "allow listening on public interfaces (set false for loopback-only)")
+	portFlag := flag.Int("port", 8686, "server listen port (1-65535)")
+	allowPublic := flag.Bool("allow-public", false, "allow listening on public interfaces (default false for loopback-only)")
 	authToken := flag.String("auth-token", "", "optional bearer token for /v1/* endpoints")
 	dbPath := flag.String("db-path", defaultDBPath, "sqlite database path")
 	contextRecentTurns := flag.Int("context-recent-turns", 10, "number of recent user+assistant turns injected into each prompt")
@@ -110,9 +110,9 @@ func main() {
 	}
 	agents := supportedAgents(codexAvailable, opencodeAvailable, geminiAvailable, kimiAvailable, qwenAvailable, claudeAvailable)
 
-	listenAddr, port, err := validateListenAddr(*listenAddrFlag, *allowPublic)
+	listenAddr, port, err := resolveListenAddr(*portFlag, *allowPublic)
 	if err != nil {
-		logger.Error("startup.invalid_listen", "error", err.Error(), "listenAddr", *listenAddrFlag, "allowPublic", *allowPublic)
+		logger.Error("startup.invalid_listen", "error", err.Error(), "port", *portFlag, "allowPublic", *allowPublic)
 		os.Exit(1)
 	}
 
@@ -274,17 +274,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	printLogo(os.Stderr)
-	lanURL, isLAN := getLANURL(listenAddr)
-	_, _ = fmt.Fprintf(os.Stderr, "Port: %d\n", port)
-	if isLAN {
-		_, _ = fmt.Fprintf(os.Stderr, "URL:  %s\n", lanURL)
-		_, _ = fmt.Fprintln(os.Stderr, "On your local network, scan the QR code below or open the URL.")
-		printQRCode(os.Stderr, lanURL)
-	} else {
-		_, _ = fmt.Fprintf(os.Stderr, "URL:  http://127.0.0.1:%d/\n", port)
-		_, _ = fmt.Fprintln(os.Stderr, "Local-only mode: QR code is not available for this bind address.")
-	}
+	printStartupBanner(os.Stderr, port, agents, listenAddr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -758,34 +748,19 @@ func resolveModelDiscoveryDir(allowedRoots []string) string {
 	return "/"
 }
 
-func validateListenAddr(listenAddr string, allowPublic bool) (string, int, error) {
-	host, portText, err := net.SplitHostPort(listenAddr)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid --listen value %q: %w", listenAddr, err)
+func resolveListenAddr(port int, allowPublic bool) (string, int, error) {
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("invalid port %d: must be between 1 and 65535", port)
 	}
 
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
-		return "", 0, fmt.Errorf("invalid port in --listen value %q", listenAddr)
-	}
-
+	var host string
 	if allowPublic {
-		return listenAddr, port, nil
+		host = "0.0.0.0"
+	} else {
+		host = "127.0.0.1"
 	}
 
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		return "", 0, fmt.Errorf("public listen address %q is not allowed when --allow-public=false", listenAddr)
-	}
-
-	if host == "localhost" {
-		return listenAddr, port, nil
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return "", 0, fmt.Errorf("non-loopback listen address %q is not allowed when --allow-public=false", listenAddr)
-	}
-
+	listenAddr := net.JoinHostPort(host, strconv.Itoa(port))
 	return listenAddr, port, nil
 }
 
@@ -862,7 +837,7 @@ func resolveDefaultDBPath() (string, error) {
 	if home == "" {
 		return "", errors.New("user home dir is empty")
 	}
-	return filepath.Join(home, ".go-agent-server", "agent-hub.db"), nil
+	return filepath.Join(home, ".ngent", "ngent.db"), nil
 }
 
 func ensureDBPathParent(dbPath string) error {
@@ -925,6 +900,58 @@ func getLANURL(listenAddr string) (string, bool) {
 
 	url := "http://" + net.JoinHostPort(lanIP, port) + "/"
 	return url, true
+}
+
+// printStartupBanner prints a beautiful startup banner with server info.
+func printStartupBanner(out io.Writer, port int, agents []httpapi.AgentInfo, listenAddr string) {
+	if out == nil {
+		return
+	}
+
+	printLogo(out)
+	_, _ = fmt.Fprintln(out)
+
+	// Server info box
+	lanURL, isLAN := getLANURL(listenAddr)
+	mode := "Local"
+	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	if isLAN {
+		mode = "LAN"
+		url = lanURL
+	}
+
+	_, _ = fmt.Fprintln(out, "╭─ Server ────────────────────────────────╮")
+	_, _ = fmt.Fprintf(out, "│  %-38s │\n", fmt.Sprintf("Port: %d", port))
+	_, _ = fmt.Fprintf(out, "│  %-38s │\n", fmt.Sprintf("URL:  %s", url))
+	_, _ = fmt.Fprintf(out, "│  %-38s │\n", fmt.Sprintf("Mode: %s", mode))
+	_, _ = fmt.Fprintln(out, "╰─────────────────────────────────────────╯")
+	_, _ = fmt.Fprintln(out)
+
+	// Agents status
+	_, _ = fmt.Fprint(out, "Agents: ")
+	for i, agent := range agents {
+		if i > 0 {
+			_, _ = fmt.Fprint(out, " • ")
+		}
+		symbol := "○"
+		if agent.Status == "available" {
+			symbol = "●"
+		}
+		_, _ = fmt.Fprintf(out, "%s %s", symbol, agent.Name)
+	}
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
+
+	// QR code for LAN mode
+	if isLAN {
+		_, _ = fmt.Fprintln(out, "Scan QR code to connect from your phone:")
+		_, _ = fmt.Fprintln(out)
+		printQRCode(out, lanURL)
+		_, _ = fmt.Fprintln(out)
+	}
+
+	_, _ = fmt.Fprintln(out, "Ready. Press Ctrl+C to stop.")
+	_, _ = fmt.Fprintln(out)
 }
 
 // printQRCode prints a QR code for the given URL to out.

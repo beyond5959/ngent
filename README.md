@@ -61,16 +61,22 @@ curl -sSL https://raw.githubusercontent.com/beyond5959/ngent/master/install.sh |
 
 ## Run
 
-Start with default settings (LAN-accessible):
+Start with default settings (local-only):
 
 ```bash
 ngent
 ```
 
-Local-only mode (recommended for security):
+LAN-accessible mode (allows connections from other devices):
 
 ```bash
-ngent --listen 127.0.0.1:8686 --allow-public=false
+ngent --allow-public=true
+```
+
+Custom port:
+
+```bash
+ngent --port 8080
 ```
 
 With authentication:
@@ -86,7 +92,7 @@ ngent --help
 ```
 
 **Default paths:**
-- Database: `$HOME/.go-agent-server/agent-hub.db`
+- Database: `$HOME/.ngent/ngent.db`
 
 Notes:
 

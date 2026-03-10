@@ -48,7 +48,6 @@
   - register `GET /` and `GET /assets/*` in `httpapi` (lower priority than all `/v1/*` and `/healthz` routes).
   - SPA fallback: any non-API path returns `index.html`.
   - `make build-web` produces the dist; `web/dist` is committed so users without Node.js can still `go build`.
-  - startup output includes a QR code for quickly opening the UI from another device on the same LAN.
 - Consequences: single-binary distribution with no external file dependencies; Go binary size increases by the size of the minified JS/CSS bundle (~200–400 KB estimated). Build pipeline requires Node.js for frontend changes.
 - Alternatives considered: separate static file directory (requires deployment of two artifacts); WebSocket-only SPA (rejected: SSE already implemented); React/Vue framework (rejected: adds runtime bundle weight and build complexity).
 - Follow-up actions: add `npm run build` to CI pipeline; version-pin Node.js in project tooling docs.
@@ -192,22 +191,6 @@ Use this template for new decisions.
 - Consequences: secure local default; remote access requires intentional operator action.
 - Alternatives considered: public by default.
 - Follow-up actions: add warning log when public bind is enabled.
-
-## ADR-021: Public-by-Default Bind with Local-Only Opt-Out
-
-- Status: Accepted
-- Date: 2026-03-01
-- Context: the primary use case is multi-device access (phone/tablet) on the same LAN, using the startup QR code for quick connection.
-- Decision:
-  - default bind changes to `0.0.0.0:8686`.
-  - `--allow-public` defaults to `true`; setting `--allow-public=false` restricts binds to loopback only.
-  - startup output prints a QR code for device-reachable access and prints the service port under the QR code.
-- Consequences:
-  - easier out-of-the-box access from other devices.
-  - operators must opt out explicitly when they need loopback-only safety.
-- Alternatives considered:
-  - keep localhost default and require an explicit `--allow-public=true`.
-  - add separate `--public`/`--local-only` flags.
 
 ## ADR-006: M1 API Baseline for Health/Auth/Agents
 

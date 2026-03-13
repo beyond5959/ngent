@@ -66,6 +66,23 @@ type UpsertAgentConfigCatalogParams struct {
 	ConfigOptionsJSON string
 }
 
+// SessionTranscriptCache stores one persisted provider session transcript snapshot.
+type SessionTranscriptCache struct {
+	AgentID      string
+	CWD          string
+	SessionID    string
+	MessagesJSON string
+	UpdatedAt    time.Time
+}
+
+// UpsertSessionTranscriptCacheParams contains input for UpsertSessionTranscriptCache.
+type UpsertSessionTranscriptCacheParams struct {
+	AgentID      string
+	CWD          string
+	SessionID    string
+	MessagesJSON string
+}
+
 // Turn stores one persisted turn row.
 type Turn struct {
 	TurnID       string
@@ -603,6 +620,89 @@ func (s *Store) ListAgentConfigCatalogsByAgent(ctx context.Context, agentID stri
 		return nil, fmt.Errorf("storage: list agent config catalogs rows: %w", err)
 	}
 	return catalogs, nil
+}
+
+// GetSessionTranscriptCache returns one persisted provider session transcript snapshot.
+func (s *Store) GetSessionTranscriptCache(
+	ctx context.Context,
+	agentID, cwd, sessionID string,
+) (SessionTranscriptCache, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT
+			agent_id,
+			cwd,
+			session_id,
+			messages_json,
+			updated_at
+		FROM session_transcript_cache
+		WHERE agent_id = ? AND cwd = ? AND session_id = ?;
+	`, strings.TrimSpace(agentID), strings.TrimSpace(cwd), strings.TrimSpace(sessionID))
+
+	var (
+		cache       SessionTranscriptCache
+		updatedAtDB string
+	)
+	if err := row.Scan(
+		&cache.AgentID,
+		&cache.CWD,
+		&cache.SessionID,
+		&cache.MessagesJSON,
+		&updatedAtDB,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionTranscriptCache{}, ErrNotFound
+		}
+		return SessionTranscriptCache{}, fmt.Errorf("storage: get session transcript cache: %w", err)
+	}
+
+	updatedAt, err := parseTime(updatedAtDB)
+	if err != nil {
+		return SessionTranscriptCache{}, fmt.Errorf("storage: parse session transcript cache.updated_at: %w", err)
+	}
+	cache.UpdatedAt = updatedAt
+	return cache, nil
+}
+
+// UpsertSessionTranscriptCache stores one provider session transcript snapshot.
+func (s *Store) UpsertSessionTranscriptCache(
+	ctx context.Context,
+	params UpsertSessionTranscriptCacheParams,
+) error {
+	if strings.TrimSpace(params.AgentID) == "" {
+		return errors.New("storage: agentID is required")
+	}
+	if strings.TrimSpace(params.CWD) == "" {
+		return errors.New("storage: cwd is required")
+	}
+	if strings.TrimSpace(params.SessionID) == "" {
+		return errors.New("storage: sessionID is required")
+	}
+	if strings.TrimSpace(params.MessagesJSON) == "" {
+		params.MessagesJSON = "[]"
+	}
+
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO session_transcript_cache (
+			agent_id,
+			cwd,
+			session_id,
+			messages_json,
+			updated_at
+		) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(agent_id, cwd, session_id) DO UPDATE SET
+			messages_json = excluded.messages_json,
+			updated_at = excluded.updated_at;
+	`,
+		strings.TrimSpace(params.AgentID),
+		strings.TrimSpace(params.CWD),
+		strings.TrimSpace(params.SessionID),
+		params.MessagesJSON,
+		formatTime(s.now()),
+	); err != nil {
+		return fmt.Errorf("storage: upsert session transcript cache: %w", err)
+	}
+
+	return nil
 }
 
 // ListThreadsByClient returns all threads for one client.

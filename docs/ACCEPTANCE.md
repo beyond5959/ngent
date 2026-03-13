@@ -294,12 +294,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the backend proxies ACP `session/list` through `GET /v1/threads/{threadId}/sessions`.
   - response includes `supported`, `sessions`, and `nextCursor`.
-  - for providers that replay transcript over ACP `session/load`, `GET /v1/threads/{threadId}/session-history?sessionId=...` returns replayed `user` / `assistant` messages for the selected session.
+  - for providers that replay transcript over ACP `session/load`, the first `GET /v1/threads/{threadId}/session-history?sessionId=...` warms sqlite `session_transcript_cache`, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
   - the Web UI renders a right-side session sidebar with:
     - first-page load on active thread selection.
     - `Show more` pagination when `nextCursor` is present.
-    - `New session` action that clears the selected `sessionId`.
-    - selecting an existing session requests provider-owned transcript replay before the next turn.
+  - `New session` action that clears the selected `sessionId`.
+  - selecting an existing session requests provider-owned transcript replay before the next turn.
   - turn SSE emits `session_bound`, and the thread persists `agentOptions.sessionId`.
   - once a thread is session-bound, subsequent prompt building no longer injects prior local turns into the provider prompt.
 - Verification commands (executed 2026-03-11):
@@ -314,3 +314,6 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `E2E_QWEN=1 go test ./internal/agents/qwen -run 'TestQwenE2E(Smoke|SessionTranscriptReplay)$' -count=1 -v -timeout 180s`
   - real Qwen provider repro: confirm a locally created Qwen session reappears in `session/list` and `LoadSessionTranscript` replays the unique prompt marker through ACP `session/load`.
   - observed limitation: Kimi CLI 1.20.0 accepts ACP `session/load` for listed historical sessions but emits no replay transcript updates, so `/session-history` remains empty under the ACP-only implementation.
+- Additional verification commands (executed 2026-03-13):
+  - `go test ./internal/storage ./internal/httpapi -run 'Test(SessionTranscriptCacheCRUD|ThreadSessionHistoryEndpoint|ThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart)$' -count=1`
+  - `go test ./...`

@@ -11,7 +11,16 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-03-12)
+## Latest Update (2026-03-13)
+
+- `Post-M8` session-history sqlite cache completed:
+  - added SQLite table `session_transcript_cache` keyed by `(agent_id, cwd, session_id)` to persist provider-owned session replay snapshots separately from hub `turns/events`.
+  - `GET /v1/threads/{threadId}/session-history` now reads sqlite first; on cache miss it still calls provider `LoadSessionTranscript`, then persists the normalized replay snapshot for later reuse.
+  - cached session-history snapshots survive server restart, so revisiting the same historical session no longer requires a fresh provider `session/load` every time.
+  - known tradeoff: cache freshness is not yet invalidated by provider `updatedAt` metadata; stale replay risk is tracked in `docs/KNOWN_ISSUES.md`.
+  - validation:
+    - pass: `go test ./internal/storage ./internal/httpapi -run 'Test(SessionTranscriptCacheCRUD|ThreadSessionHistoryEndpoint|ThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart)$' -count=1`
+    - pass: `go test ./...`
 
 - `Post-M8` ACP `session/load` transcript replay standardization completed:
   - removed provider-specific transcript reconstruction for `kimi`, `opencode`, `codex`, and `qwen`; `GET /v1/threads/{threadId}/session-history` now uses the same ACP path for all four providers:

@@ -93,4 +93,18 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_agent_config_catalogs_agent_id ON agent_config_catalogs(agent_id);`,
 		},
 	},
+	{
+		version: 7,
+		name:    "create_session_transcript_cache",
+		sql: []string{
+			`CREATE TABLE IF NOT EXISTS session_transcript_cache (
+				agent_id TEXT NOT NULL,
+				cwd TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				messages_json TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				PRIMARY KEY (agent_id, cwd, session_id)
+			);`,
+		},
+	},
 }

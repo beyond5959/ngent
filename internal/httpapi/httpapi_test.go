@@ -911,6 +911,78 @@ func TestThreadSessionHistoryEndpoint(t *testing.T) {
 	}
 }
 
+func TestThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "session-cache.db")
+
+	streamerOne := &sessionTranscriptStreamer{
+		result: agents.SessionTranscriptResult{
+			Messages: []agents.SessionTranscriptMessage{
+				{Role: "user", Content: "cached hello", Timestamp: "2026-03-13T03:00:00Z"},
+				{Role: "assistant", Content: "cached world", Timestamp: "2026-03-13T03:00:01Z"},
+			},
+		},
+	}
+	serverOne, closeOne := newTestServerWithDBPath(t, dbPath, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamerOne, nil
+		},
+	})
+	threadID := createThreadForClient(t, serverOne, "client-a", root)
+
+	first := performJSONRequest(t, serverOne, http.MethodGet, "/v1/threads/"+threadID+"/session-history?sessionId=session-2", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first session-history status code = %d, want %d", first.Code, http.StatusOK)
+	}
+	if got := streamerOne.LoadCalls(); got != 1 {
+		t.Fatalf("first server load calls = %d, want 1", got)
+	}
+	closeOne()
+
+	streamerTwo := &sessionTranscriptStreamer{
+		err: errors.New("provider should not be called after cache warmup"),
+	}
+	serverTwo, closeTwo := newTestServerWithDBPath(t, dbPath, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamerTwo, nil
+		},
+	})
+	defer closeTwo()
+
+	second := performJSONRequest(t, serverTwo, http.MethodGet, "/v1/threads/"+threadID+"/session-history?sessionId=session-2", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if second.Code != http.StatusOK {
+		t.Fatalf("second session-history status code = %d, want %d, body=%s", second.Code, http.StatusOK, second.Body.String())
+	}
+	if got := streamerTwo.LoadCalls(); got != 0 {
+		t.Fatalf("second server load calls = %d, want 0", got)
+	}
+
+	var body struct {
+		Supported bool                              `json:"supported"`
+		Messages  []agents.SessionTranscriptMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal cached session-history response: %v", err)
+	}
+	if !body.Supported {
+		t.Fatal("supported = false, want true")
+	}
+	if got, want := len(body.Messages), 2; got != want {
+		t.Fatalf("len(messages) = %d, want %d", got, want)
+	}
+	if got := body.Messages[1].Content; got != "cached world" {
+		t.Fatalf("messages[1].content = %q, want %q", got, "cached world")
+	}
+}
+
 func TestThreadSessionHistoryEndpointUnsupported(t *testing.T) {
 	root := t.TempDir()
 	streamer := &sessionListStreamer{}
@@ -2559,6 +2631,8 @@ func (s *sessionBoundStreamer) Stream(ctx context.Context, input string, onDelta
 type sessionTranscriptStreamer struct {
 	result        agents.SessionTranscriptResult
 	lastSessionID atomic.Value
+	loadCalls     atomic.Int32
+	err           error
 }
 
 func (s *sessionTranscriptStreamer) Name() string {
@@ -2574,8 +2648,16 @@ func (s *sessionTranscriptStreamer) Stream(ctx context.Context, input string, on
 
 func (s *sessionTranscriptStreamer) LoadSessionTranscript(ctx context.Context, req agents.SessionTranscriptRequest) (agents.SessionTranscriptResult, error) {
 	_ = ctx
+	s.loadCalls.Add(1)
 	s.lastSessionID.Store(strings.TrimSpace(req.SessionID))
+	if s.err != nil {
+		return agents.SessionTranscriptResult{}, s.err
+	}
 	return agents.CloneSessionTranscriptResult(s.result), nil
+}
+
+func (s *sessionTranscriptStreamer) LoadCalls() int32 {
+	return s.loadCalls.Load()
 }
 
 func createThreadHTTP(t *testing.T, baseURL, clientID, root string) string {

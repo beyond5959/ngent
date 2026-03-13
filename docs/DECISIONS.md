@@ -41,6 +41,35 @@
 - ADR-037: Replay Kimi session history from local Kimi session files. (Superseded)
 - ADR-038: Replay OpenCode session history from local OpenCode SQLite storage. (Superseded)
 - ADR-039: Standardize session-history on ACP `session/load` replay. (Accepted)
+- ADR-040: Cache session-history replay snapshots in SQLite. (Accepted)
+
+## ADR-040: Cache Session-History Replay Snapshots in SQLite
+
+- Status: Accepted
+- Date: 2026-03-13
+- Context:
+  - the Web UI requests `GET /v1/threads/{threadId}/session-history` whenever the user selects a historical ACP session in the right sidebar.
+  - after ADR-039, every selection hit the provider again through ACP `session/load`, even if ngent had already replayed that exact provider session earlier.
+  - repeated `session/load` calls add avoidable latency, reopen provider processes/runtimes, and make session browsing depend on live provider availability even for transcript content already observed locally.
+  - the product still does not want to import provider-owned replay into hub `turns/events`, because that would blur the boundary between provider-owned history and ngent-created turns.
+- Decision:
+  - add SQLite table `session_transcript_cache(agent_id, cwd, session_id, messages_json, updated_at)`.
+  - key cached transcript snapshots by provider session identity `(agent_id, cwd, session_id)` so the same session replay can be reused across threads and across server restarts.
+  - make `GET /v1/threads/{threadId}/session-history` read sqlite first; only call provider `LoadSessionTranscript` on cache miss.
+  - write successful replay results, including empty transcript snapshots, back into sqlite after the provider call completes.
+  - keep cache write failures non-fatal to the API response; the replay request itself should still succeed when the provider load succeeded.
+- Consequences:
+  - repeated historical session selection becomes local-first after the first successful replay.
+  - session replay browsing survives server restart without requiring a new provider `session/load`.
+  - provider-owned replay remains separate from durable hub `turns/events`; `/history` semantics do not change.
+  - cache freshness is currently write-on-miss/write-on-success only; ngent does not yet compare provider `updatedAt` metadata before serving the cached snapshot.
+- Alternatives considered:
+  - keep always hitting provider `session/load` for every selection.
+  - import replayed transcript into `turns/events` instead of caching a separate snapshot table.
+  - key cache rows by `thread_id` only (rejected because the same provider session should be reusable across threads).
+- Follow-up actions:
+  - persist `session/list.updatedAt` metadata and refresh cached snapshots when the provider session advances.
+  - evaluate whether a merged history view should combine cached provider replay with hub-local turns without duplicating context.
 
 ## ADR-039: Standardize Session-History on ACP `session/load` Replay
 

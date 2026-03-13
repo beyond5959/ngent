@@ -196,9 +196,9 @@
 - Status: Open
 - Severity: Medium
 - Affects: threads that select an existing ACP `sessionId` from the Web UI/API
-- Symptom: ngent now replays prior provider transcript into the center chat area when a session is selected, but that replay is still reconstructed on demand and is not imported into SQLite `turns/events`; history APIs remain source-of-truth only for hub-created turns.
-- Workaround: use the center chat/session replay for browsing earlier context, but rely on persisted hub history only for turns created through ngent itself.
-- Follow-up plan: evaluate importing selected provider transcript into local persisted history without duplicating future hub-originated turns.
+- Symptom: ngent now caches prior provider transcript snapshots in SQLite for `GET /v1/threads/{threadId}/session-history`, but that replay is still not imported into SQLite `turns/events`; history APIs remain source-of-truth only for hub-created turns.
+- Workaround: use the session sidebar replay for provider-owned historical context, but rely on persisted hub `/history` for turns created through ngent itself.
+- Follow-up plan: evaluate importing selected provider transcript into local persisted history, or exposing an explicit merged-history view, without duplicating future hub-originated turns.
 
 - ID: KI-022
 - Title: Codex session sidebar titles can still show provider wrapper text
@@ -236,3 +236,17 @@
   - use ngent-local `/history` for turns created through ngent itself.
 - Follow-up plan:
   - keep validating newer Kimi CLI releases and switch to transcript replay immediately if Kimi starts emitting standard `session/update` history during `session/load`.
+
+- ID: KI-025
+- Title: Session-history cache does not auto-refresh from provider metadata
+- Status: Open
+- Severity: Medium
+- Affects: repeated `GET /v1/threads/{threadId}/session-history` requests for the same `(agent, cwd, sessionId)`
+- Symptom:
+  - after the first successful replay, ngent serves the cached SQLite snapshot on later requests and server restarts.
+  - if the provider session later gains more messages outside that cached snapshot, ngent does not yet compare provider `updatedAt` metadata before returning the cached transcript.
+- Workaround:
+  - continue the conversation through the current ngent thread so new hub-local turns remain visible in `/history`.
+  - if a full provider replay refresh is required immediately, clear the cached row from sqlite and request `/session-history` again.
+- Follow-up plan:
+  - persist `session/list.updatedAt` metadata and invalidate or refresh `session_transcript_cache` when that metadata advances.

@@ -411,10 +411,12 @@ and upstream ACP schema:
   - provider reports the effective session id back through a thread-scoped callback.
 - Session transcript replay:
   - providers may optionally expose replayable transcript messages for one selected session through `GET /v1/threads/{threadId}/session-history`.
-  - `codex`, `kimi`, `opencode`, and `qwen` implement replay by calling ACP `session/load` and collecting the replayed `session/update` stream (`user_message_chunk` / `agent_message_chunk`) into displayable transcript messages.
+  - `GET /v1/threads/{threadId}/session-history` first checks SQLite `session_transcript_cache` keyed by `(agent_id, cwd, session_id)`.
+  - on cache miss, `codex`, `kimi`, `opencode`, and `qwen` implement replay by calling ACP `session/load` and collecting the replayed `session/update` stream (`user_message_chunk` / `agent_message_chunk`) into displayable transcript messages.
+  - successful replay snapshots, including empty transcript results, are written back to `session_transcript_cache` for reuse across later clicks and server restarts.
   - replay collectors must ignore provider-specific non-message updates (for example Qwen `tool_call_update`) instead of treating them as fatal transport errors.
   - `codex` must resolve the selected session and call `session/load` within the same embedded runtime because the raw ACP `sessionId` values returned by `session/list` are runtime-scoped.
-  - replay content is provider-owned and is returned as-is from the ACP stream; ngent does not normalize or import it into persisted SQLite turn/event history.
+  - replay content is provider-owned and is returned as-is from the ACP stream; ngent caches it separately from `turns/events` and does not import it into persisted SQLite turn/event history.
   - current real-provider behavior is provider-dependent:
     - `opencode`, `codex`, and `qwen` replay transcript messages over ACP `session/load`.
     - Kimi CLI 1.20.0 successfully resumes historical sessions through `session/load` but currently emits no replay `session/update` notifications for those sessions, so transcript replay stays empty under the ACP-only implementation.

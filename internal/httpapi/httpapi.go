@@ -45,6 +45,8 @@ type ThreadStore interface {
 	UpsertAgentConfigCatalog(ctx context.Context, params storage.UpsertAgentConfigCatalogParams) error
 	GetAgentConfigCatalog(ctx context.Context, agentID, modelID string) (storage.AgentConfigCatalog, error)
 	ListAgentConfigCatalogsByAgent(ctx context.Context, agentID string) ([]storage.AgentConfigCatalog, error)
+	GetSessionTranscriptCache(ctx context.Context, agentID, cwd, sessionID string) (storage.SessionTranscriptCache, error)
+	UpsertSessionTranscriptCache(ctx context.Context, params storage.UpsertSessionTranscriptCacheParams) error
 	ListThreadsByClient(ctx context.Context, clientID string) ([]storage.Thread, error)
 	CreateTurn(ctx context.Context, params storage.CreateTurnParams) (storage.Turn, error)
 	GetTurn(ctx context.Context, turnID string) (storage.Turn, error)
@@ -1260,6 +1262,25 @@ func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	cachedResult, found, err := s.loadCachedSessionTranscript(r.Context(), thread, sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to load session transcript cache", map[string]any{
+			"threadId":  thread.ThreadID,
+			"sessionId": sessionID,
+			"reason":    err.Error(),
+		})
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"threadId":  thread.ThreadID,
+			"sessionId": sessionID,
+			"supported": true,
+			"messages":  cachedResult.Messages,
+		})
+		return
+	}
+
 	provider, err := s.turnAgentFactory(thread)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, codeUpstreamUnavailable, "failed to resolve agent provider", map[string]any{
@@ -1313,12 +1334,92 @@ func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	result = agents.CloneSessionTranscriptResult(result)
+	if err := s.persistSessionTranscriptCache(r.Context(), thread, sessionID, result); err != nil {
+		s.logger.Warn("session_history.cache_persist_failed",
+			"threadId", thread.ThreadID,
+			"agent", thread.AgentID,
+			"sessionId", sessionID,
+			"reason", err.Error(),
+		)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"threadId":  thread.ThreadID,
 		"sessionId": sessionID,
 		"supported": true,
 		"messages":  result.Messages,
 	})
+}
+
+func (s *Server) loadCachedSessionTranscript(
+	ctx context.Context,
+	thread storage.Thread,
+	sessionID string,
+) (agents.SessionTranscriptResult, bool, error) {
+	cache, err := s.store.GetSessionTranscriptCache(ctx, thread.AgentID, thread.CWD, sessionID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return agents.SessionTranscriptResult{}, false, nil
+		}
+		return agents.SessionTranscriptResult{}, false, err
+	}
+
+	result, err := decodeSessionTranscriptCache(cache.MessagesJSON)
+	if err != nil {
+		s.logger.Warn("session_history.cache_decode_failed",
+			"threadId", thread.ThreadID,
+			"agent", thread.AgentID,
+			"sessionId", sessionID,
+			"reason", err.Error(),
+		)
+		return agents.SessionTranscriptResult{}, false, nil
+	}
+	return result, true, nil
+}
+
+func (s *Server) persistSessionTranscriptCache(
+	ctx context.Context,
+	thread storage.Thread,
+	sessionID string,
+	result agents.SessionTranscriptResult,
+) error {
+	messagesJSON, err := encodeSessionTranscriptCache(result)
+	if err != nil {
+		return err
+	}
+	return s.store.UpsertSessionTranscriptCache(ctx, storage.UpsertSessionTranscriptCacheParams{
+		AgentID:      thread.AgentID,
+		CWD:          thread.CWD,
+		SessionID:    sessionID,
+		MessagesJSON: messagesJSON,
+	})
+}
+
+func decodeSessionTranscriptCache(raw string) (agents.SessionTranscriptResult, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = "[]"
+	}
+
+	var messages []agents.SessionTranscriptMessage
+	if err := json.Unmarshal([]byte(raw), &messages); err != nil {
+		return agents.SessionTranscriptResult{}, fmt.Errorf("decode session transcript cache: %w", err)
+	}
+	return agents.CloneSessionTranscriptResult(agents.SessionTranscriptResult{Messages: messages}), nil
+}
+
+func encodeSessionTranscriptCache(result agents.SessionTranscriptResult) (string, error) {
+	result = agents.CloneSessionTranscriptResult(result)
+	messages := result.Messages
+	if len(messages) == 0 {
+		messages = []agents.SessionTranscriptMessage{}
+	}
+	payload, err := json.Marshal(messages)
+	if err != nil {
+		return "", fmt.Errorf("encode session transcript cache: %w", err)
+	}
+	return string(payload), nil
 }
 
 func (s *Server) handleThreadConfigOptions(w http.ResponseWriter, r *http.Request, clientID, threadID string) {

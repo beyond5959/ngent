@@ -22,7 +22,7 @@
 - `name TEXT NOT NULL`
 - `applied_at TEXT NOT NULL`
 
-## Implemented Tables (M2-M7)
+## Implemented Tables
 
 ### `clients`
 
@@ -64,11 +64,21 @@
 - `data_json TEXT NOT NULL`
 - `created_at TEXT NOT NULL`
 
+### `session_transcript_cache`
+
+- `agent_id TEXT NOT NULL`
+- `cwd TEXT NOT NULL`
+- `session_id TEXT NOT NULL`
+- `messages_json TEXT NOT NULL`
+- `updated_at TEXT NOT NULL`
+- `PRIMARY KEY (agent_id, cwd, session_id)`
+
 ## Indexes (M2)
 
 - `idx_threads_client_id` on `threads(client_id)`
 - `idx_turns_thread_id_created_at` on `turns(thread_id, created_at)`
 - `idx_events_turn_id_seq` unique index on `events(turn_id, seq)`
+- `session_transcript_cache` primary key on `(agent_id, cwd, session_id)`
 
 ## Storage API (M2)
 
@@ -77,6 +87,8 @@
 - `GetThread(threadID)`
 - `UpdateThreadSummary(threadID, summary)`
 - `ListThreadsByClient(clientID)`
+- `GetSessionTranscriptCache(agentID, cwd, sessionID)`
+- `UpsertSessionTranscriptCache(...)`
 - `CreateTurn(...)`
 - `GetTurn(turnID)`
 - `ListTurnsByThread(threadID)`

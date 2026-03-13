@@ -511,6 +511,65 @@ func TestAgentConfigCatalogCRUD(t *testing.T) {
 	}
 }
 
+func TestSessionTranscriptCacheCRUD(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	defer func() {
+		_ = store.Close()
+	}()
+
+	base := time.Date(2026, 3, 13, 9, 0, 0, 0, time.UTC)
+	counter := 0
+	store.now = func() time.Time {
+		counter++
+		return base.Add(time.Duration(counter) * time.Second)
+	}
+
+	if _, err := store.GetSessionTranscriptCache(ctx, "codex", "/tmp/project", "session-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetSessionTranscriptCache(missing) err = %v, want ErrNotFound", err)
+	}
+
+	if err := store.UpsertSessionTranscriptCache(ctx, UpsertSessionTranscriptCacheParams{
+		AgentID:      "codex",
+		CWD:          "/tmp/project",
+		SessionID:    "session-1",
+		MessagesJSON: `[{"role":"user","content":"hello"}]`,
+	}); err != nil {
+		t.Fatalf("UpsertSessionTranscriptCache(first): %v", err)
+	}
+
+	cache, err := store.GetSessionTranscriptCache(ctx, "codex", "/tmp/project", "session-1")
+	if err != nil {
+		t.Fatalf("GetSessionTranscriptCache(first): %v", err)
+	}
+	if cache.MessagesJSON != `[{"role":"user","content":"hello"}]` {
+		t.Fatalf("messages_json = %q", cache.MessagesJSON)
+	}
+	if got, want := cache.UpdatedAt, base.Add(1*time.Second); !got.Equal(want) {
+		t.Fatalf("updated_at = %s, want %s", got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+
+	if err := store.UpsertSessionTranscriptCache(ctx, UpsertSessionTranscriptCacheParams{
+		AgentID:      "codex",
+		CWD:          "/tmp/project",
+		SessionID:    "session-1",
+		MessagesJSON: `[{"role":"assistant","content":"world"}]`,
+	}); err != nil {
+		t.Fatalf("UpsertSessionTranscriptCache(update): %v", err)
+	}
+
+	updated, err := store.GetSessionTranscriptCache(ctx, "codex", "/tmp/project", "session-1")
+	if err != nil {
+		t.Fatalf("GetSessionTranscriptCache(update): %v", err)
+	}
+	if updated.MessagesJSON != `[{"role":"assistant","content":"world"}]` {
+		t.Fatalf("updated messages_json = %q", updated.MessagesJSON)
+	}
+	if got, want := updated.UpdatedAt, base.Add(2*time.Second); !got.Equal(want) {
+		t.Fatalf("updated updated_at = %s, want %s", got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

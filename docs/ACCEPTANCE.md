@@ -5,11 +5,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 1: HTTP/JSON plus SSE
 
 - Operation: call JSON endpoint and one SSE turn endpoint.
-- Expected: JSON response is `application/json`; turn endpoint is `text/event-stream`.
+- Expected: JSON response is `application/json`; turn endpoint is `text/event-stream`; turn streams can persist auxiliary event types such as `reasoning_delta` and `plan_update` alongside `message_delta`.
 - Verification command:
   - `curl -sS -i http://127.0.0.1:8686/healthz`
   - `curl -sS -N -H 'X-Client-ID: demo' -H 'Content-Type: application/json' -d '{"input":"hello","stream":true}' http://127.0.0.1:8686/v1/threads/<threadId>/turns`
   - `go test ./internal/httpapi -run TestTurnsSSEAndHistory -count=1`
+  - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
 
 ## Requirement 2: Multi-client and multi-thread support
 
@@ -101,11 +102,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 13: Embedded Web UI
 
 - Operation: start server; open browser at `http://127.0.0.1:8686/`.
-- Expected: UI loads, threads can be created, turns stream in real time, ACP plan updates render as a live plan card, permissions can be resolved, and history is browsable.
+- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, and history is browsable.
 - Verification command:
   - `go test ./internal/webui -count=1` (checks `GET /` returns 200 with `text/html` content-type and SPA fallback)
+  - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
   - `cd internal/webui/web && npm run build`
-  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device
+  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, and the section collapses after the turn completes
 
 ## Global Gate
 
@@ -123,6 +125,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Verification commands:
   - `go test ./internal/agents/opencode -run TestStreamWithFakeProcess -count=1`
   - `E2E_OPENCODE=1 go test ./internal/agents/opencode -run TestOpenCodeE2ESmoke -v -timeout 60s`
+- Latest observed validation (2026-03-13):
+  - unit/fake-process path: pass
+  - real host smoke: fail with `opencode: session/new: context deadline exceeded`; tracked as `KI-028`
 
 ## Requirement 15: Gemini CLI Agent
 
@@ -145,6 +150,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/agents/qwen -count=1` (pass)
   - `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -v -timeout 120s` (pass, real prompt returns `PONG`)
   - `go test ./cmd/ngent ./internal/httpapi -count=1` (pass)
+- Additional validation (executed 2026-03-13):
+  - `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -count=1 -v -timeout 180s` (pass)
+  - `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESessionTranscriptReplay -count=1 -v -timeout 240s` (pass)
 
 ## Requirement 16A: Kimi CLI Agent
 
@@ -160,6 +168,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2EDoesNotCreateSession -v -timeout 120s`
   - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiE2ESmoke -v -timeout 120s`
   - `go test ./cmd/ngent ./internal/httpapi -count=1`
+- Additional validation (executed 2026-03-13):
+  - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2EDoesNotCreateSession -count=1 -v -timeout 240s` (pass)
+  - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiE2ESmoke -count=1 -v -timeout 180s` (pass)
 
 ## Requirement 17: Thread Delete Lifecycle
 
@@ -316,7 +327,75 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/agents/qwen -run 'SessionTranscript' -count=1`
   - `E2E_QWEN=1 go test ./internal/agents/qwen -run 'TestQwenE2E(Smoke|SessionTranscriptReplay)$' -count=1 -v -timeout 180s`
   - real Qwen provider repro: confirm a locally created Qwen session reappears in `session/list` and `LoadSessionTranscript` replays the unique prompt marker through ACP `session/load`.
-  - observed limitation: Kimi CLI 1.20.0 accepts ACP `session/load` for listed historical sessions but emits no replay transcript updates, so `/session-history` remains empty under the ACP-only implementation.
 - Additional verification commands (executed 2026-03-13):
   - `go test ./internal/storage ./internal/httpapi -run 'Test(SessionTranscriptCacheCRUD|ThreadSessionHistoryEndpoint|ThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart)$' -count=1`
   - `go test ./...`
+
+## Requirement 24: ACP Slash Commands Cache and Composer Picker
+
+- Operation:
+  - run a turn against an ACP-backed agent that emits `available_commands_update`.
+  - query `GET /v1/threads/{threadId}/slash-commands`.
+  - restart the server and query the same endpoint again.
+  - open the Web UI composer for that thread and type `/` into an otherwise empty chat input.
+- Expected:
+  - built-in ACP providers normalize and accept `available_commands_update`.
+  - the server persists the latest slash-command snapshot in SQLite and updates it every time a new snapshot arrives.
+  - `GET /v1/threads/{threadId}/slash-commands` returns the cached commands for the thread's agent.
+  - the cached slash commands survive server restart.
+  - the Web UI shows a selectable slash-command list only when the current composer value starts with `/`.
+  - when `GET /v1/threads/{threadId}/slash-commands` returns an empty list, typing `/` leaves the composer responsive and treats `/` as ordinary message input.
+  - keyboard navigation and click selection insert the chosen slash command into the composer.
+- Verification commands (executed 2026-03-13):
+  - `go test ./internal/agents -run TestParseACPUpdateAvailableCommands -count=1`
+  - `go test ./internal/storage -run TestAgentSlashCommandsCRUD -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadSlashCommandsPersistAndLoad|TestThreadSlashCommandsPersistAcrossRestart' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`
+- Additional verification commands (executed 2026-03-13):
+  - `go run ./cmd/ngent --port 8787 --db-path /tmp/ngent-kimi-real-3.db --debug`
+  - Playwright MCP: created a Kimi thread in the Web UI, confirmed no `/slash-commands` request on thread open, confirmed one `/slash-commands` request after typing `/`, and confirmed `/` sent to Kimi as a normal message without freezing the page.
+- Additional verification commands (executed 2026-03-13 after Kimi timing fix):
+  - `go test ./internal/agents/kimi -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
+  - `go run ./cmd/ngent --port 8788 --db-path /tmp/ngent-kimi-acp-trace.db --debug`
+  - real local Kimi thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned the 8 persisted Kimi commands after the first turn
+  - Playwright MCP: created a fresh Kimi thread in the Web UI and confirmed typing `/` opened the slash-command picker showing `/init`, `/compact`, `/clear`, `/yolo`, `/plan`, `/add-dir`, `/export`, and `/import`
+- Additional verification commands (executed 2026-03-13 after slash-entry refresh fix):
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`
+  - `go run ./cmd/ngent --port 8789 --db-path /tmp/ngent-slash-refresh.db --debug`
+  - Playwright MCP: opened that Kimi thread, confirmed no `/slash-commands` request occurred while merely loading the thread, confirmed typing `/` triggered `GET /v1/threads/{threadId}/slash-commands`, and confirmed clearing the input and typing `/` again triggered a second request while still opening the slash-command picker
+- Additional verification commands (executed 2026-03-13 after codex embedded timing fix):
+  - `go test ./internal/agents/codex -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|ReplaysCachedSlashCommandsAfterConfigOptionsInit)$' -count=1`
+  - `go run ./cmd/ngent --port 8793 --db-path /tmp/ngent-codex-fix.db --debug`
+  - real local codex thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned the 7-command codex snapshot after the first turn
+  - sqlite check: `select agent_id, json_array_length(commands_json) from agent_slash_commands where agent_id = 'codex';` returned `codex|7`
+- Additional verification commands (executed 2026-03-13 after Qwen/OpenCode stdio timing fix):
+  - `go test ./internal/agents/qwen ./internal/agents/opencode -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)?$' -count=1`
+  - `go run ./cmd/ngent --port 8794 --db-path /tmp/ngent-qwen-opencode-fix.db --debug`
+  - real local Qwen thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned `/bug`, `/compress`, `/init`, `/summary`
+  - real local OpenCode thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned `/init`, `/review`, `/go-style-core`, `/remotion-best-practices`, `/find-skills`, `/compact`
+- Additional verification commands (executed 2026-03-13 after stdio notification helper refactor):
+  - `go test ./internal/agents/kimi ./internal/agents/qwen ./internal/agents/opencode -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)?$' -count=1`
+  - `go test ./...`
+- Additional verification commands (executed 2026-03-13 after Gemini ACP notification fix):
+  - `go test ./internal/agents/gemini -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
+  - `go run ./cmd/ngent --port 8795 --db-path /tmp/ngent-gemini-fix.db --debug`
+  - real local Gemini thread: confirmed `GET /v1/threads/{threadId}/slash-commands` still returned `[]`, indicating no provider `available_commands_update` was observed in that run
+- Additional verification commands (executed 2026-03-13 after Codex config-init slash-command backfill):
+  - `go test ./internal/agents/codex -run 'Test(StreamCapturesSlashCommandsEmittedBeforePrompt|StreamReplaysCachedSlashCommandsAfterConfigOptionsInit|SlashCommandsAfterConfigOptionsInit)$' -count=1`
+  - `go test ./internal/httpapi -run 'Test(ThreadSlashCommandsPersistAndLoad|ThreadSlashCommandsPersistAcrossRestart|ThreadConfigOptionsBackfillsSlashCommandsWhenCatalogAlreadyStored)$' -count=1`
+  - `go run ./cmd/ngent --port 8796 --db-path /tmp/ngent-codex-slash-fix.db --debug`
+  - real local Codex thread: confirmed `GET /v1/threads/{threadId}/config-options` initialized the embedded provider and `GET /v1/threads/{threadId}/slash-commands` then returned the 7-command snapshot before any turn was sent
+  - sqlite check: `select agent_id, commands_json from agent_slash_commands where agent_id = 'codex';` returned the persisted codex command list
+  - Playwright MCP: created a fresh Codex thread, confirmed the UI loaded `config-options`, then typed `/` and observed the slash-command picker open with `/review`, `/review-branch`, `/review-commit`, `/init`, `/compact`, `/logout`, and `/mcp`
+- Additional verification commands (executed 2026-03-13 after Qwen slash-command probe fallback):
+  - `go test ./internal/agents/qwen ./internal/httpapi -run 'Test(StreamCapturesSlashCommandsEmittedBeforePrompt|SlashCommandsAfterConfigOptionsInit|ThreadConfigOptionsBackfillsSlashCommandsWhenCatalogAlreadyStored|ThreadSlashCommandsEndpointBackfillsMissingSnapshot)$' -count=1`
+  - `go run ./cmd/ngent --port 8798 --db-path /tmp/ngent-qwen-slash-fix-v2.db --debug`
+  - real local Qwen thread: confirmed the very first `GET /v1/threads/{threadId}/slash-commands` returned `/bug`, `/compress`, `/init`, and `/summary` before any turn was sent
+  - sqlite check: `select agent_id, commands_json from agent_slash_commands where agent_id = 'qwen';` returned the persisted qwen command list
+  - Playwright MCP: created a fresh Qwen thread, typed `/`, and observed the slash-command picker open immediately with the 4 Qwen commands
+- Additional verification commands (executed 2026-03-13 after unifying direct ACP provider slash-command caches):
+  - `go test ./internal/agents/kimi ./internal/agents/opencode ./internal/agents/gemini ./internal/agents/qwen -run 'Test(StreamCapturesSlashCommandsEmittedBeforePrompt|SlashCommandsAfterConfigOptionsInit|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
+  - `go test ./...`
+  - Kimi, OpenCode, Gemini, and Qwen now all keep the latest `available_commands_update` snapshot in the same provider-local cache across both `Stream()` and `ConfigOptions()` probes, so `/slash-commands` backfill uses one consistent source for these direct ACP agents

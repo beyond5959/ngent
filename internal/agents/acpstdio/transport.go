@@ -2,6 +2,7 @@ package acpstdio
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,9 +42,16 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return e.Message }
 
+// ConnOptions configures ACP stdio transport behavior.
+type ConnOptions struct {
+	Prefix           string
+	AllowStdoutNoise bool
+}
+
 // Conn is a newline-delimited JSON-RPC stdio connection.
 type Conn struct {
 	prefix string
+	opts   ConnOptions
 
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
@@ -68,12 +76,18 @@ type Conn struct {
 
 // NewConn creates a new JSON-RPC stdio connection and starts its read loop.
 func NewConn(stdin io.WriteCloser, stdout io.ReadCloser, prefix string) *Conn {
-	prefix = strings.TrimSpace(prefix)
-	if prefix == "" {
-		prefix = "acpstdio"
+	return NewConnWithOptions(stdin, stdout, ConnOptions{Prefix: prefix})
+}
+
+// NewConnWithOptions creates a new JSON-RPC stdio connection with options.
+func NewConnWithOptions(stdin io.WriteCloser, stdout io.ReadCloser, opts ConnOptions) *Conn {
+	opts.Prefix = strings.TrimSpace(opts.Prefix)
+	if opts.Prefix == "" {
+		opts.Prefix = "acpstdio"
 	}
 	conn := &Conn{
-		prefix:  prefix,
+		prefix:  opts.Prefix,
+		opts:    opts,
 		stdin:   stdin,
 		stdout:  stdout,
 		pending: make(map[string]chan Message),
@@ -207,9 +221,16 @@ func (c *Conn) readLoop() {
 }
 
 func (c *Conn) consume(line []byte) error {
-	line = []byte(strings.TrimSpace(string(line)))
+	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return nil
+	}
+	if c.opts.AllowStdoutNoise {
+		start := bytes.IndexByte(line, '{')
+		if start < 0 {
+			return nil
+		}
+		line = line[start:]
 	}
 
 	var msg Message

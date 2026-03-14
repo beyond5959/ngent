@@ -44,6 +44,114 @@
 - ADR-040: Cache session-history replay snapshots in SQLite. (Accepted)
 - ADR-041: Treat Web UI "New session" as provider-cache reset for the empty session scope. (Accepted)
 - ADR-042: Treat explicit Web UI "New session" as a fresh turn with no injected thread context. (Accepted)
+- ADR-043: Share one ACP CLI driver across Kimi/Qwen/OpenCode/Gemini. (Accepted)
+- ADR-044: Normalize path-like ACP permission previews across direct ACP providers. (Accepted)
+- ADR-045: Surface hidden agent reasoning as first-class SSE/history events in the Web UI. (Accepted)
+- ADR-046: Collapse finalized Web UI thinking panels by default. (Accepted)
+
+## ADR-046: Collapse Finalized Web UI Thinking Panels by Default
+
+- Status: Accepted
+- Date: 2026-03-14
+- Context:
+  - ADR-045 made hidden reasoning visible in the Web UI, but a fully expanded reasoning block on every completed agent message made longer threads harder to scan.
+  - the product still needs live reasoning to stay visible while the turn is actively streaming.
+  - the message list is re-rendered from store state, so manual expand/collapse choice needs explicit local UI tracking if it should survive later store updates.
+- Decision:
+  - render reasoning inside a lightweight inline `Thinking` toggle modeled after the Kimi Web UI `Thought` block pattern instead of a heavy bordered card.
+  - use a sparkles icon + italic label + rotating chevron trigger, with expanded content shown as indented text behind a left border.
+  - use tense-sensitive labels: live reasoning stays `Thinking`, and finalized reasoning switches to `Thought`.
+  - render finalized reasoning with the same sanitized markdown pipeline used for finalized assistant messages, while keeping in-flight reasoning as plain text during streaming.
+  - keep the streaming panel expanded while `reasoning_delta` is still arriving.
+  - once the turn is finalized into message history, render the panel collapsed by default.
+  - preserve manual expand/collapse state for finalized messages in page-local UI state across later list re-renders.
+- Consequences:
+  - active reasoning remains visible during execution, but completed threads are denser and easier to review.
+  - markdown affordances such as headings, lists, links, and code blocks now render consistently inside finalized `Thinking` content.
+  - collapse state is a local Web UI concern and is not persisted into server-side turn history.
+  - page reload still returns to the default product behavior: finalized thinking starts collapsed.
+- Alternatives considered:
+  - keep finalized reasoning always expanded (rejected: too noisy for longer chats).
+  - collapse reasoning immediately even during streaming (rejected: hides the live signal users asked to watch).
+  - persist expand/collapse state in backend history (rejected: presentation state does not belong in the turn/event model).
+
+## ADR-045: Surface Hidden Agent Reasoning as First-Class SSE/History Events in the Web UI
+
+- Status: Accepted
+- Date: 2026-03-14
+- Context:
+  - shared ACP update parsing already recognized provider thought chunks such as `thought_message_chunk` and `agent_thought_chunk`, but the turn pipeline only forwarded visible assistant text through `message_delta`.
+  - as a result, hidden reasoning emitted by supporting agents was discarded before it reached SSE clients or persisted turn history, so the Web UI could not show it during streaming or after reload.
+  - merging reasoning into `responseText` would blur the boundary between visible assistant output and hidden provider reasoning.
+- Decision:
+  - add a context-bound reasoning callback in `internal/agents`, parallel to the existing plan/session/permission callback pattern.
+  - route ACP thought chunks into that callback from the shared ACP notification handler.
+  - persist and stream reasoning as a separate `reasoning_delta` event in the HTTP API layer, without changing `responseText`.
+  - reconstruct reasoning in the Web UI from live `reasoning_delta` SSE events and from persisted turn `events[]`, rendering it in a dedicated `Thinking` section above the final assistant answer.
+- Consequences:
+  - users can see reasoning for ngent-created turns both live and from history reloads.
+  - `responseText` remains the visible assistant answer only, so existing prompt-compaction/history semantics stay stable.
+  - provider-owned transcript replay returned by `/session-history` still contains only visible user/assistant messages; hidden reasoning for historical external sessions is not backfilled there.
+- Alternatives considered:
+  - append reasoning directly into `responseText` (rejected: mixes two different product surfaces and would break existing history assumptions).
+  - keep reasoning UI-only without persisting it in turn events (rejected: reload/history would lose the data).
+  - add a separate top-level reasoning column to `turns` (rejected: event log already models streamed deltas cleanly and preserves ordering).
+
+## ADR-044: Normalize Path-Like ACP Permission Previews Across Direct ACP Providers
+
+- Status: Accepted
+- Date: 2026-03-14
+- Context:
+  - after the shared ACP CLI refactor, direct ACP providers only bridge `session/request_permission` when they explicitly install a `HandlePermissionRequest` hook.
+  - OpenCode did not install that hook, so real permission-gated turns still returned JSON-RPC `method not found` even though Kimi/Qwen had already been fixed.
+  - real OpenCode permission payloads can represent file-like access without `content[]` diffs, using `toolCall.locations[]` or `toolCall.rawInput.filepath` and generic titles such as `external_directory`.
+- Decision:
+  - require every direct ACP stdio provider that advertises permissions to install a request-permission hook in the shared ACP CLI driver.
+  - extend the shared permission parser to extract a first path-like preview from `content[]`, `locations[]`, or `rawInput` keys such as `filepath`, `path`, and `parentDir`.
+  - treat directory/path-oriented permission requests as `file` approvals in the Web UI, and prefer the resolved path over generic provider titles when building the user-facing command label.
+  - reuse the same shared normalization path for OpenCode instead of adding another provider-local decoder.
+- Consequences:
+  - real OpenCode file-creation requests now surface through the normal ngent permission card flow instead of failing invisibly.
+  - the Web UI gets a stable path preview like `/Users/niuniu/.config/opencode/opencode.json` even when the upstream provider only reports `external_directory` or another generic title.
+  - future ACP providers can attach path previews in multiple shapes without forcing another adapter-specific parser.
+- Alternatives considered:
+  - leave OpenCode on provider-default RPC handling and only fix Kimi/Qwen (rejected: direct ACP providers would keep drifting on identical permission semantics).
+  - special-case OpenCode path extraction inside `internal/agents/opencode` (rejected: the shape difference belongs in shared ACP normalization, not a one-off adapter fork).
+
+## ADR-043: Share One ACP CLI Driver Across Kimi/Qwen/OpenCode/Gemini
+
+- Status: Accepted
+- Date: 2026-03-13
+- Context:
+  - `qwen`, `opencode`, `kimi`, and `gemini` all run as ACP-over-stdio providers inside ngent.
+  - before this refactor, each provider duplicated the same lifecycle code for process startup, `initialize`, `session/new`, `session/load`, `session/list`, `session/prompt`, config-option probing, model discovery, and transcript replay.
+  - the duplication made protocol fixes expensive and increased the cost of adding another ACP-capable CLI in the future.
+  - the real differences between these providers are comparatively small:
+    - startup command and environment.
+    - `session/new/load/prompt` parameter shapes.
+    - permission request/response encoding.
+    - cancel strategy.
+    - provider quirks such as Kimi local config fallback and Gemini stdout noise before JSON-RPC frames.
+- Decision:
+  - introduce shared package `internal/agents/acpcli` as the common driver for ACP CLI providers.
+  - keep provider-specific behavior as hooks:
+    - process launcher/open-connection logic.
+    - ACP request parameter builders.
+    - permission-response mapping.
+    - cancel behavior.
+    - config-session planning for provider quirks such as Kimi model selection at process startup.
+  - standardize all four providers on `internal/agents/acpstdio.Conn`.
+  - extend `acpstdio` with opt-in stdout-noise tolerance so Gemini can reuse the same shared transport instead of keeping its own JSON-RPC connection implementation.
+  - reuse the same shared driver for model discovery and `session/load` transcript replay, not only turn streaming.
+- Consequences:
+  - future ACP CLI providers can usually be added by supplying a small provider spec/hook layer instead of copying full lifecycle code.
+  - transport/protocol fixes now land once and benefit all ACP CLI providers together.
+  - provider-specific quirks remain isolated and explicit rather than being hidden in near-identical forked implementations.
+  - real-provider regressions can still come from local CLI readiness/auth/network state; sharing the driver does not hide upstream availability issues.
+- Alternatives considered:
+  - keep separate provider implementations and continue copy-pasting fixes.
+  - introduce one fully generic provider configured only by command string/args, without explicit provider hook points.
+  - keep Gemini on its own transport while only partially sharing logic for the other providers.
 
 ## ADR-042: Treat Explicit Web UI "New session" as a Fresh Turn with No Injected Thread Context
 
@@ -974,3 +1082,58 @@ Use this template for new decisions.
 - Alternatives considered:
   - keep thread-wide turn serialization and force users to create separate threads per ACP session (rejected: poor UX and redundant thread duplication).
   - remove the conflict check without changing provider cache scope (rejected: would mix session-bound provider state and route turns to the wrong ACP session).
+
+## ADR-039: Persist ACP slash commands as agent-level SQLite snapshots
+
+- Status: Accepted
+- Date: 2026-03-13
+- Context:
+  - ACP agents can emit `available_commands_update` during `session/update`, and the Web UI needs a durable source for slash-command suggestions instead of depending on the current in-memory stream only.
+  - the same agent can be opened from multiple threads, and slash-command suggestions should survive server restart once any thread has observed them.
+  - the requested UI interaction is lightweight composer assistance, not a separate command palette service.
+- Decision:
+  - extend shared ACP update parsing with `available_commands_update` and normalize the payload into a common `SlashCommand` model.
+  - add a shared per-turn `SlashCommandsHandler` callback and wire all built-in ACP providers to forward the latest slash-command snapshot through that callback.
+  - persist the snapshot in SQLite table `agent_slash_commands` keyed by `agent_id`, replacing the previous row each time a new update arrives.
+  - expose `GET /v1/threads/{threadId}/slash-commands` so the Web UI can read the cached commands for the active thread's agent while still enforcing normal thread ownership checks.
+  - in the Web UI composer, only open the slash-command picker when the current input starts with `/`, so `abc /plan` remains ordinary message text.
+  - fetch slash commands lazily when the user types `/`; the first bare `/` in each slash interaction forces a backend refresh for the active thread even if the browser already has an in-memory agent cache, and if the refreshed snapshot is empty, keep the composer as plain text and do not render an empty or loading picker.
+  - provider adapters must start observing `session/update` before `session/new` / `session/load` completes if they want to capture capability snapshots, because real agents such as Kimi can emit `available_commands_update` before the first `session/prompt`.
+- Consequences:
+  - once any thread observes an agent's slash commands, later threads for that agent can reuse them immediately and server restart does not clear the cache.
+  - slash-command updates do not become part of persisted turn history; they are stored as agent capability snapshots instead of user-visible transcript events.
+  - agents that never emit `available_commands_update` still behave normally in the composer because `/` falls back to plain input instead of trapping the UI in a retry loop.
+  - the first `/` after entering slash mode always re-checks sqlite through the thread endpoint, so the browser no longer silently masks stale or newly refreshed slash-command snapshots behind a hot in-memory cache.
+  - adapters that also support transcript replay must still suppress pre-prompt message chunks, otherwise `session/load` history replays could leak into the visible answer stream.
+  - embedded adapters whose runtime does not replay historical notifications must install a slash-command monitor before `session/new` / `session/load`, cache the initial snapshot on the provider instance, and replay that cached snapshot into the active turn before `session/prompt`; codex now follows this rule so config-option queries and first turns observe the same slash-command state.
+  - stdio adapters must also install `session/update` handlers immediately after `initialize`, because `acpstdio.Conn` drops notifications that arrive before `SetNotificationHandler`; Qwen and OpenCode now follow the same pre-prompt capability-capture rule as Kimi.
+  - Kimi, Qwen, OpenCode, and Gemini now share one internal ACP notification handler builder so the providers cannot silently drift on pre-prompt slash-command, message-chunk, or plan handling semantics even when they use different connection implementations.
+  - when a provider can expose its current slash-command snapshot outside a turn, ngent may backfill a missing sqlite row from that live provider state during thread initialization flows; codex now does this on the `config-options` path so a fresh thread can show slash commands before the first prompt.
+  - `GET /v1/threads/{threadId}/slash-commands` must also perform the same best-effort backfill on sqlite miss, because users can type `/` before any parallel thread-initialization request finishes; Qwen now relies on this path for deterministic fresh-thread behavior.
+  - direct ACP stdio providers must apply the same slash-command cache logic to both their turn path and their config-session path; Kimi, Qwen, OpenCode, and Gemini now all use one provider-local `SlashCommandsCache` so fresh-thread slash probes and later turns observe the same snapshot source.
+  - if a future provider varies slash commands by workspace, model, or session, the current `agent_id` cache key may be too coarse and will need refinement.
+- Alternatives considered:
+  - keep slash commands in memory only (rejected: loses state on restart and leaves fresh threads without suggestions until another turn streams).
+  - persist slash commands per thread (rejected: duplicates identical agent data and prevents reuse across threads).
+  - append slash-command updates into `turns/events` only (rejected: complicates retrieval for the composer and mixes capability cache with transcript history).
+
+## ADR-040: Normalize rich ACP permission requests before bridging them into ngent
+
+- Status: Accepted
+- Date: 2026-03-14
+- Context:
+  - real ACP providers do not guarantee that `session/request_permission.toolCall` is a flat string map.
+  - Kimi CLI 1.22.0 sends structured previews containing diff/content arrays, `toolCallId`, and a human-readable `title`.
+  - ngent's direct ACP adapters for Kimi and Qwen previously decoded that payload as `map[string]string`, which caused JSON decode failure and an immediate fail-closed reject before HTTP/SSE could emit `permission_required`.
+- Decision:
+  - add one shared ACP permission-request parser that accepts structured `toolCall` payloads, preserves key metadata (`sessionId`, `toolCallId`, first `path`), and derives a normalized `PermissionRequest` for the rest of ngent.
+  - classify permission badges into the existing Web UI families (`file`, `command`, `network`, `mcp`) from the tool title/content instead of trusting provider-specific `kind` strings such as `execute`.
+  - use the tool title as the primary user-facing command label (for example `WriteFile: soul.md`) so the UI can display the same preview text the provider asked the user to approve.
+  - reuse this shared normalization in both Kimi and Qwen so direct ACP providers do not drift on permission bridging semantics.
+- Consequences:
+  - real Kimi file-write requests now surface through the normal ngent permission workflow instead of being auto-rejected invisibly.
+  - fail-closed behavior is preserved for malformed payloads or missing handlers, but only after attempting structured decode.
+  - future ACP providers can attach richer tool-call previews without forcing another provider-specific permission decoder.
+- Alternatives considered:
+  - keep provider-local bespoke permission decoding (rejected: already diverged across adapters and failed on a real payload shape).
+  - flatten structured tool-call previews into strings at the transport layer (rejected: hides provider metadata and makes badge classification/path extraction harder later).

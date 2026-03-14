@@ -263,3 +263,71 @@
   - wait for active sessions to finish or cancel them before renaming the thread or changing shared model/config options.
 - Follow-up plan:
   - evaluate whether some metadata-only updates can move to a narrower guard without letting shared provider state drift across sessions.
+
+- ID: KI-027
+- Title: Slash-command cache currently assumes one stable command set per agent
+- Status: Open
+- Severity: Low
+- Affects: agents whose ACP `available_commands_update` payload may vary by workspace, session, or model
+- Symptom:
+  - ngent currently stores the latest slash-command snapshot in SQLite keyed only by `agent_id`.
+  - if a provider later emits different slash-command sets for different contexts, the most recently observed snapshot for that agent will replace the earlier one and the Web UI composer may show commands from the wrong context.
+- Workaround:
+  - for Codex, simply opening the thread is now enough because `config-options` backfills the latest provider snapshot into sqlite before the first turn.
+  - for Kimi, Qwen, OpenCode, and Gemini, the first `/slash-commands` request now backfills sqlite directly from the live provider snapshot cache when the provider has already emitted one, so typing `/` on a fresh thread is enough as long as the underlying CLI actually publishes `available_commands_update`.
+  - for other agents, run a fresh turn in the target context before relying on slash-command suggestions, so the latest provider snapshot overwrites the cache.
+- Follow-up plan:
+  - keep provider-specific delivery timing fixes in place; codex caches the initial `session/new` / `session/load` snapshot before the first prompt, and Kimi/Qwen/OpenCode/Gemini now share both the same early ACP notification handling and the same provider-local slash-command cache across turn/config-session flows, so the remaining risk here is cache-key scope or provider emission behavior, not notification loss inside ngent.
+  - revisit the cache key and move to `(agent_id, cwd)` or another provider-specific scope if a real agent starts varying slash commands by context.
+
+- ID: KI-028
+- Title: Real OpenCode ACP `session/new` can stall until hub timeout
+- Status: Open
+- Severity: Medium
+- Affects: real `opencode` ACP turns and the host smoke test path
+- Symptom:
+  - on the current host validation run dated 2026-03-13, `E2E_OPENCODE=1 go test ./internal/agents/opencode -run TestOpenCodeE2ESmoke -count=1 -v -timeout 180s` failed with `opencode: session/new: context deadline exceeded`.
+  - the process starts and initializes, but the upstream CLI does not complete `session/new` before the 45-second test context expires.
+- Workaround:
+  - verify local OpenCode auth/session readiness and backend reachability outside ngent, then retry.
+  - if turns are business-critical, prefer a provider whose local CLI is already known-good on the host until OpenCode readiness is restored.
+- Follow-up plan:
+  - add richer diagnostics around stalled OpenCode `session/new` calls so auth/backend/readiness failures are distinguishable from protocol regressions.
+  - keep rerunning the real smoke after local OpenCode environment fixes to confirm the shared ACP driver is not the blocking factor.
+
+- ID: KI-029
+- Title: Denied ACP permission turns currently collapse into an empty agent bubble
+- Status: Open
+- Severity: Low
+- Affects: Web UI turns where the user denies a provider permission request
+- Symptom:
+  - the Web UI now correctly renders the pending `Permission Required` card for direct ACP providers such as Kimi and OpenCode, but once the user clicks `Deny`, the subsequent completed turn still has empty `responseText`.
+  - after the final re-render, the ephemeral permission card disappears and the chat shows the existing empty-agent fallback (`…`) instead of a clearer provider rejection message.
+- Workaround:
+  - use the permission card itself as the source of truth for what was denied; the underlying tool action remains fail-closed and is not executed.
+  - inspect `/history?includeEvents=1` if you need to confirm that the turn did emit `permission_required` before completion.
+- Follow-up plan:
+  - decide whether denied-permission turns should persist a lightweight terminal message, or whether the Web UI should keep the resolved permission card visible after turn completion.
+
+- ID: KI-030
+- Title: Provider-owned historical session replay still omits hidden reasoning
+- Status: Open
+- Severity: Low
+- Affects: `GET /v1/threads/{threadId}/session-history` and Web UI session-sidebar replay for pre-existing provider sessions
+- Symptom:
+  - ngent now surfaces hidden reasoning for hub-created turns by persisting `reasoning_delta` events in normal turn history.
+  - provider-owned historical replay returned by `/session-history` still exposes only visible `user` / `assistant` transcript messages, so switching to an older external session in the Web UI does not reconstruct past hidden reasoning blocks.
+- Workaround:
+  - use regular ngent turn history for turns created through ngent itself; those now preserve reasoning after reload.
+  - treat provider-owned session replay as visible transcript-only until the replay contract is extended.
+- Follow-up plan:
+  - evaluate whether session-transcript schema should grow an optional reasoning field, or whether hidden reasoning should remain excluded from provider-owned replay for privacy/product reasons.
+
+- ID: KI-031
+- Title: Web UI thinking expand state is not persisted across page reload
+- Status: Open
+- Severity: Low
+- Affects: finalized agent messages that include reasoning/thinking content
+- Symptom: users can expand a collapsed `Thinking` panel during the current page session, but a full page reload or fresh history load resets it to the default collapsed presentation.
+- Workaround: expand the needed `Thinking` panel again after reload.
+- Follow-up plan: evaluate persisting per-message UI presentation preferences in browser-local state if users need sticky behavior across reloads.

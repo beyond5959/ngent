@@ -17,8 +17,9 @@ Modules:
 
 - `internal/httpapi`: routing, request validation, response/error encoding.
 - `internal/runtime`: thread controller, turn state machine, cancellation coordination.
-- `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission callback bridge.
+- `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
   - per-turn provider resolution selects implementation by thread metadata (agent id + cwd).
+  - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, and `kimi`; provider-specific hooks own command startup, request parameter shaping, permission mapping, and cancel quirks.
 - `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
 - `internal/sse`: event formatting, stream fanout, resume helpers.
 - `internal/storage`: SQLite repository and migration management.
@@ -38,6 +39,7 @@ Modules:
 - On server boot: no agent process is started.
 - On first thread usage: runtime requests provider instance for that thread.
 - On first turn execution for embedded-provider thread (currently `codex`): server creates the in-process runtime and initializes ACP session lazily.
+- Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
 - Embedded runtime `session/new` is created with `cwd=thread.cwd` (validated as absolute path at thread creation).
 - If `thread.agent_options_json` contains `modelId`, providers apply it as model override during thread-level runtime/session initialization.
 - Provider instances are cached per thread/session/config scope and reclaimed by idle TTL (`--agent-idle-ttl`) when that scope has no active turn.
@@ -62,6 +64,13 @@ Flow:
    - client submits `POST /v1/permissions/{permissionId}` with outcome.
 4. if decision is missing/late/invalid, default is deny (fail-closed).
 
+Turn-side auxiliary callbacks:
+
+- hidden reasoning/thinking deltas are forwarded separately from visible assistant text.
+- reasoning is streamed/persisted as `reasoning_delta` events instead of being merged into `responseText`.
+- the Web UI renders reasoning in a lightweight collapsible reasoning toggle: labeled `Thinking` during live streaming, relabeled `Thought` once finalized history is reconstructed, collapsed by default after completion, with indented left-border content when opened and sanitized markdown rendering for finalized reasoning text.
+- plan replacements continue to flow as `plan_update`.
+
 ## 6. Persistence Model
 
 SQLite stores:
@@ -74,6 +83,7 @@ SQLite stores:
 Properties:
 
 - all outbound stream events are persisted before or atomically with emission strategy.
+- streamed auxiliary events such as `reasoning_delta`, `plan_update`, and `permission_required` share the same append-only event log as `message_delta`.
 - each event has monotonic sequence per thread or turn.
 - thread deletion removes dependent rows in order (`events` -> `turns` -> `threads`) in one transaction.
 - restart can rebuild state from durable turn status plus event log.
@@ -97,6 +107,7 @@ On restart:
 - thread compact (`POST /v1/threads/{threadId}/compact`)
 - SSE stream for real-time events
 - permission decision endpoint
+- turn history with optional persisted event replay (`message_delta`, `reasoning_delta`, `plan_update`, terminal/error events)
 
 See `docs/API.md` for endpoint and schema contracts.
 
@@ -111,6 +122,23 @@ See `docs/API.md` for endpoint and schema contracts.
 - logs are JSON on stderr and redact sensitive data.
 - `--debug=true` raises log verbosity to debug level and emits sanitized ACP JSON-RPC request/response traces on stderr.
 - HTTP payloads contain protocol data only.
+
+## 10A. Shared ACP CLI Driver
+
+- The shared ACP CLI driver owns the common lifecycle for ACP-capable external CLIs:
+  - open process and stdio transport
+  - `initialize`
+  - `session/new`, `session/load`, `session/list`, `session/prompt`
+  - `session/set_config_option`
+  - model discovery via `session/new`
+  - transcript replay via `session/load`
+- Provider-specific hooks remain responsible for:
+  - command/env startup shape
+  - request parameter schemas
+  - permission-request response encoding
+  - cancel strategy
+  - provider quirks such as Kimi local config/model-startup behavior and Gemini stdout-noise filtering
+- `internal/agents/acpstdio` now supports opt-in stdout-noise tolerance so providers like Gemini can ignore non-JSON stdout lines without maintaining a separate transport implementation.
 
 ## 10. Error Contract
 
@@ -446,3 +474,95 @@ and upstream ACP schema:
   - highlights the currently selected `sessionId`.
   - offers `New session` to clear `sessionId`.
   - refreshes after turns complete so newly created/bound sessions appear in the list.
+
+## 16. ACP Slash Commands Cache and Composer Picker (2026-03-13)
+
+### 16.1 Backend Parsing and Persistence
+
+- Extend shared ACP `session/update` parsing to normalize `available_commands_update` into:
+  - `name`
+  - `description`
+  - `inputHint`
+- Add a shared per-turn callback for slash-command snapshots so all built-in ACP providers reuse the same forwarding path.
+- Providers must install their `session/update` observer before `session/new` or `session/load` completes, because real ACP agents can emit `available_commands_update` before the first prompt starts.
+- For providers that also replay transcript chunks during `session/load`, pre-prompt `agent_message_chunk` / `user_message_chunk` updates must be ignored for live output while capability snapshots such as `available_commands_update` are still accepted.
+- Embedded runtimes that do not replay already-emitted notifications to late subscribers must additionally keep a provider-local slash-command cache fed by a runtime-lifecycle update monitor, then replay that cached snapshot into the active turn before `session/prompt`; otherwise first-turn and pre-configured-session slash commands can still be lost even if prompt-time streaming is correct.
+- Stdio providers using `acpstdio.Conn` must register `SetNotificationHandler` before `session/new` / `session/load`; that transport does not buffer notifications for later delivery, so early capability snapshots are otherwise dropped on the floor.
+- Kimi, Qwen, OpenCode, and Gemini implement that ACP notification rule through one shared handler builder that:
+  - always forwards pre-prompt `available_commands_update`.
+  - suppresses pre-prompt message/plan replay.
+  - forwards message chunks and plan updates only after the provider marks prompt start.
+- Direct ACP providers that also expose config-session probes must reuse the same slash-command snapshot source outside streaming turns:
+  - keep a provider-local `SlashCommandsCache`.
+  - wrap both `Stream()` and `runConfigSession()` contexts so every observed `available_commands_update` refreshes that cache before the normal turn-scoped handler runs.
+  - implement `SlashCommandsProvider` by first reading the provider-local cache and then, if still unknown, running a best-effort config session to populate it.
+- Persist the latest observed slash-command snapshot in SQLite table `agent_slash_commands`:
+  - `agent_id TEXT PRIMARY KEY`
+  - `commands_json TEXT NOT NULL`
+  - `updated_at TEXT NOT NULL`
+- Persistence semantics:
+  - treat each `available_commands_update` as a full replacement snapshot for that agent.
+  - overwrite the existing row every time a new snapshot arrives.
+
+### 16.2 HTTP API
+
+- Add `GET /v1/threads/{threadId}/slash-commands`.
+- Ownership model matches other thread-scoped endpoints.
+- Response shape:
+  - `threadId`
+  - `agentId`
+  - `commands`
+- Read semantics:
+  - resolve owned thread.
+  - read cached slash commands by `thread.agent_id`.
+  - if the active provider supports exposing a live slash-command snapshot and sqlite does not have one yet, initialization flows such as `GET /v1/threads/{threadId}/config-options` may backfill sqlite before the composer asks for `/slash-commands`; Codex uses this path so a fresh thread can surface slash commands before the first turn.
+  - if `GET /v1/threads/{threadId}/slash-commands` still misses sqlite, the handler may probe the live provider through `SlashCommandsProvider` and persist the result before responding; this removes races between thread-open initialization and the user's first `/`.
+  - return empty list when no snapshot has been observed yet.
+
+### 16.3 Web UI
+
+- Keep slash-command cache client-side by agent id to avoid repeated fetches across same-agent threads.
+- Fetch slash commands on demand:
+  - when the user types `/` at the start of the composer, load cached slash commands through `GET /v1/threads/{threadId}/slash-commands`.
+  - the first bare `/` in each slash interaction must force a thread-scoped refresh even if the same agent already has an in-memory browser cache, so the UI always re-checks sqlite at slash-entry time.
+  - refresh the cache again after turn completion/error/disconnect so newly streamed snapshots become visible in the composer.
+- Composer behavior:
+  - only show the slash-command picker when the textarea value starts with `/`.
+  - typing `/` in an otherwise empty input opens the full list.
+  - after the slash-entry refresh finishes, continue filtering from the refreshed in-memory snapshot until the user leaves slash mode.
+  - if the fetched or cached slash-command snapshot is empty, keep `/` as ordinary message text and leave the picker hidden.
+  - additional text after the first `/` filters by command name and description.
+  - `ArrowUp` / `ArrowDown` move selection.
+  - `Enter` inserts the highlighted command.
+  - `Escape` closes the picker.
+  - clicking a command inserts `/<name>` and appends a trailing space when the command advertises an input hint.
+
+## 17. Rich ACP Permission Requests and Streaming Placeholder (2026-03-14)
+
+### 17.1 Provider Permission Bridging
+
+- Direct ACP providers must treat `session/request_permission.toolCall` as a structured object, not a flat string map.
+- Real payloads may include:
+  - `title`
+  - `toolCallId`
+  - `content[]` entries such as diff previews or embedded text blocks
+  - `locations[]` entries with explicit `path` fields
+  - `rawInput` keys such as `path`, `filepath`, or `parentDir` when the provider does not emit a richer content preview
+- Permission-bridge normalization rules:
+  - every direct ACP stdio provider that supports permissions must install a `HandlePermissionRequest` hook; otherwise ACP request handling falls back to JSON-RPC `method not found`
+  - preserve `sessionId` and `toolCallId` in `PermissionRequest.RawParams`
+  - preserve the first path-like preview when available
+  - derive the Web UI badge class from the tool preview:
+    - file edits/diffs -> `file`
+    - directory/path previews -> `file`
+    - MCP requests -> `mcp`
+    - network-style requests -> `network`
+    - fallback -> `command`
+  - use the tool title as the primary display string in the permission card when it is specific enough; otherwise fall back to the resolved path preview
+- Malformed payloads or missing handlers still fail closed, but only after structured decode is attempted.
+
+### 17.2 Web UI Streaming State
+
+- Before the first visible assistant delta arrives, the live streaming bubble keeps its text region empty and only shows the typing indicator.
+- The first real delta populates the existing bubble without changing any other streaming semantics.
+- Hidden `agent_thought_chunk` content still remains non-user-visible while the assistant is waiting on a visible delta.

@@ -128,6 +128,48 @@ func TestConnInboundRequestHandlerErrorMapsToInternalError(t *testing.T) {
 	}
 }
 
+func TestConnAllowStdoutNoiseSkipsNonJSONAndParsesPrefixedJSON(t *testing.T) {
+	reqReaderPipe, reqWriterPipe := io.Pipe()
+	respReaderPipe, respWriterPipe := io.Pipe()
+
+	conn := NewConnWithOptions(reqWriterPipe, respReaderPipe, ConnOptions{
+		Prefix:           "acpstdio-noise-test",
+		AllowStdoutNoise: true,
+	})
+	t.Cleanup(func() {
+		conn.Close()
+		_ = reqReaderPipe.Close()
+		_ = reqWriterPipe.Close()
+		_ = respReaderPipe.Close()
+		_ = respWriterPipe.Close()
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := conn.Call(context.Background(), "initialize", map[string]any{
+			"protocolVersion": 1,
+		})
+		done <- err
+	}()
+
+	reqReader := bufio.NewReader(reqReaderPipe)
+	reqMsg := readMessage(t, reqReader)
+	if got := reqMsg.Method; got != "initialize" {
+		t.Fatalf("request method = %q, want %q", got, "initialize")
+	}
+
+	if _, err := respWriterPipe.Write([]byte("Auth OK\n")); err != nil {
+		t.Fatalf("write noise line: %v", err)
+	}
+	if _, err := respWriterPipe.Write([]byte("INFO {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n")); err != nil {
+		t.Fatalf("write prefixed json line: %v", err)
+	}
+
+	if err := waitErr(t, done); err != nil {
+		t.Fatalf("Call() error = %v, want nil", err)
+	}
+}
+
 func TestConnDebugLogsInboundAndOutboundMessages(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(observability.NewJSONHandler(&logBuf, slog.LevelDebug))

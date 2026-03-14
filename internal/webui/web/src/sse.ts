@@ -11,6 +11,11 @@ export interface MessageDeltaPayload {
   delta: string
 }
 
+export interface ReasoningDeltaPayload {
+  turnId: string
+  delta: string
+}
+
 export interface TurnCompletedPayload {
   turnId: string
   stopReason: string
@@ -45,6 +50,7 @@ export interface PermissionRequiredPayload {
 export interface TurnStreamCallbacks {
   onTurnStarted?:        (e: TurnStartedPayload) => void
   onDelta?:              (e: MessageDeltaPayload) => void
+  onReasoningDelta?:     (e: ReasoningDeltaPayload) => void
   onPlanUpdate?:         (e: PlanUpdatePayload) => void
   onSessionBound?:       (e: SessionBoundPayload) => void
   onCompleted?:          (e: TurnCompletedPayload) => void
@@ -164,6 +170,9 @@ export class TurnStream {
         break
       case 'message_delta':
         this.callbacks.onDelta?.(payload as unknown as MessageDeltaPayload)
+        break
+      case 'reasoning_delta':
+        this.callbacks.onReasoningDelta?.(payload as unknown as ReasoningDeltaPayload)
         break
       case 'plan_update':
         this.callbacks.onPlanUpdate?.(payload as unknown as PlanUpdatePayload)

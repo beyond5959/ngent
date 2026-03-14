@@ -45,6 +45,8 @@ type ThreadStore interface {
 	UpsertAgentConfigCatalog(ctx context.Context, params storage.UpsertAgentConfigCatalogParams) error
 	GetAgentConfigCatalog(ctx context.Context, agentID, modelID string) (storage.AgentConfigCatalog, error)
 	ListAgentConfigCatalogsByAgent(ctx context.Context, agentID string) ([]storage.AgentConfigCatalog, error)
+	GetAgentSlashCommands(ctx context.Context, agentID string) (storage.AgentSlashCommands, error)
+	UpsertAgentSlashCommands(ctx context.Context, params storage.UpsertAgentSlashCommandsParams) error
 	GetSessionTranscriptCache(ctx context.Context, agentID, cwd, sessionID string) (storage.SessionTranscriptCache, error)
 	UpsertSessionTranscriptCache(ctx context.Context, params storage.UpsertSessionTranscriptCacheParams) error
 	ListThreadsByClient(ctx context.Context, clientID string) ([]storage.Thread, error)
@@ -120,6 +122,7 @@ const (
 	defaultPermissionTimeout  = 2 * time.Hour
 
 	threadAgentOptionFreshSessionKey = "_ngentFreshSession"
+	eventTypeReasoningDelta          = "reasoning_delta"
 )
 
 const (
@@ -426,6 +429,8 @@ func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, cl
 		s.handleThreadSessionHistory(w, r, clientID, threadID)
 	case "config-options":
 		s.handleThreadConfigOptions(w, r, clientID, threadID)
+	case "slash-commands":
+		s.handleThreadSlashCommands(w, r, clientID, threadID)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found", map[string]any{"path": r.URL.Path})
 	}
@@ -817,6 +822,24 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 			"entries": payloadEntries,
 		})
 	})
+	turnCtx = agents.WithReasoningHandler(turnCtx, func(reasoningCtx context.Context, delta string) error {
+		_ = reasoningCtx
+		return emit(eventTypeReasoningDelta, map[string]any{
+			"turnId": turnID,
+			"delta":  delta,
+		})
+	})
+	turnCtx = agents.WithSlashCommandsHandler(turnCtx, func(commandsCtx context.Context, commands []agents.SlashCommand) error {
+		_ = commandsCtx
+		if err := s.persistAgentSlashCommands(persistCtx, thread.AgentID, commands); err != nil {
+			s.logger.Warn("thread.slash_commands_persist_failed",
+				"threadId", thread.ThreadID,
+				"agent", thread.AgentID,
+				"reason", err.Error(),
+			)
+		}
+		return nil
+	})
 	turnCtx = agents.WithSessionBoundHandler(turnCtx, func(sessionCtx context.Context, sessionID string) error {
 		_ = sessionCtx
 		sessionID = strings.TrimSpace(sessionID)
@@ -1011,6 +1034,13 @@ func (s *Server) handleCompactThread(w http.ResponseWriter, r *http.Request, cli
 		return appendOnlyEvent("plan_update", map[string]any{
 			"turnId":  turnID,
 			"entries": payloadEntries,
+		})
+	})
+	turnCtx = agents.WithReasoningHandler(turnCtx, func(reasoningCtx context.Context, delta string) error {
+		_ = reasoningCtx
+		return appendOnlyEvent(eventTypeReasoningDelta, map[string]any{
+			"turnId": turnID,
+			"delta":  delta,
 		})
 	})
 	stopReason, streamErr := streamAgent.Stream(turnCtx, compactPrompt, func(delta string) error {
@@ -1500,6 +1530,7 @@ func (s *Server) handleThreadConfigOptions(w http.ResponseWriter, r *http.Reques
 
 	switch r.Method {
 	case http.MethodGet:
+		var provider any
 		options, found, err := s.loadStoredThreadConfigOptions(r.Context(), thread)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to load stored thread config options", map[string]any{
@@ -1517,6 +1548,7 @@ func (s *Server) handleThreadConfigOptions(w http.ResponseWriter, r *http.Reques
 				})
 				return
 			}
+			provider = manager
 			options, err = manager.ConfigOptions(r.Context())
 			if err != nil {
 				writeError(w, http.StatusServiceUnavailable, codeUpstreamUnavailable, "failed to query thread config options", map[string]any{
@@ -1534,6 +1566,7 @@ func (s *Server) handleThreadConfigOptions(w http.ResponseWriter, r *http.Reques
 				)
 			}
 		}
+		s.persistThreadSlashCommandsBestEffort(r.Context(), thread, provider)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"threadId":      thread.ThreadID,
 			"configOptions": options,
@@ -1610,6 +1643,7 @@ func (s *Server) handleThreadConfigOptions(w http.ResponseWriter, r *http.Reques
 				"reason", persistErr.Error(),
 			)
 		}
+		s.persistThreadSlashCommandsBestEffort(r.Context(), thread, manager)
 		s.closeThreadAgents(thread.ThreadID, "thread_config_updated")
 
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -1617,6 +1651,50 @@ func (s *Server) handleThreadConfigOptions(w http.ResponseWriter, r *http.Reques
 			"configOptions": options,
 		})
 	}
+}
+
+func (s *Server) handleThreadSlashCommands(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
+	if err := requireMethod(r, http.MethodGet); err != nil {
+		writeMethodNotAllowed(w, r)
+		return
+	}
+
+	thread, ok := s.getOwnedThread(r.Context(), clientID, threadID)
+	if !ok {
+		writeError(w, http.StatusNotFound, codeNotFound, "thread not found", map[string]any{})
+		return
+	}
+
+	commands, found, err := s.loadStoredAgentSlashCommands(r.Context(), thread.AgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to load slash commands", map[string]any{
+			"threadId": thread.ThreadID,
+			"agent":    thread.AgentID,
+			"reason":   err.Error(),
+		})
+		return
+	}
+	if !found {
+		s.persistThreadSlashCommandsBestEffort(r.Context(), thread, nil)
+		commands, found, err = s.loadStoredAgentSlashCommands(r.Context(), thread.AgentID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to load slash commands", map[string]any{
+				"threadId": thread.ThreadID,
+				"agent":    thread.AgentID,
+				"reason":   err.Error(),
+			})
+			return
+		}
+		if !found {
+			commands = []agents.SlashCommand{}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"threadId": thread.ThreadID,
+		"agentId":  thread.AgentID,
+		"commands": commands,
+	})
 }
 
 func (s *Server) finalizeTurnWithBestEffort(ctx context.Context, turnID, status, stopReason, responseText, errorMessage string) {
@@ -2428,6 +2506,66 @@ func (s *Server) loadStoredThreadConfigOptions(ctx context.Context, thread stora
 	return applyThreadConfigSelections(options, modelID, overrides), true, nil
 }
 
+func (s *Server) loadStoredAgentSlashCommands(ctx context.Context, agentID string) ([]agents.SlashCommand, bool, error) {
+	stored, err := s.store.GetAgentSlashCommands(ctx, agentID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	commands, err := decodeStoredSlashCommands(stored.CommandsJSON)
+	if err != nil {
+		return nil, false, err
+	}
+	return commands, true, nil
+}
+
+func (s *Server) persistThreadSlashCommandsBestEffort(ctx context.Context, thread storage.Thread, provider any) {
+	if _, found, err := s.loadStoredAgentSlashCommands(ctx, thread.AgentID); err == nil && found {
+		return
+	}
+
+	if provider == nil {
+		resolved, err := s.resolveTurnAgent(thread)
+		if err != nil {
+			s.logger.Warn("thread.slash_commands_resolve_failed",
+				"threadId", thread.ThreadID,
+				"agent", thread.AgentID,
+				"reason", err.Error(),
+			)
+			return
+		}
+		provider = resolved
+	}
+
+	reader, ok := provider.(agents.SlashCommandsProvider)
+	if !ok {
+		return
+	}
+
+	commands, known, err := reader.SlashCommands(ctx)
+	if err != nil {
+		s.logger.Warn("thread.slash_commands_probe_failed",
+			"threadId", thread.ThreadID,
+			"agent", thread.AgentID,
+			"reason", err.Error(),
+		)
+		return
+	}
+	if !known {
+		return
+	}
+	if err := s.persistAgentSlashCommands(ctx, thread.AgentID, commands); err != nil {
+		s.logger.Warn("thread.slash_commands_persist_failed",
+			"threadId", thread.ThreadID,
+			"agent", thread.AgentID,
+			"reason", err.Error(),
+		)
+	}
+}
+
 func (s *Server) persistAgentConfigCatalog(
 	ctx context.Context,
 	agentID string,
@@ -2451,6 +2589,22 @@ func (s *Server) persistAgentConfigCatalog(
 		AgentID:           agentID,
 		ModelID:           modelID,
 		ConfigOptionsJSON: configOptionsJSON,
+	})
+}
+
+func (s *Server) persistAgentSlashCommands(
+	ctx context.Context,
+	agentID string,
+	commands []agents.SlashCommand,
+) error {
+	commandsJSON, err := encodeStoredSlashCommands(commands)
+	if err != nil {
+		return err
+	}
+
+	return s.store.UpsertAgentSlashCommands(ctx, storage.UpsertAgentSlashCommandsParams{
+		AgentID:      agentID,
+		CommandsJSON: commandsJSON,
 	})
 }
 
@@ -2538,6 +2692,27 @@ func encodeStoredConfigOptions(options []agents.ConfigOption) (string, error) {
 	encoded, err := json.Marshal(normalized)
 	if err != nil {
 		return "", fmt.Errorf("encode stored config options: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func decodeStoredSlashCommands(raw string) ([]agents.SlashCommand, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+
+	var commands []agents.SlashCommand
+	if err := json.Unmarshal([]byte(raw), &commands); err != nil {
+		return nil, fmt.Errorf("decode stored slash commands: %w", err)
+	}
+	return agents.CloneSlashCommands(commands), nil
+}
+
+func encodeStoredSlashCommands(commands []agents.SlashCommand) (string, error) {
+	normalized := agents.CloneSlashCommands(commands)
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("encode stored slash commands: %w", err)
 	}
 	return string(encoded), nil
 }

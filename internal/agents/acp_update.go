@@ -16,8 +16,12 @@ const (
 	ACPUpdateTypeUserMessageChunk = "user_message_chunk"
 	// ACPUpdateTypeThoughtMessageChunk streams hidden reasoning deltas.
 	ACPUpdateTypeThoughtMessageChunk = "thought_message_chunk"
+	// acpUpdateTypeAgentThoughtChunk is the real kimi-cli thought chunk name.
+	acpUpdateTypeAgentThoughtChunk = "agent_thought_chunk"
 	// ACPUpdateTypePlan replaces the current agent plan entries.
 	ACPUpdateTypePlan = "plan"
+	// ACPUpdateTypeAvailableCommands replaces the current slash-command list.
+	ACPUpdateTypeAvailableCommands = "available_commands_update"
 )
 
 // PlanEntry is one ACP plan entry shown to the user.
@@ -35,6 +39,7 @@ type ACPUpdate struct {
 	MessageID   string
 	Timestamp   string
 	PlanEntries []PlanEntry
+	Commands    []SlashCommand
 }
 
 // ParseACPUpdate normalizes provider-specific session/update payloads.
@@ -49,12 +54,13 @@ func ParseACPUpdate(raw json.RawMessage) (ACPUpdate, error) {
 		Timestamp string         `json:"timestamp"`
 		Meta      map[string]any `json:"_meta"`
 		Update    struct {
-			SessionUpdate string          `json:"sessionUpdate"`
-			MessageID     string          `json:"messageId"`
-			Timestamp     string          `json:"timestamp"`
-			Meta          map[string]any  `json:"_meta"`
-			Content       json.RawMessage `json:"content"`
-			Entries       []PlanEntry     `json:"entries"`
+			SessionUpdate     string            `json:"sessionUpdate"`
+			MessageID         string            `json:"messageId"`
+			Timestamp         string            `json:"timestamp"`
+			Meta              map[string]any    `json:"_meta"`
+			Content           json.RawMessage   `json:"content"`
+			Entries           []PlanEntry       `json:"entries"`
+			AvailableCommands []json.RawMessage `json:"availableCommands"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -83,23 +89,23 @@ func ParseACPUpdate(raw json.RawMessage) (ACPUpdate, error) {
 				acpUpdateMetaString(payload.Meta, "timestamp"),
 			),
 		}, nil
-	case ACPUpdateTypeAgentMessageChunk, ACPUpdateTypeUserMessageChunk, ACPUpdateTypeThoughtMessageChunk:
+	case ACPUpdateTypeAgentMessageChunk, ACPUpdateTypeUserMessageChunk, ACPUpdateTypeThoughtMessageChunk, acpUpdateTypeAgentThoughtChunk:
 		content, ok, err := parseACPUpdateTextContent(payload.Update.Content)
 		if err != nil {
 			return ACPUpdate{}, err
 		}
 		if !ok {
-			return ACPUpdate{Type: strings.TrimSpace(payload.Update.SessionUpdate)}, nil
+			return ACPUpdate{Type: normalizeACPUpdateType(payload.Update.SessionUpdate)}, nil
 		}
 		role := ""
-		switch strings.TrimSpace(payload.Update.SessionUpdate) {
+		switch normalizeACPUpdateType(payload.Update.SessionUpdate) {
 		case ACPUpdateTypeAgentMessageChunk:
 			role = "assistant"
 		case ACPUpdateTypeUserMessageChunk:
 			role = "user"
 		}
 		return ACPUpdate{
-			Type:  strings.TrimSpace(payload.Update.SessionUpdate),
+			Type:  normalizeACPUpdateType(payload.Update.SessionUpdate),
 			Role:  role,
 			Delta: content,
 			MessageID: normalizeACPUpdateString(
@@ -120,9 +126,57 @@ func ParseACPUpdate(raw json.RawMessage) (ACPUpdate, error) {
 			Type:        ACPUpdateTypePlan,
 			PlanEntries: normalizePlanEntries(payload.Update.Entries),
 		}, nil
+	case ACPUpdateTypeAvailableCommands:
+		return ACPUpdate{
+			Type:     ACPUpdateTypeAvailableCommands,
+			Commands: parseACPUpdateSlashCommands(payload.Update.AvailableCommands),
+		}, nil
 	default:
-		return ACPUpdate{Type: strings.TrimSpace(payload.Update.SessionUpdate)}, nil
+		return ACPUpdate{Type: normalizeACPUpdateType(payload.Update.SessionUpdate)}, nil
 	}
+}
+
+func parseACPUpdateSlashCommands(rawCommands []json.RawMessage) []SlashCommand {
+	if len(rawCommands) == 0 {
+		return nil
+	}
+
+	commands := make([]SlashCommand, 0, len(rawCommands))
+	for _, raw := range rawCommands {
+		raw = json.RawMessage(strings.TrimSpace(string(raw)))
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+
+		var payload struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			InputHint   string `json:"inputHint"`
+			Input       struct {
+				Hint        string `json:"hint"`
+				Placeholder string `json:"placeholder"`
+			} `json:"input"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			continue
+		}
+
+		inputHint := strings.TrimSpace(payload.InputHint)
+		if inputHint == "" {
+			inputHint = strings.TrimSpace(payload.Input.Hint)
+		}
+		if inputHint == "" {
+			inputHint = strings.TrimSpace(payload.Input.Placeholder)
+		}
+
+		commands = append(commands, SlashCommand{
+			Name:        payload.Name,
+			Description: payload.Description,
+			InputHint:   inputHint,
+		})
+	}
+
+	return CloneSlashCommands(commands)
 }
 
 func parseACPUpdateTextContent(raw json.RawMessage) (string, bool, error) {
@@ -164,6 +218,14 @@ func normalizeACPUpdateString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeACPUpdateType(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == acpUpdateTypeAgentThoughtChunk {
+		return ACPUpdateTypeThoughtMessageChunk
+	}
+	return raw
 }
 
 // ClonePlanEntries returns a trimmed deep copy of the provided entries.

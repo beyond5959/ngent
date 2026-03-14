@@ -56,6 +56,12 @@ export interface SessionTranscriptMessage {
   timestamp?: string
 }
 
+export interface SlashCommand {
+  name: string
+  description?: string
+  inputHint?: string
+}
+
 export interface TurnEvent {
   eventId: number
   seq: number
@@ -94,6 +100,7 @@ export interface Message {
   id: string
   role: MessageRole
   content: string
+  reasoning?: string
   /** ISO-8601 string */
   timestamp: string
   status: MessageStatus

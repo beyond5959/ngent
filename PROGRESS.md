@@ -11,7 +11,65 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-03-13)
+## Latest Update (2026-03-14)
+
+- `Post-M8` Web UI thinking tense alignment completed:
+  - kept the live reasoning toggle label as `Thinking` while deltas are still streaming.
+  - switched finalized reasoning labels to `Thought` so completed content reads in the past tense.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-03-14)
+
+- `Post-M8` Web UI thinking markdown rendering completed:
+  - switched finalized `Thinking` content from escaped plain text to the same sanitized markdown renderer used by finalized assistant replies.
+  - kept streaming reasoning as plain text so partial markdown does not reflow while deltas are still arriving.
+  - extended markdown typography/code styles to apply inside expanded `Thinking` content as well as normal assistant message bubbles.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-M8` Web UI thinking fold UX completed:
+  - changed the `Thinking` section to a native collapsible panel in the Web UI.
+  - keep in-flight reasoning panels expanded while `reasoning_delta` is still streaming.
+  - once the turn settles into persisted history, render the same `Thinking` content collapsed by default so final replies stay compact.
+  - preserve manual expand/collapse state for finalized messages across in-page list re-renders.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-M8` Web UI thinking/reasoning visibility completed:
+  - added a per-turn reasoning callback bridge in `internal/agents` so ACP `thought_message_chunk` / `agent_thought_chunk` updates no longer stop at provider parsing.
+  - persisted hidden reasoning as first-class `reasoning_delta` turn events in the HTTP/SSE layer, alongside existing `message_delta` and `plan_update` events.
+  - updated the Web UI stream state and history reconstruction so agent messages render a visible `Thinking` section during streaming and after reload/history fetch.
+  - kept assistant answer text as `responseText`; reasoning remains event-backed instead of being merged into the visible answer body.
+  - added regression coverage for:
+    - ACP notification routing of thought chunks into reasoning callbacks.
+    - SSE/history persistence of `reasoning_delta` events.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-03-13)
+
+- `Post-M8` shared ACP CLI provider driver completed:
+  - extracted `internal/agents/acpcli` as the shared ACP CLI lifecycle driver for `qwen`, `opencode`, `gemini`, and `kimi`, covering shared `initialize/session/new/session/load/session/list/session/prompt/session/set_config_option` flow plus model discovery and transcript replay.
+  - migrated the four ACP CLI providers to provider-hook configuration instead of maintaining separate copies of the same stdio/session orchestration logic.
+  - extended `internal/agents/acpstdio` with opt-in stdout-noise tolerance so Gemini can reuse the same transport instead of a provider-local JSON-RPC implementation.
+  - preserved provider-specific behavior behind hooks:
+    - `kimi` keeps local config sourcing, `kimi acp` / `kimi --acp` fallback, and model-via-startup handling.
+    - `gemini` keeps temporary `GEMINI_CLI_HOME` bootstrapping and stdout noise filtering.
+    - `qwen` / `kimi` keep selectable permission-option mapping and fail-closed timeout handling.
+    - `opencode` keeps synchronous `session/cancel` behavior.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+    - pass: real host smoke `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -count=1 -v -timeout 180s`
+    - pass: real host replay `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESessionTranscriptReplay -count=1 -v -timeout 240s`
+    - pass: real host config probe `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2EDoesNotCreateSession -count=1 -v -timeout 240s`
+    - pass: real host smoke `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiE2ESmoke -count=1 -v -timeout 180s`
+    - observed failure: real host smoke `E2E_OPENCODE=1 go test ./internal/agents/opencode -run TestOpenCodeE2ESmoke -count=1 -v -timeout 180s` returned `opencode: session/new: context deadline exceeded`; tracked in `docs/KNOWN_ISSUES.md`.
 
 - `Post-M8` Web UI/session reset regression fixed:
   - completed the `New session` fix after switching to a historical ACP session: clearing `thread.agentOptions.sessionId` still evicts stale empty-scope providers, and now also marks the next turn as an explicit fresh-session request so prompt building skips `[Conversation Summary]` / `[Recent Turns]` injection for that first turn.
@@ -640,6 +698,131 @@ This file is the source of milestone progress, validation commands, and next act
 - 2026-03-13: added per-session loading indicators to the Web UI session sidebar.
   - the right-side `Sessions` list now shows the same spinner used by the left agent list when a specific `sessionId` on the active thread is still streaming.
   - session items derive their loading state from scope-local `streamStates`, so background activity is shown only on the matching session row.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-03-13: added persisted ACP slash-command support across built-in agents and the Web UI composer.
+  - extended shared ACP `session/update` parsing with `available_commands_update`, and wired all built-in ACP providers to forward the latest slash-command snapshot through a shared per-turn callback.
+  - added SQLite-backed `agent_slash_commands` caching plus `GET /v1/threads/{threadId}/slash-commands`, so every observed slash-command update is persisted and survives server restart.
+  - updated the Web UI composer so typing `/` into an otherwise empty chat input opens a codex-style slash-command picker with keyboard navigation and command insertion for the active agent.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-03-13: fixed Web UI freezes when an agent has no cached slash commands.
+  - changed the composer to fetch `GET /v1/threads/{threadId}/slash-commands` lazily when the user types `/`, instead of preloading on thread selection.
+  - empty slash-command snapshots now close the picker immediately and leave `/` as ordinary message text, which avoids the previous empty-result refresh loop.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+    - pass: Playwright MCP verified no `/slash-commands` request on thread open, one request after typing `/`, and normal `/` message send when the endpoint returned `[]`
+
+- 2026-03-13: fixed Kimi slash-command loss in the ACP turn pipeline.
+  - root cause: real Kimi `kimi acp` emits `available_commands_update` immediately after `session/new` and before `session/prompt`, while the ngent Kimi provider had been installing its `session/update` handler too late and silently dropped that notification.
+  - fixed the Kimi provider to start observing `session/update` before `session/new/session/load`, while still suppressing pre-prompt message chunks so transcript replay cannot leak into the live response stream.
+  - added a regression test that forces `available_commands_update` to arrive during `session/new`.
+  - executed validation:
+    - pass: `go test ./internal/agents/kimi -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
+    - pass: `go test ./...`
+    - pass: real local ngent + Kimi test on `http://127.0.0.1:8788` confirmed `session/update.available_commands_update` was logged between `session/new` and `session/prompt`
+    - pass: `GET /v1/threads/{threadId}/slash-commands` returned 8 persisted Kimi commands after the first turn
+    - pass: Playwright MCP confirmed typing `/` in a fresh Kimi thread opened the slash-command picker with the persisted Kimi commands
+
+- 2026-03-13: forced a backend slash-command refresh on each new `/` interaction in the Web UI.
+  - root cause: once a thread had already populated the client-side slash-command cache, typing `/` reused that cache and did not issue another `GET /v1/threads/{threadId}/slash-commands`, which made the real network behavior diverge from the expected "query sqlite on slash entry" flow.
+  - changed the composer so the first bare `/` in each slash interaction triggers a forced refresh for the active thread, while subsequent filtering inside the same interaction still reuses the in-memory snapshot.
+  - the refresh guard resets when the user leaves slash mode, selects a command, sends the message, presses `Esc`, or clicks outside the composer.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+    - pass: real local ngent + Kimi test on `http://127.0.0.1:8789`
+    
+- 2026-03-13: fixed codex embedded slash-command loss when `session/new` / `session/load` emitted updates before the first prompt.
+  - root cause: the codex embedded provider subscribed to runtime updates only inside `streamOnce()`, but `acp-adapter` emits `available_commands_update` immediately after `session/new` / `session/load`, so the initial slash-command snapshot was dropped before ngent had any subscriber.
+  - installed a runtime-level update monitor before `session/new` / `session/load`, cached the latest slash-command snapshot on the provider, and replayed that cached snapshot into each turn context before `session/prompt` starts.
+  - kept prompt-time `available_commands_update` handling in the live stream path so later slash-command changes still propagate with the existing cancellation/error behavior.
+  - added codex regression coverage for both the direct first-turn path and the "config options initialized the runtime before the first turn" path.
+  - executed validation:
+    - pass: `go test ./internal/agents/codex -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|ReplaysCachedSlashCommandsAfterConfigOptionsInit)$' -count=1`
+    - pass: real local ngent + codex test on `http://127.0.0.1:8793`
+    - pass: `GET /v1/threads/{threadId}/slash-commands` returned the persisted 7-command codex snapshot after the first turn
+    - pass: sqlite `/tmp/ngent-codex-fix.db` stored `agent_id=codex` with 7 slash commands
+
+- 2026-03-13: fixed the same pre-prompt slash-command timing bug in Qwen and OpenCode stdio providers.
+  - root cause: both stdio providers called `session/new` / `session/load` before registering a `session/update` notification handler, and `acpstdio.Conn` drops notifications when no handler is installed.
+  - moved notification handler registration to immediately after `initialize`, allowed `available_commands_update` through before prompt start, and continued suppressing pre-prompt transcript chunks/plan updates so session replay cannot leak into live output.
+  - added one fake-process regression test per provider to verify `available_commands_update` emitted during `session/new` is captured.
+  - executed validation:
+    - pass: `go test ./internal/agents/qwen ./internal/agents/opencode -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)?$' -count=1`
+    - pass: real local ngent + qwen/opencode test on `http://127.0.0.1:8794`
+
+- 2026-03-13: deduplicated ACP stdio stream notification handling across Kimi, Qwen, and OpenCode.
+  - extracted one shared `agents.InstallACPStdioNotificationHandler(...)` helper that owns the common `session/update` parsing path for pre-prompt slash-command snapshots plus post-prompt message/plan streaming.
+  - removed the previous copy-pasted handler bodies from the three providers so future slash-command or plan-stream changes only need one stdio implementation update.
+  - executed validation:
+    - pass: `go test ./internal/agents/kimi ./internal/agents/qwen ./internal/agents/opencode -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)?$' -count=1`
+    - pass: `go test ./...`
+
+- 2026-03-13: applied the same pre-prompt slash-command handling and shared notification helper to Gemini.
+  - Gemini had the same timing bug as the other stdio-backed providers: it registered `session/update` handling only after `session/new` / `session/load`, so any early `available_commands_update` would have been dropped by its custom `rpcConn`.
+  - generalized the shared stdio logic into `agents.NewACPNotificationHandler(...)`, reused it from the existing stdio helper, and wired Gemini's custom `rpcConn` through the same handler builder.
+  - added Gemini fake-process regression coverage for `available_commands_update` emitted during `session/new`.
+  - executed validation:
+    - pass: `go test ./internal/agents/gemini -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
+    - pass: real local ngent + Gemini test on `http://127.0.0.1:8795`
+    - note: `GET /v1/threads/{threadId}/slash-commands` still returned `[]` in that real run, which indicates Gemini CLI did not emit `available_commands_update` on that session despite the handler now being installed early enough
+
+- 2026-03-13: backfilled Codex slash commands during thread config initialization so `/` works before the first turn.
+  - root cause: the Web UI opens Codex threads by loading `config-options`, which initializes the embedded runtime and caches `available_commands_update` in provider memory, but sqlite remained empty until a later turn replayed the snapshot through the normal turn-scoped slash-command handler.
+  - added a shared `agents.SlashCommandsProvider` interface, implemented it in the embedded Codex provider, and taught the HTTP `config-options` path to persist a missing slash-command snapshot from the live provider as a best-effort backfill.
+  - added regression coverage for both the provider method and the HTTP old-thread case where config options are already stored but slash commands are still missing from sqlite.
+  - executed validation:
+    - pass: `go test ./internal/agents/codex -run 'Test(StreamCapturesSlashCommandsEmittedBeforePrompt|StreamReplaysCachedSlashCommandsAfterConfigOptionsInit|SlashCommandsAfterConfigOptionsInit)$' -count=1`
+    - pass: `go test ./internal/httpapi -run 'Test(ThreadSlashCommandsPersistAndLoad|ThreadSlashCommandsPersistAcrossRestart|ThreadConfigOptionsBackfillsSlashCommandsWhenCatalogAlreadyStored)$' -count=1`
+    - pass: real local ngent + codex test on `http://127.0.0.1:8796`
+    - pass: fresh Codex thread returned the 7-command slash snapshot from `GET /v1/threads/{threadId}/slash-commands` immediately after `GET /v1/threads/{threadId}/config-options`, before any turn was sent
+    - pass: Playwright MCP confirmed typing `/` on that fresh Codex thread opened the slash-command picker showing `/review`, `/review-branch`, `/review-commit`, `/init`, `/compact`, `/logout`, and `/mcp`
+
+- 2026-03-13: fixed fresh-thread Qwen slash commands by probing providers on `/slash-commands` cache miss.
+  - root cause: a user could type `/` before the thread-opening `config-options` request finished; for Qwen that meant `GET /v1/threads/{threadId}/slash-commands` read sqlite too early and returned `[]` even though the provider emitted `available_commands_update` a moment later.
+  - implemented `SlashCommandsProvider` on the Qwen stdio provider, cached slash-command snapshots inside the provider from both turn and config-session ACP notifications, and taught `GET /v1/threads/{threadId}/slash-commands` to best-effort backfill sqlite directly from the live provider when the row is missing.
+  - added regression coverage for Qwen `ConfigOptions()` followed by `SlashCommands()`, plus one HTTP test that verifies the slash-commands endpoint itself backfills a missing snapshot.
+  - executed validation:
+    - pass: `go test ./internal/agents/qwen ./internal/httpapi -run 'Test(StreamCapturesSlashCommandsEmittedBeforePrompt|SlashCommandsAfterConfigOptionsInit|ThreadConfigOptionsBackfillsSlashCommandsWhenCatalogAlreadyStored|ThreadSlashCommandsEndpointBackfillsMissingSnapshot)$' -count=1`
+    - pass: real local ngent + qwen test on `http://127.0.0.1:8798`
+    - pass: fresh Qwen thread returned `/bug`, `/compress`, `/init`, and `/summary` from the very first `GET /v1/threads/{threadId}/slash-commands` before any turn was sent
+    - pass: Playwright MCP confirmed typing `/` on that fresh Qwen thread opened the slash-command picker immediately
+
+- 2026-03-13: unified provider-local ACP slash-command caching across the direct stdio agents.
+  - Kimi, Qwen, OpenCode, and Gemini all share the same underlying ACP behavior: `available_commands_update` can arrive during `session/new` in both turn streaming and config-session probes, so probing slash commands only from sqlite is not enough for fresh threads.
+  - introduced `agents.SlashCommandsCache` and wired all four direct ACP providers to feed it from both `Stream()` and `runConfigSession()` by wrapping the request context's slash-command handler instead of duplicating provider-local cache plumbing.
+  - each provider now implements `SlashCommandsProvider`, so thread initialization and `GET /v1/threads/{threadId}/slash-commands` can backfill sqlite from the live provider snapshot even before the first turn persists anything.
+  - added config-session regression coverage for Kimi, OpenCode, and Gemini to lock in the `ConfigOptions() -> SlashCommands()` path alongside the earlier Qwen test.
+  - executed validation:
+    - pass: `go test ./internal/agents/kimi ./internal/agents/opencode ./internal/agents/gemini ./internal/agents/qwen -run 'Test(StreamCapturesSlashCommandsEmittedBeforePrompt|SlashCommandsAfterConfigOptionsInit|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
+    - pass: `go test ./...`
+
+- 2026-03-14: fixed real Kimi/Qwen ACP permission requests that carried structured `toolCall` previews instead of flat strings.
+  - root cause: the direct ACP provider adapters decoded `session/request_permission.toolCall` as `map[string]string`, but real Kimi 1.22.0 sends rich payloads with `content` arrays and diff metadata, so JSON decode failed and ngent immediately returned a fail-closed reject without emitting `permission_required`.
+  - updated Kimi and Qwen to use the shared parser, added regression coverage for real-style rich payloads, and normalized `agent_thought_chunk` as the same hidden-thought update family used by the rest of ngent's ACP parser.
+  - updated the Web UI streaming bubble to show `Thinking...` immediately before the first visible delta so long Kimi reasoning phases no longer look like a dead blank bubble.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-03-14: fixed real OpenCode ACP permission requests so Web UI permission cards appear instead of silently dropping the tool call.
+  - root cause: after the shared ACP CLI refactor, the OpenCode adapter never installed a `HandlePermissionRequest` hook, so any real `session/request_permission` call still hit the default `method not found` path. In addition, OpenCode can encode file-like permissions via `toolCall.locations[]` or `toolCall.rawInput.filepath` with generic titles such as `external_directory`.
+  - extended the shared ACP permission parser to extract path-like previews from `locations[]` and `rawInput`, classify directory/path requests as `file`, and fall back to the resolved path when the provider title is too generic for the Web UI.
+  - wired OpenCode into the same permission bridge as Kimi/Qwen and added regression coverage for real-style OpenCode `external_directory` payloads.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-03-14: converged direct ACP structured-permission bridging into one shared helper in `internal/agents/acpcli`.
+  - Kimi, Qwen, and OpenCode previously carried identical provider-local `handlePermissionRequest` implementations even after sharing the same normalized permission-request parser.
+  - moved that common bridge logic into `acpcli.StructuredPermissionRequestHandler(timeout)` and reduced each provider to a one-line hook binding plus its local timeout constant.
+  - kept Gemini unchanged because it still uses a different provider-specific permission payload/response shape rather than the shared normalized `PermissionRequestPayload`.
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`

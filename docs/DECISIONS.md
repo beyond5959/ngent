@@ -135,7 +135,6 @@
   - reuse the same shared normalization path for OpenCode instead of adding another provider-local decoder.
 - Consequences:
   - real OpenCode file-creation requests now surface through the normal ngent permission card flow instead of failing invisibly.
-  - the Web UI gets a stable path preview like `/Users/niuniu/.config/opencode/opencode.json` even when the upstream provider only reports `external_directory` or another generic title.
   - future ACP providers can attach path previews in multiple shapes without forcing another adapter-specific parser.
 - Alternatives considered:
   - leave OpenCode on provider-default RPC handling and only fix Kimi/Qwen (rejected: direct ACP providers would keep drifting on identical permission semantics).

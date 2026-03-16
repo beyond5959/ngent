@@ -3,6 +3,9 @@ package kimi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/beyond5959/ngent/internal/agents"
@@ -11,7 +14,14 @@ import (
 func TestHandlePermissionRequestParsesRichToolCallPayload(t *testing.T) {
 	t.Parallel()
 
-	raw := json.RawMessage(`{
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("failed to get current file path")
+	}
+	projectDir := filepath.Join(filepath.Dir(testFile), "..", "..", "..")
+	expectedPath := filepath.Join(projectDir, "soul.md")
+
+	raw := json.RawMessage(fmt.Sprintf(`{
 		"sessionId": "ses_kimi_perm_rich",
 		"options": [
 			{"optionId":"approve","kind":"allow_once"},
@@ -24,13 +34,13 @@ func TestHandlePermissionRequestParsesRichToolCallPayload(t *testing.T) {
 			"content": [
 				{
 					"type": "diff",
-					"path": "/Users/niuniu/git_local/ngent/soul.md",
+					"path": %q,
 					"oldText": "",
 					"newText": "hello"
 				}
 			]
 		}
-	}`)
+	}`, expectedPath))
 
 	var got agents.PermissionRequest
 	resp, err := handlePermissionRequest(
@@ -55,8 +65,8 @@ func TestHandlePermissionRequestParsesRichToolCallPayload(t *testing.T) {
 	if sessionID, _ := got.RawParams["sessionId"].(string); sessionID != "ses_kimi_perm_rich" {
 		t.Fatalf("req.RawParams[sessionId] = %q, want %q", sessionID, "ses_kimi_perm_rich")
 	}
-	if path, _ := got.RawParams["path"].(string); path != "/Users/niuniu/git_local/ngent/soul.md" {
-		t.Fatalf("req.RawParams[path] = %q, want %q", path, "/Users/niuniu/git_local/ngent/soul.md")
+	if path, _ := got.RawParams["path"].(string); path != expectedPath {
+		t.Fatalf("req.RawParams[path] = %q, want %q", path, expectedPath)
 	}
 
 	var decoded struct {

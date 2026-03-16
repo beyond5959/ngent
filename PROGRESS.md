@@ -596,16 +596,6 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
 
-- `Post-F9` codex thread-config timeout fix (Playwright real-env regression):
-  - reproduced in real browser flow (Playwright MCP + local codex env): opening a codex thread triggered `GET /v1/threads/{threadId}/config-options` `503` caused by embedded startup timeout at 8s.
-  - fixed by increasing embedded runtime default startup timeout from `8s` to `30s` for:
-    - `internal/agents/codex`
-    - `internal/agents/claude`
-  - reran real browser flow:
-    - thread model list now loads successfully from ACP `configOptions`.
-    - model switching calls `POST /v1/threads/{threadId}/config-options` and persists selected model.
-    - no frontend console errors during switch flow.
-
 - `Post-F9` codex model-discovery stability improvement:
   - replaced per-request codex model discovery runtime startup/shutdown with a shared discovery client in `internal/agents/codex/models.go`.
   - behavior changes:

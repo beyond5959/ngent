@@ -331,3 +331,31 @@
 - Symptom: users can expand a collapsed `Thinking` panel during the current page session, but a full page reload or fresh history load resets it to the default collapsed presentation.
 - Workaround: expand the needed `Thinking` panel again after reload.
 - Follow-up plan: evaluate persisting per-message UI presentation preferences in browser-local state if users need sticky behavior across reloads.
+
+- ID: KI-032
+- Title: Missing target-model catalog can temporarily leave stale reasoning choices after a picker change
+- Status: Open
+- Severity: Low
+- Affects: threads that switch to a model whose sqlite config catalog has not been refreshed yet
+- Symptom:
+  - `POST /v1/threads/{threadId}/config-options` now persists the selected model immediately without mutating the live provider.
+  - if sqlite does not yet have a catalog snapshot for the newly selected model, the immediate response can only fall back to the current in-memory option set, so the Web UI may temporarily show the previous reasoning list until the next turn or a later catalog refresh fills in the new model snapshot.
+- Workaround:
+  - send the next turn, or wait for background catalog refresh / a later config fetch to repopulate the target model's reasoning choices.
+- Follow-up plan:
+  - add an explicit background fetch path for missing target-model catalogs so the picker can self-heal without waiting for the next turn.
+
+## Recently Closed
+
+- ID: KI-033
+- Title: Repeated `New session` reused stale anonymous Web UI scope after fast cancel
+- Status: Closed
+- Severity: Low
+- Affects: Web UI fresh-session flows cancelled before ACP emits `session_bound`
+- Symptom:
+  - a fast `send -> cancel -> New session` sequence could leave the chat pane showing the just-cancelled content instead of returning to an empty composer because the UI kept reusing the same empty-session scope.
+  - reopening the thread after reload could also replay that empty cancelled placeholder from local history hydration.
+- Workaround:
+  - none; fixed on 2026-03-16.
+- Follow-up plan:
+  - monitor whether explicit fresh-session scope state ever needs backend persistence beyond the current Web UI behavior.

@@ -106,6 +106,7 @@ const agentSlashCommandsCache = new Map<string, SlashCommand[]>()
 const agentSlashCommandsInFlight = new Map<string, Promise<SlashCommand[]>>()
 const threadConfigSwitching = new Set<string>()
 const sessionSwitchingThreads = new Set<string>()
+const freshSessionNonceByThread = new Map<string, string>()
 let slashCommandSelectedIndex = 0
 
 interface SessionPanelState {
@@ -335,9 +336,24 @@ function threadSessionScopeKey(threadId: string, sessionID = ''): string {
   return `${threadId}::${sessionID.trim()}`
 }
 
+function threadFreshSessionScopeKey(threadId: string): string {
+  const nonce = freshSessionNonceByThread.get(threadId)?.trim() ?? ''
+  if (!nonce) return ''
+  return threadSessionScopeKey(threadId, `@fresh:${nonce}`)
+}
+
+function isFreshSessionScopeKey(scopeKey: string): boolean {
+  const parts = scopeKey.split('::', 2)
+  return parts.length === 2 && parts[1].startsWith('@fresh:')
+}
+
 function threadChatScopeKey(thread: Thread | null | undefined): string {
   if (!thread) return ''
-  return threadSessionScopeKey(thread.threadId, threadSessionID(thread))
+  const sessionID = threadSessionID(thread)
+  if (sessionID) {
+    return threadSessionScopeKey(thread.threadId, sessionID)
+  }
+  return threadFreshSessionScopeKey(thread.threadId) || threadSessionScopeKey(thread.threadId)
 }
 
 function buildThreadAgentOptionsWithSession(
@@ -352,6 +368,22 @@ function buildThreadAgentOptionsWithSession(
     delete next.sessionId
   }
   return next
+}
+
+function activateFreshSessionScope(
+  threadId: string,
+  messages: Record<string, Message[]>,
+): Record<string, Message[]> {
+  freshSessionNonceByThread.set(threadId, generateUUID())
+  const scopeKey = threadFreshSessionScopeKey(threadId)
+  loadedHistoryScopeKeys.add(scopeKey)
+  if (Object.prototype.hasOwnProperty.call(messages, scopeKey)) {
+    return messages
+  }
+  return {
+    ...messages,
+    [scopeKey]: [],
+  }
 }
 
 async function loadThreadConfigOptions(threadId: string): Promise<ConfigOption[]> {
@@ -1017,7 +1049,16 @@ async function loadThreadSessions(threadId: string, append = false): Promise<voi
 }
 
 async function switchThreadSession(thread: Thread, nextSessionID: string): Promise<void> {
-  if (threadSessionID(thread) === nextSessionID.trim()) return
+  const targetSessionID = nextSessionID.trim()
+  const currentSessionID = threadSessionID(thread)
+  if (targetSessionID && currentSessionID === targetSessionID) return
+  if (!targetSessionID && !currentSessionID) {
+    const state = store.get()
+    store.set({
+      messages: activateFreshSessionScope(thread.threadId, state.messages),
+    })
+    return
+  }
   if (sessionSwitchingThreads.has(thread.threadId)) return
 
   sessionSwitchingThreads.add(thread.threadId)
@@ -1027,11 +1068,15 @@ async function switchThreadSession(thread: Thread, nextSessionID: string): Promi
   }
   try {
     const updatedThread = await api.updateThread(thread.threadId, {
-      agentOptions: buildThreadAgentOptionsWithSession(thread.agentOptions, nextSessionID),
+      agentOptions: buildThreadAgentOptionsWithSession(thread.agentOptions, targetSessionID),
     })
     const state = store.get()
+    const nextMessages = !targetSessionID
+      ? activateFreshSessionScope(thread.threadId, state.messages)
+      : state.messages
     store.set({
       threads: state.threads.map(item => (item.threadId === thread.threadId ? updatedThread : item)),
+      messages: nextMessages,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update session.'
@@ -1729,6 +1774,7 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   sessionPanelRequestSeqByThread.delete(threadId)
   sessionPanelScrollTopByThread.delete(threadId)
   sessionSwitchingThreads.delete(threadId)
+  freshSessionNonceByThread.delete(threadId)
   let nextThreadCompletionBadges = omitThreadCompletionBadge(state.threadCompletionBadges, threadId)
   if (nextActiveThreadId) {
     nextThreadCompletionBadges = omitThreadCompletionBadge(nextThreadCompletionBadges, nextActiveThreadId)
@@ -1805,16 +1851,17 @@ function filterTurnsBySession(turns: Turn[], sessionID: string): Turn[] {
     sessionID: extractTurnSessionID(turn.events),
   }))
   const annotatedSessions = new Set(assignments.map(item => item.sessionID).filter(Boolean))
+  const isEphemeralCancelledTurn = (turn: Turn): boolean => turn.status === 'cancelled' && !turn.responseText.trim()
 
   // Legacy turns created before session-bound persistence have no per-turn session marker.
   // If the thread has no annotated turns at all, keep showing the history instead of hiding everything.
   if (annotatedSessions.size === 0) {
-    return turns
+    return turns.filter(turn => !isEphemeralCancelledTurn(turn))
   }
 
   if (!sessionID) {
     return assignments
-      .filter(item => item.sessionID === '')
+      .filter(item => item.sessionID === '' && !isEphemeralCancelledTurn(item.turn))
       .map(item => item.turn)
   }
 
@@ -1873,7 +1920,9 @@ function mergeSessionReplayMessages(replayMessages: Message[], localMessages: Me
 async function loadHistory(threadId: string): Promise<void> {
   const requestedThread = store.get().threads.find(item => item.threadId === threadId)
   const requestedSessionID = threadSessionID(requestedThread)
-  const requestedScopeKey = threadSessionScopeKey(threadId, requestedSessionID)
+  const requestedScopeKey = threadChatScopeKey(requestedThread)
+  if (!requestedScopeKey) return
+  if (!requestedSessionID && isFreshSessionScopeKey(requestedScopeKey)) return
   try {
     const turns = await api.getHistory(threadId)
     const state = store.get()
@@ -2948,7 +2997,7 @@ function handleSend(): void {
   if (!thread || sessionSwitchingThreads.has(thread.threadId)) return
   const capturedThreadID = activeThreadId
   let capturedSessionID = threadSessionID(thread)
-  let capturedScopeKey = threadSessionScopeKey(capturedThreadID, capturedSessionID)
+  let capturedScopeKey = threadChatScopeKey(thread)
   if (getScopeStreamState(capturedScopeKey)) return
 
   const agentAvatar  = renderAgentAvatar(thread?.agent ?? '', 'message')

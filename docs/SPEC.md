@@ -27,7 +27,8 @@ Modules:
 
 ## 3. Concurrency Model
 
-- `(thread, sessionId)` is the turn-execution isolation unit; empty `sessionId` represents the provisional "new session" scope.
+- `(thread, sessionId)` is the turn-execution isolation unit; empty `sessionId` is the backend's provisional "new session" state.
+- the Web UI may further split one empty-session thread into client-only fresh-session scopes while the user is explicitly iterating on `New session` before ACP emits a real `session_bound`.
 - Each thread/session scope has at most one active turn.
 - New turn requests on an active scope return conflict error, while different sessions on the same thread may run concurrently.
 - Thread-level destructive or shared-state operations (for example delete/compact and thread-wide config changes) remain whole-thread guarded.
@@ -41,8 +42,9 @@ Modules:
 - On first turn execution for embedded-provider thread (currently `codex`): server creates the in-process runtime and initializes ACP session lazily.
 - Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
 - Embedded runtime `session/new` is created with `cwd=thread.cwd` (validated as absolute path at thread creation).
-- If `thread.agent_options_json` contains `modelId`, providers apply it as model override during thread-level runtime/session initialization.
-- Provider instances are cached per thread/session/config scope and reclaimed by idle TTL (`--agent-idle-ttl`) when that scope has no active turn.
+- If `thread.agent_options_json` contains `modelId` / `configOverrides`, those values are the persisted desired session config for the thread.
+- Provider instances are cached per thread + session/fresh-session scope and reclaimed by idle TTL (`--agent-idle-ttl`) when that scope has no active turn.
+- Changing thread model/reasoning selection only updates persisted thread state; ngent applies any config diff to the cached provider when the next turn begins, immediately before `session/prompt`.
 - Clearing `thread.agent_options_json.sessionId` to represent Web UI `New session` also invalidates any idle cached provider under the provisional empty-session scope so the following turn must resolve a fresh ACP session.
 - Explicit Web UI `New session` also persists one internal fresh-session marker until the next `session_bound`; while that marker is set, ngent skips `[Conversation Summary]` / `[Recent Turns]` prompt injection and sends raw user input into the fresh ACP session.
 
@@ -473,7 +475,10 @@ and upstream ACP schema:
   - shows `Show more` when `nextCursor` is present.
   - highlights the currently selected `sessionId`.
   - offers `New session` to clear `sessionId`.
+  - when the active thread is already unbound, `New session` still rotates into a fresh client-side scope so the composer starts blank instead of reusing the previous anonymous buffer.
   - refreshes after turns complete so newly created/bound sessions appear in the list.
+  - skips server history hydration for that temporary fresh-session scope until a real ACP session id is bound back into the thread.
+  - filters empty cancelled placeholders from empty-session history replay so page reload does not resurrect abandoned pre-bind attempts.
 
 ## 16. ACP Slash Commands Cache and Composer Picker (2026-03-13)
 

@@ -1472,11 +1472,11 @@ func TestThreadConfigOptionsGetAndSetModel(t *testing.T) {
 	if got := acpmodel.CurrentValueForConfig(setResp.ConfigOptions, "model"); got != "gpt-5.2-codex" {
 		t.Fatalf("updated model currentValue = %q, want %q", got, "gpt-5.2-codex")
 	}
-	if got := streamer.SetConfigCalls(); got != 1 {
-		t.Fatalf("set config call count = %d, want %d", got, 1)
+	if got := streamer.SetConfigCalls(); got != 0 {
+		t.Fatalf("set config call count after POST = %d, want %d", got, 0)
 	}
-	if got := streamer.CloseCount(); got != 1 {
-		t.Fatalf("provider close count = %d, want %d", got, 1)
+	if got := streamer.CloseCount(); got != 0 {
+		t.Fatalf("provider close count after POST = %d, want %d", got, 0)
 	}
 
 	threadStatus, threadBody := doJSON(
@@ -1499,6 +1499,26 @@ func TestThreadConfigOptionsGetAndSetModel(t *testing.T) {
 	}
 	if got := fmt.Sprintf("%v", threadResp.Thread.AgentOptions["modelId"]); got != "gpt-5.2-codex" {
 		t.Fatalf("persisted modelId = %q, want %q", got, "gpt-5.2-codex")
+	}
+
+	turnStatus, _ := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/turns",
+		map[string]any{
+			"input":  "hello after model switch",
+			"stream": true,
+		},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if turnStatus != http.StatusOK {
+		t.Fatalf("turn status = %d, want %d", turnStatus, http.StatusOK)
+	}
+	if got := streamer.SetConfigCalls(); got != 1 {
+		t.Fatalf("set config call count after turn = %d, want %d", got, 1)
+	}
+	if got := streamer.LastStreamModel(); got != "gpt-5.2-codex" {
+		t.Fatalf("stream saw model = %q, want %q", got, "gpt-5.2-codex")
 	}
 }
 
@@ -1656,21 +1676,28 @@ func TestThreadConfigOptionsPersistConfigOverrides(t *testing.T) {
 	if got := fmt.Sprintf("%v", threadResp.Thread.AgentOptions["modelId"]); got != "gpt-5.3-codex" {
 		t.Fatalf("persisted modelId = %q, want %q", got, "gpt-5.3-codex")
 	}
+	if got := streamer.SetConfigCalls(); got != 0 {
+		t.Fatalf("set config call count after POST = %d, want %d", got, 0)
+	}
 
-	storeImpl, ok := h.store.(*storage.Store)
-	if !ok {
-		t.Fatalf("server store type = %T, want *storage.Store", h.store)
+	turnStatus, _ := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/turns",
+		map[string]any{
+			"input":  "hello after reasoning switch",
+			"stream": true,
+		},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if turnStatus != http.StatusOK {
+		t.Fatalf("turn status = %d, want %d", turnStatus, http.StatusOK)
 	}
-	catalog, err := storeImpl.GetAgentConfigCatalog(context.Background(), "codex", "gpt-5.3-codex")
-	if err != nil {
-		t.Fatalf("GetAgentConfigCatalog(): %v", err)
+	if got := streamer.SetConfigCalls(); got != 1 {
+		t.Fatalf("set config call count after turn = %d, want %d", got, 1)
 	}
-	options, err := decodeStoredConfigOptions(catalog.ConfigOptionsJSON)
-	if err != nil {
-		t.Fatalf("decodeStoredConfigOptions(): %v", err)
-	}
-	if got := acpmodel.CurrentValueForConfig(options, "thought_level"); got != "high" {
-		t.Fatalf("persisted catalog thought_level = %q, want %q", got, "high")
+	if got := streamer.LastStreamConfigOverrides()["thought_level"]; got != "high" {
+		t.Fatalf("stream saw thought_level = %q, want %q", got, "high")
 	}
 }
 
@@ -3160,6 +3187,8 @@ type configOptionStreamer struct {
 	setConfigCalls     atomic.Int32
 	slashCommandsCalls atomic.Int32
 	closeCalls         atomic.Int32
+	lastStreamModel    atomic.Value
+	lastStreamConfig   atomic.Value
 }
 
 func newConfigOptionStreamer(currentModel string, models []agents.ConfigOptionValue) *configOptionStreamer {
@@ -3182,6 +3211,12 @@ func (s *configOptionStreamer) Name() string {
 
 func (s *configOptionStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
 	_ = ctx
+	s.lastStreamModel.Store(s.CurrentModelID())
+	overrides := s.CurrentConfigOverrides()
+	if overrides == nil {
+		overrides = map[string]string{}
+	}
+	s.lastStreamConfig.Store(overrides)
 	if onDelta != nil {
 		if err := onDelta(input); err != nil {
 			return agents.StopReasonEndTurn, err
@@ -3233,6 +3268,46 @@ func (s *configOptionStreamer) CloseCount() int32 {
 
 func (s *configOptionStreamer) SlashCommandsCalls() int32 {
 	return s.slashCommandsCalls.Load()
+}
+
+func (s *configOptionStreamer) CurrentModelID() string {
+	return strings.TrimSpace(acpmodel.CurrentValueForConfig(s.options, "model"))
+}
+
+func (s *configOptionStreamer) CurrentConfigOverrides() map[string]string {
+	overrides := make(map[string]string)
+	for _, option := range s.options {
+		configID := strings.TrimSpace(option.ID)
+		if configID == "" || strings.EqualFold(configID, "model") {
+			continue
+		}
+		value := strings.TrimSpace(option.CurrentValue)
+		if value == "" {
+			continue
+		}
+		overrides[configID] = value
+	}
+	if len(overrides) == 0 {
+		return nil
+	}
+	return overrides
+}
+
+func (s *configOptionStreamer) LastStreamModel() string {
+	value, _ := s.lastStreamModel.Load().(string)
+	return strings.TrimSpace(value)
+}
+
+func (s *configOptionStreamer) LastStreamConfigOverrides() map[string]string {
+	value, _ := s.lastStreamConfig.Load().(map[string]string)
+	if len(value) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(value))
+	for configID, currentValue := range value {
+		cloned[configID] = currentValue
+	}
+	return cloned
 }
 
 type sessionListStreamer struct {

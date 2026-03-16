@@ -156,9 +156,9 @@ export interface AppState {
   agents: AgentInfo[]
   threads: Thread[]
   activeThreadId: string | null
-  /** Keyed by `${threadId}::${sessionId}` */
+  /** Keyed by `${threadId}::${sessionId}` or a temporary fresh-session scope. */
   messages: Record<string, Message[]>
-  /** Keyed by `${threadId}::${sessionId}` */
+  /** Keyed by `${threadId}::${sessionId}` or a temporary fresh-session scope. */
   streamStates: Record<string, StreamState>
   /** Keyed by threadId; shown after a background turn finishes until revisited */
   threadCompletionBadges: Record<string, boolean>

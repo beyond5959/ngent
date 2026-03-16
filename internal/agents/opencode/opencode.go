@@ -35,7 +35,7 @@ var _ agents.SlashCommandsProvider = (*Client)(nil)
 
 // New constructs an OpenCode ACP client.
 func New(cfg Config) (*Client, error) {
-	base, err := acpcli.New("opencode", cfg, acpcli.Hooks{
+	base, err := acpcli.New(agents.AgentIDOpencode, cfg, acpcli.Hooks{
 		OpenConn:                openConn(cfg.Dir),
 		SessionNewParams:        sessionNewParams(cfg.Dir),
 		SessionLoadParams:       sessionLoadParams(cfg.Dir),
@@ -54,7 +54,7 @@ func New(cfg Config) (*Client, error) {
 
 // Preflight checks that the opencode binary is available in PATH.
 func Preflight() error {
-	return agentutil.PreflightBinary("opencode")
+	return agentutil.PreflightBinary(agents.AgentIDOpencode)
 }
 
 func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstdio.Conn, func(), json.RawMessage, error) {
@@ -67,17 +67,17 @@ func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstd
 			args = append([]string{"-m", modelID}, args...)
 		}
 		conn, cleanup, initResult, err := acpcli.OpenProcess(ctx, acpcli.ProcessConfig{
-			Command: "opencode",
+			Command: agents.AgentIDOpencode,
 			Args:    args,
 			Dir:     strings.TrimSpace(dir),
 			Env:     os.Environ(),
 			ConnOptions: acpstdio.ConnOptions{
-				Prefix: "opencode",
+				Prefix: agents.AgentIDOpencode,
 			},
 			InitializeParams: initializeParams(),
 		})
 		if err != nil {
-			return nil, nil, nil, acpcli.WrapOpenError("opencode", req.Purpose, err)
+			return nil, nil, nil, acpcli.WrapOpenError(agents.AgentIDOpencode, req.Purpose, err)
 		}
 		return conn, cleanup, initResult, nil
 	}
@@ -251,7 +251,7 @@ func configOptionsWithSelection(options []agents.ConfigOption, configID, value s
 // Name returns the provider identifier.
 func (c *Client) Name() string {
 	if c == nil || c.Client == nil {
-		return "opencode"
+		return agents.AgentIDOpencode
 	}
 	return c.Client.Name()
 }

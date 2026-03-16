@@ -215,7 +215,7 @@ and upstream ACP schema:
 2. Add provider unit tests with fake ACP process simulation.
 3. Add optional env-gated real smoke test for local `qwen`.
 4. Wire qwen into startup preflight, supported agents list, and thread factory.
-5. Update/extend tests in `cmd/agent-hub-server` for qwen registration/status.
+5. Update/extend tests in `cmd/ngent` for qwen registration/status.
 6. Update docs (`README`, `SPEC`, `ACCEPTANCE`, `DECISIONS`, `KNOWN_ISSUES`, `PROGRESS`).
 7. Run regression gates:
    - `cd internal/webui/web && npm run build`

@@ -40,7 +40,7 @@ var _ agents.SlashCommandsProvider = (*Client)(nil)
 
 // New constructs a Kimi ACP client.
 func New(cfg Config) (*Client, error) {
-	base, err := acpcli.New("kimi", cfg, acpcli.Hooks{
+	base, err := acpcli.New(agents.AgentIDKimi, cfg, acpcli.Hooks{
 		OpenConn:                openConn(cfg.Dir),
 		SessionNewParams:        sessionNewParams(cfg.Dir),
 		SessionLoadParams:       sessionLoadParams(cfg.Dir),
@@ -59,7 +59,7 @@ func New(cfg Config) (*Client, error) {
 
 // Preflight checks that the kimi binary is available in PATH.
 func Preflight() error {
-	return agentutil.PreflightBinary("kimi")
+	return agentutil.PreflightBinary(agents.AgentIDKimi)
 }
 
 // ConfigOptions queries ACP session config options.
@@ -118,12 +118,12 @@ func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstd
 		var attemptErrors []string
 		for idx, spec := range commandCandidates() {
 			conn, cleanup, initResult, err := acpcli.OpenProcess(ctx, acpcli.ProcessConfig{
-				Command: "kimi",
+				Command: agents.AgentIDKimi,
 				Args:    spec.args(req.ModelID, kimiThinkingArg(req.ModelID, req.ConfigOverrides)),
 				Dir:     strings.TrimSpace(dir),
 				Env:     os.Environ(),
 				ConnOptions: acpstdio.ConnOptions{
-					Prefix: "kimi",
+					Prefix: agents.AgentIDKimi,
 				},
 				InitializeParams: initializeParams(),
 			})
@@ -131,7 +131,7 @@ func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstd
 				return conn, cleanup, initResult, nil
 			}
 
-			wrapped := acpcli.WrapOpenError("kimi", req.Purpose, fmt.Errorf("%s: %w", spec.label, err))
+			wrapped := acpcli.WrapOpenError(agents.AgentIDKimi, req.Purpose, fmt.Errorf("%s: %w", spec.label, err))
 			attemptErrors = append(attemptErrors, wrapped.Error())
 			if idx == len(commandCandidates())-1 || !shouldRetryACPStartup(err) {
 				break
@@ -310,7 +310,7 @@ func shouldRetryACPStartup(err error) bool {
 // Name returns the provider identifier.
 func (c *Client) Name() string {
 	if c == nil || c.Client == nil {
-		return "kimi"
+		return agents.AgentIDKimi
 	}
 	return c.Client.Name()
 }

@@ -14,8 +14,7 @@
 - ADR-010: M6 codex-acp-go runtime wiring. (Superseded)
 - ADR-011: M7 context window injection and compact policy. (Accepted)
 - ADR-012: M8 reliability alignment (TTL, shutdown, error codes). (Accepted)
-- ADR-013: Canonical Go module path finalization. (Accepted)
-- ADR-014: Codex provider migration from sidecar binary to embedded library. (Accepted)
+- ADR-013: Codex provider migration from sidecar binary to embedded library. (Accepted)
 - ADR-015: First-turn prompt passthrough for slash-command compatibility in embedded codex mode. (Accepted)
 - ADR-016: Remove `--allowed-root` runtime parameter and default to absolute-cwd policy. (Accepted)
 - ADR-017: Human-readable startup summary and request completion access logs. (Accepted)
@@ -571,7 +570,7 @@ Use this template for new decisions.
 
 ## ADR-010: M6 Codex-ACP-Go Runtime Wiring
 
-- Status: Superseded by ADR-014
+- Status: Superseded by ADR-013
 - Date: 2026-02-28
 - Context: M6 needs real codex provider enablement while keeping default tests stable in environments without codex binaries.
 - Decision:
@@ -616,19 +615,7 @@ Use this template for new decisions.
 - Alternatives considered: no idle janitor (manual cleanup only), immediate hard shutdown without grace period, preserving non-unified legacy error codes.
 - Follow-up actions: optional enhancements after M8 include WebSocket transport, paginated history, RBAC, and audit expansion.
 
-## ADR-013: Canonical Go Module Path Finalization
-
-- Status: Accepted
-- Date: 2026-02-28
-- Context: repository ownership and canonical GitHub path are now stable (`github.com/beyond5959/ngent`), while source imports still used a placeholder module path.
-- Decision:
-  - set `go.mod` module path to `github.com/beyond5959/ngent`.
-  - update all in-repo imports from `github.com/example/code-agent-hub-server/...` to canonical module path.
-- Consequences: local builds/tests and downstream module consumers resolve a single stable import path; placeholder path drift is removed.
-- Alternatives considered: keep placeholder path longer and defer until post-release.
-- Follow-up actions: ensure any external examples/scripts use canonical import path only.
-
-## ADR-014: Codex Provider Migration to Embedded Library
+## ADR-013: Codex Provider Migration to Embedded Library
 
 - Status: Accepted
 - Date: 2026-02-28

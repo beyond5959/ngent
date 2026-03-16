@@ -33,7 +33,7 @@ var _ agents.SlashCommandsProvider = (*Client)(nil)
 
 // New constructs a Qwen ACP client.
 func New(cfg Config) (*Client, error) {
-	base, err := acpcli.New("qwen", cfg, acpcli.Hooks{
+	base, err := acpcli.New(agents.AgentIDQwen, cfg, acpcli.Hooks{
 		OpenConn:                openConn(cfg.Dir),
 		SessionNewParams:        sessionNewParams(cfg.Dir),
 		SessionLoadParams:       sessionLoadParams(cfg.Dir),
@@ -51,7 +51,7 @@ func New(cfg Config) (*Client, error) {
 
 // Preflight checks that the qwen binary is available in PATH.
 func Preflight() error {
-	return agentutil.PreflightBinary("qwen")
+	return agentutil.PreflightBinary(agents.AgentIDQwen)
 }
 
 func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstdio.Conn, func(), json.RawMessage, error) {
@@ -60,17 +60,17 @@ func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstd
 		req acpcli.OpenConnRequest,
 	) (*acpstdio.Conn, func(), json.RawMessage, error) {
 		conn, cleanup, initResult, err := acpcli.OpenProcess(ctx, acpcli.ProcessConfig{
-			Command: "qwen",
+			Command: agents.AgentIDQwen,
 			Args:    []string{"--acp"},
 			Dir:     strings.TrimSpace(dir),
 			Env:     os.Environ(),
 			ConnOptions: acpstdio.ConnOptions{
-				Prefix: "qwen",
+				Prefix: agents.AgentIDQwen,
 			},
 			InitializeParams: initializeParams(),
 		})
 		if err != nil {
-			return nil, nil, nil, acpcli.WrapOpenError("qwen", req.Purpose, err)
+			return nil, nil, nil, acpcli.WrapOpenError(agents.AgentIDQwen, req.Purpose, err)
 		}
 		return conn, cleanup, initResult, nil
 	}
@@ -164,7 +164,7 @@ func sessionCWD(dir, cwd string) string {
 // Name returns the provider identifier.
 func (c *Client) Name() string {
 	if c == nil || c.Client == nil {
-		return "qwen"
+		return agents.AgentIDQwen
 	}
 	return c.Client.Name()
 }

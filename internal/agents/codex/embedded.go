@@ -175,7 +175,7 @@ func New(cfg Config) (*Client, error) {
 		requestTimeout = defaultRequestTimeout
 	}
 
-	state, err := agentutil.NewState("codex", agentutil.Config{
+	state, err := agentutil.NewState(agents.AgentIDCodex, agentutil.Config{
 		Dir:             cfg.Dir,
 		ModelID:         cfg.ModelID,
 		SessionID:       cfg.SessionID,

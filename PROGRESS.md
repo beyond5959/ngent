@@ -260,7 +260,7 @@ This file is the source of milestone progress, validation commands, and next act
 - `Post-M8` docs framing update completed:
   - adjusted README/SPEC/API/ARCHITECTURE wording to emphasize ACP-compatible multi-agent goal.
   - kept current-state note explicit: built-in providers are `codex`, `claude`, `opencode`, `gemini`, `kimi`, and `qwen`.
-  - simplified README startup path to `agent-hub-server` with explicit `agent-hub-server --help` guidance.
+  - simplified README startup path to `ngent` with explicit `ngent --help` guidance.
 - `Post-M8` startup log UX simplification completed:
   - replaced startup JSON line with multi-line human-readable stderr summary (QR code + port and URL hint).
   - added per-request completion logs containing `req_time`, `method`, `path`, `ip`, `status`, `duration_ms`, and `resp_bytes`.
@@ -305,7 +305,7 @@ This file is the source of milestone progress, validation commands, and next act
   - initialized Vite + TypeScript frontend under `internal/webui/web/`.
   - created `internal/webui/webui.go` with `//go:embed web/dist` and SPA fallback handler.
   - registered `FrontendHandler` in `httpapi.Config`; non-API paths served by frontend, API routes unaffected.
-  - updated `cmd/agent-hub-server/main.go` to pass `webui.Handler()` and print a startup QR code for opening the UI.
+  - updated `cmd/ngent/main.go` to pass `webui.Handler()` and print a startup QR code for opening the UI.
   - updated `Makefile` with `build-web`, `build` targets; updated `.gitignore` for `node_modules`.
   - `go test ./...` all green; end-to-end: `GET /` → 200 HTML, `/threads` SPA fallback → 200, `/v1/agents` → JSON, `/healthz` → JSON.
   - standardized `/v1/agents` display names to `Codex` and `Claude Code`.
@@ -396,7 +396,7 @@ This file is the source of milestone progress, validation commands, and next act
   - added unit tests (`TestPreflight_*`, `TestNew_*`, `TestClose_*`, `TestDefaultRuntimeConfig_ReadsEnv`) covering token presence/absence, default/custom timeouts, and idempotent close.
   - added optional real smoke test (`E2E_CLAUDE=1 go test ./internal/agents/claude/ -run TestClaudeE2ESmoke -v -timeout 120s`); confirmed `PONG` response and `stopReason=end_turn` (16.68s).
   - added `go.mod` `replace` directive pointing to local `github.com/beyond5959/acp-adapter` for local development; refreshed module dependencies for the embedded Claude runtime integration.
-  - wired claude into `cmd/agent-hub-server/main.go`: preflight call, `"claude"` in `AllowedAgentIDs`, `case "claude"` in `TurnAgentFactory`, real status in `supportedAgents`.
+  - wired claude into `cmd/ngent/main.go`: preflight call, `"claude"` in `AllowedAgentIDs`, `case "claude"` in `TurnAgentFactory`, real status in `supportedAgents`.
   - updated `main_test.go`: `supportedAgents` signature extended with `claudeAvailable bool`; added claude id/status assertions.
   - executed validation:
     - pass: `go build ./...`
@@ -407,8 +407,8 @@ This file is the source of milestone progress, validation commands, and next act
   - removed `internal/webui/web/dist/` and `tsconfig.tsbuildinfo` from git tracking (`git rm --cached`); added both to `.gitignore`.
   - created `.github/workflows/ci.yml`: triggers on every push/PR (non-tag); steps: Go + Node.js 20 setup, `make build-web`, gofmt check, `go test ./...`.
   - created `.github/workflows/release.yml`: triggers on `v*.*.*` tags; runs `goreleaser release --clean` with `GITHUB_TOKEN`.
-  - created `.goreleaser.yml` (version 2): `before.hooks: make build-web`; cross-compiles linux/darwin/windows × amd64/arm64 (windows arm64 excluded) with `CGO_ENABLED=0`; produces `agent-hub-server_VERSION_OS_ARCH.tar.gz` archives + `checksums.txt`.
-  - updated `Makefile`: `make build` now outputs to `bin/agent-hub-server` (was `go build ./...`).
+  - created `.goreleaser.yml` (version 2): `before.hooks: make build-web`; cross-compiles linux/darwin/windows × amd64/arm64 (windows arm64 excluded) with `CGO_ENABLED=0`; produces `ngent_VERSION_OS_ARCH.tar.gz` archives + `checksums.txt`.
+  - updated `Makefile`: `make build` now outputs to `bin/ngent` (was `go build ./...`).
   - updated `README.md`: replaced `go install` with "Download pre-built binary" table + "Build from source" (`make build`) instructions.
   - updated `AGENTS.md`: replaced "MUST keep web/dist committed" rule with "MUST NOT commit web/dist"; added CI/Release pipeline section.
 

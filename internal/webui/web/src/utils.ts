@@ -56,9 +56,9 @@ export function formatRelativeTime(iso: string): string {
 
 // ── Path validation ────────────────────────────────────────────────────────
 
-/** Returns true if the path is an absolute Unix path (starts with /). */
+/** Returns true if the path is an absolute path (starts with / or ~/). */
 export function isAbsolutePath(p: string): boolean {
-  return p.startsWith('/')
+  return p.startsWith('/') || p.startsWith('~/')
 }
 
 // ── HTML escaping ──────────────────────────────────────────────────────────

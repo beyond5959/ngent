@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This repository implements the **Code Agent Hub Server** — a local-first Go service exposing HTTP/JSON APIs and SSE streaming for multi-client, multi-thread ACP-compatible agent turns.
+This repository implements the **Ngent** — a local-first Go service exposing HTTP/JSON APIs and SSE streaming for multi-client, multi-thread ACP-compatible agent turns.
 
 ## Common Commands
 

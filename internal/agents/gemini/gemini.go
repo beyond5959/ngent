@@ -32,7 +32,7 @@ var _ agents.SlashCommandsProvider = (*Client)(nil)
 
 // New constructs a Gemini CLI ACP client.
 func New(cfg Config) (*Client, error) {
-	base, err := acpcli.New("gemini", cfg, acpcli.Hooks{
+	base, err := acpcli.New(agents.AgentIDGemini, cfg, acpcli.Hooks{
 		OpenConn:                openConn(cfg.Dir),
 		SessionNewParams:        sessionNewParams(cfg.Dir),
 		SessionLoadParams:       sessionLoadParams(cfg.Dir),
@@ -50,7 +50,7 @@ func New(cfg Config) (*Client, error) {
 
 // Preflight checks that the gemini binary is available in PATH.
 func Preflight() error {
-	return agentutil.PreflightBinary("gemini")
+	return agentutil.PreflightBinary(agents.AgentIDGemini)
 }
 
 func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstdio.Conn, func(), json.RawMessage, error) {
@@ -60,22 +60,22 @@ func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstd
 	) (*acpstdio.Conn, func(), json.RawMessage, error) {
 		cliHome, err := makeCLIHome()
 		if err != nil {
-			return nil, nil, nil, acpcli.WrapOpenError("gemini", req.Purpose, fmt.Errorf("create CLI home: %w", err))
+			return nil, nil, nil, acpcli.WrapOpenError(agents.AgentIDGemini, req.Purpose, fmt.Errorf("create CLI home: %w", err))
 		}
 
 		conn, cleanup, initResult, err := acpcli.OpenProcess(ctx, acpcli.ProcessConfig{
-			Command: "gemini",
+			Command: agents.AgentIDGemini,
 			Args:    []string{"--experimental-acp"},
 			Env:     buildGeminiCLIEnv(cliHome),
 			ConnOptions: acpstdio.ConnOptions{
-				Prefix:           "gemini",
+				Prefix:           agents.AgentIDGemini,
 				AllowStdoutNoise: true,
 			},
 			InitializeParams: initializeParams(),
 		})
 		if err != nil {
 			_ = os.RemoveAll(cliHome)
-			return nil, nil, nil, acpcli.WrapOpenError("gemini", req.Purpose, err)
+			return nil, nil, nil, acpcli.WrapOpenError(agents.AgentIDGemini, req.Purpose, err)
 		}
 
 		return conn, func() {
@@ -231,7 +231,7 @@ func sessionCWD(dir, cwd string) string {
 // Name returns the provider identifier.
 func (c *Client) Name() string {
 	if c == nil || c.Client == nil {
-		return "gemini"
+		return agents.AgentIDGemini
 	}
 	return c.Client.Name()
 }

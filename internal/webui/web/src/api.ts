@@ -59,6 +59,8 @@ interface ThreadSlashCommandsResponse {
 }
 interface CancelTurnResponse    { turnId: string; threadId: string; status: string }
 interface DeleteThreadResponse  { threadId: string; status: string }
+interface PathSearchResponse    { query: string; results: string[] }
+interface RecentDirectoriesResponse { directories: string[] }
 
 // ── Client ─────────────────────────────────────────────────────────────────
 
@@ -245,6 +247,20 @@ class ApiClient {
     outcome: 'approved' | 'declined' | 'cancelled',
   ): Promise<void> {
     await this.request('POST', `/v1/permissions/${encodeURIComponent(permissionId)}`, { outcome })
+  }
+
+  /** GET /v1/path-search?q={query} */
+  async searchPaths(query: string): Promise<string[]> {
+    if (!query || query.length < 3) return []
+    const params = new URLSearchParams({ q: query.trim() })
+    const data = await this.request<PathSearchResponse>('GET', `/v1/path-search?${params.toString()}`)
+    return data.results ?? []
+  }
+
+  /** GET /v1/recent-directories */
+  async getRecentDirectories(): Promise<string[]> {
+    const data = await this.request<RecentDirectoriesResponse>('GET', '/v1/recent-directories')
+    return data.directories ?? []
   }
 }
 

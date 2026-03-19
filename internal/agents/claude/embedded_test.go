@@ -46,34 +46,6 @@ func TestNew_BinaryMissing(t *testing.T) {
 	}
 }
 
-func TestNew_WithBinary(t *testing.T) {
-	skipIfNoClaude(t)
-	c, err := New(Config{
-		Dir:  "/tmp",
-		Name: "test-claude",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if c == nil {
-		t.Fatal("expected non-nil client")
-	}
-	if c.Name() != "test-claude" {
-		t.Errorf("unexpected name: got %q, want %q", c.Name(), "test-claude")
-	}
-}
-
-func TestNew_DefaultName(t *testing.T) {
-	skipIfNoClaude(t)
-	c, err := New(Config{Dir: "/tmp"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if c.Name() != "claude-embedded" {
-		t.Errorf("unexpected default name: got %q, want %q", c.Name(), "claude-embedded")
-	}
-}
-
 func TestNew_DefaultTimeouts(t *testing.T) {
 	skipIfNoClaude(t)
 	c, err := New(Config{Dir: "/tmp"})

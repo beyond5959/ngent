@@ -111,6 +111,56 @@ func TestRequestCompletionLogIncludesPathIPAndStatus(t *testing.T) {
 	}
 }
 
+func TestV1PathSearch(t *testing.T) {
+	h := newTestServer(t, testServerOptions{})
+
+	// Test with query less than 3 characters - should return empty results
+	req := httptest.NewRequest(http.MethodGet, "/v1/path-search?q=ab", nil)
+	req.Header.Set("X-Client-ID", "client-a")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Query   string   `json:"query"`
+		Results []string `json:"results"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.Query != "ab" {
+		t.Fatalf("query = %q, want %q", body.Query, "ab")
+	}
+	if len(body.Results) != 0 {
+		t.Fatalf("results should be empty for query < 3 chars, got %v", body.Results)
+	}
+
+	// Test with query >= 3 characters - should search home directory
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/path-search?q=zzz", nil)
+	req2.Header.Set("X-Client-ID", "client-a")
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rr2.Code, http.StatusOK)
+	}
+
+	var body2 struct {
+		Query   string   `json:"query"`
+		Results []string `json:"results"`
+	}
+	if err := json.Unmarshal(rr2.Body.Bytes(), &body2); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	// Results may be empty if no matching directories exist, which is fine
+	if body2.Query != "zzz" {
+		t.Fatalf("query = %q, want %q", body2.Query, "zzz")
+	}
+}
+
 func TestV1Agents(t *testing.T) {
 	h := newTestServer(t, testServerOptions{})
 

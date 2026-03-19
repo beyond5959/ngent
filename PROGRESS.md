@@ -11,7 +11,23 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-03-16)
+## Latest Update (2026-03-19)
+
+- `Post-M8` Web UI left-rail layout alignment completed:
+  - moved ACP session browsing from the right edge into a left-side session panel beside chat, following the same high-level navigation pattern as OpenCode's web UI.
+  - kept the agent/thread rail permanently expanded after follow-up product review; only the session panel now supports collapse/expand.
+  - removed the agent-list search box and its keyboard shortcut/filtering path; the left rail is now a straight thread list with actions only.
+  - moved `New agent` below the agent list and updated the expanded session header to show the active agent name, project path, and a full-width `New session` entry above the session list.
+  - removed the redundant uppercase `SESSIONS` section label above the session list after the new header/new-session block, keeping the panel header visually quieter.
+  - restored the left-top brand label from `Agents` to the product name `Ngent`.
+  - hid the session panel entirely until an agent/thread is selected, so first load no longer reserves a blank middle column.
+  - fixed the CSS visibility rule so the hidden session panel truly leaves the flex layout instead of still occupying width via `.session-sidebar { display:flex }`.
+  - flattened the expanded session panel surface so its header and list share the same background plane instead of reading as two differently colored sections.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-03-16)
 
 - `Post-M8` ACP tool-call streaming completed:
   - extended shared ACP `session/update` parsing to preserve structured `tool_call` and `tool_call_update` payloads, including `toolCallId`, status/title/kind, content blocks, locations, and raw input/output payloads.
@@ -260,7 +276,7 @@ This file is the source of milestone progress, validation commands, and next act
 - `Post-M8` docs framing update completed:
   - adjusted README/SPEC/API/ARCHITECTURE wording to emphasize ACP-compatible multi-agent goal.
   - kept current-state note explicit: built-in providers are `codex`, `claude`, `opencode`, `gemini`, `kimi`, and `qwen`.
-  - simplified README startup path to `agent-hub-server` with explicit `agent-hub-server --help` guidance.
+  - simplified README startup path to `ngent` with explicit `ngent --help` guidance.
 - `Post-M8` startup log UX simplification completed:
   - replaced startup JSON line with multi-line human-readable stderr summary (QR code + port and URL hint).
   - added per-request completion logs containing `req_time`, `method`, `path`, `ip`, `status`, `duration_ms`, and `resp_bytes`.
@@ -305,7 +321,7 @@ This file is the source of milestone progress, validation commands, and next act
   - initialized Vite + TypeScript frontend under `internal/webui/web/`.
   - created `internal/webui/webui.go` with `//go:embed web/dist` and SPA fallback handler.
   - registered `FrontendHandler` in `httpapi.Config`; non-API paths served by frontend, API routes unaffected.
-  - updated `cmd/agent-hub-server/main.go` to pass `webui.Handler()` and print a startup QR code for opening the UI.
+  - updated `cmd/ngent/main.go` to pass `webui.Handler()` and print a startup QR code for opening the UI.
   - updated `Makefile` with `build-web`, `build` targets; updated `.gitignore` for `node_modules`.
   - `go test ./...` all green; end-to-end: `GET /` → 200 HTML, `/threads` SPA fallback → 200, `/v1/agents` → JSON, `/healthz` → JSON.
   - standardized `/v1/agents` display names to `Codex` and `Claude Code`.
@@ -395,8 +411,7 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
   - added unit tests (`TestPreflight_*`, `TestNew_*`, `TestClose_*`, `TestDefaultRuntimeConfig_ReadsEnv`) covering token presence/absence, default/custom timeouts, and idempotent close.
   - added optional real smoke test (`E2E_CLAUDE=1 go test ./internal/agents/claude/ -run TestClaudeE2ESmoke -v -timeout 120s`); confirmed `PONG` response and `stopReason=end_turn` (16.68s).
-  - added `go.mod` `replace` directive pointing to local `github.com/beyond5959/acp-adapter` for local development; refreshed module dependencies for the embedded Claude runtime integration.
-  - wired claude into `cmd/agent-hub-server/main.go`: preflight call, `"claude"` in `AllowedAgentIDs`, `case "claude"` in `TurnAgentFactory`, real status in `supportedAgents`.
+  - wired claude into `cmd/ngent/main.go`: preflight call, `"claude"` in `AllowedAgentIDs`, `case "claude"` in `TurnAgentFactory`, real status in `supportedAgents`.
   - updated `main_test.go`: `supportedAgents` signature extended with `claudeAvailable bool`; added claude id/status assertions.
   - executed validation:
     - pass: `go build ./...`
@@ -407,8 +422,8 @@ This file is the source of milestone progress, validation commands, and next act
   - removed `internal/webui/web/dist/` and `tsconfig.tsbuildinfo` from git tracking (`git rm --cached`); added both to `.gitignore`.
   - created `.github/workflows/ci.yml`: triggers on every push/PR (non-tag); steps: Go + Node.js 20 setup, `make build-web`, gofmt check, `go test ./...`.
   - created `.github/workflows/release.yml`: triggers on `v*.*.*` tags; runs `goreleaser release --clean` with `GITHUB_TOKEN`.
-  - created `.goreleaser.yml` (version 2): `before.hooks: make build-web`; cross-compiles linux/darwin/windows × amd64/arm64 (windows arm64 excluded) with `CGO_ENABLED=0`; produces `agent-hub-server_VERSION_OS_ARCH.tar.gz` archives + `checksums.txt`.
-  - updated `Makefile`: `make build` now outputs to `bin/agent-hub-server` (was `go build ./...`).
+  - created `.goreleaser.yml` (version 2): `before.hooks: make build-web`; cross-compiles linux/darwin/windows × amd64/arm64 (windows arm64 excluded) with `CGO_ENABLED=0`; produces `ngent_VERSION_OS_ARCH.tar.gz` archives + `checksums.txt`.
+  - updated `Makefile`: `make build` now outputs to `bin/ngent` (was `go build ./...`).
   - updated `README.md`: replaced `go install` with "Download pre-built binary" table + "Build from source" (`make build`) instructions.
   - updated `AGENTS.md`: replaced "MUST keep web/dist committed" rule with "MUST NOT commit web/dist"; added CI/Release pipeline section.
 
@@ -595,16 +610,6 @@ This file is the source of milestone progress, validation commands, and next act
   - composer footer pills now show only the selected model/reasoning names, without leading `MODEL` / `REASONING` labels.
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
-
-- `Post-F9` codex thread-config timeout fix (Playwright real-env regression):
-  - reproduced in real browser flow (Playwright MCP + local codex env): opening a codex thread triggered `GET /v1/threads/{threadId}/config-options` `503` caused by embedded startup timeout at 8s.
-  - fixed by increasing embedded runtime default startup timeout from `8s` to `30s` for:
-    - `internal/agents/codex`
-    - `internal/agents/claude`
-  - reran real browser flow:
-    - thread model list now loads successfully from ACP `configOptions`.
-    - model switching calls `POST /v1/threads/{threadId}/config-options` and persists selected model.
-    - no frontend console errors during switch flow.
 
 - `Post-F9` codex model-discovery stability improvement:
   - replaced per-request codex model discovery runtime startup/shutdown with a shared discovery client in `internal/agents/codex/models.go`.
@@ -840,6 +845,26 @@ This file is the source of milestone progress, validation commands, and next act
   - Kimi, Qwen, and OpenCode previously carried identical provider-local `handlePermissionRequest` implementations even after sharing the same normalized permission-request parser.
   - moved that common bridge logic into `acpcli.StructuredPermissionRequestHandler(timeout)` and reduced each provider to a one-line hook binding plus its local timeout constant.
   - kept Gemini unchanged because it still uses a different provider-specific permission payload/response shape rather than the shared normalized `PermissionRequestPayload`.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-03-19: changed Web UI assistant rendering from one aggregated bubble into an event-ordered segment timeline.
+  - root cause: the Web UI already persisted `reasoning_delta`, `tool_call`, and `tool_call_update`, but both live streaming and finalized history still rendered them as one concentrated reasoning/tool section plus one final assistant bubble, so the actual turn sequence was lost visually.
+  - extended the frontend message model with ordered `segments`, rebuilt finalized assistant messages from persisted turn events (`message_delta`, `reasoning_delta`, `tool_call`, `tool_call_update`), and tracked the same segment timeline during SSE streaming.
+  - tool-call updates now keep their original timeline position by merging later `tool_call_update` payloads into the first segment for that `toolCallId`, while message/reasoning deltas append new segments only when the stream actually switches modes.
+  - kept plan cards as a separate block, but assistant content / thought / tool activity now render in the same chronological order the agent emitted them.
+  - adjusted assistant content segments to render as flat answer blocks instead of agent chat bubbles, matching Kimi web's timeline style more closely when normal answer text alternates with thought/tool steps.
+  - removed the IM-style left/right chat alignment for the transcript pane; user prompts now render as the top line of a single-column turn flow and agent output follows directly underneath in the same reading column.
+  - during an in-flight turn, only the currently growing thought segment stays expanded; once a later answer/tool/plan event arrives, the completed thought segment immediately switches to the collapsed finalized-panel state instead of waiting for full turn completion.
+  - completed answer segments now switch to finalized markdown rendering as soon as the stream moves on, so tables and other block markdown render immediately instead of staying as raw text until the whole turn finishes.
+  - styled markdown tables in answer/thought blocks with borders, header background, zebra rows, and horizontal overflow so rendered tables are visually distinct instead of looking like loosely aligned text.
+  - moved markdown tables onto a fit-content wrapper with independent horizontal scrolling, so the outer border now hugs the actual table content instead of stretching to the full transcript width.
+  - changed tool-call segments from always-open cards into collapsible panels that follow the same interaction model as thought blocks: the currently updating tool call stays open during streaming, finalized tool calls default closed, and users can manually expand closed panels on demand.
+  - kept permission-request cards outside that new fold/unfold treatment so approval prompts still remain independently visible and actionable while a turn is running.
+  - delayed hidden tool-call detail `Show all` binding until the panel is actually opened, so nested command/JSON previews still compute their collapsed height correctly after the outer tool-call panel starts closed.
+  - moved assistant copy actions from the whole-message footer down to each finalized answer segment, so clicking copy now copies only that visible answer block instead of concatenating every answer segment in the turn.
+  - kept per-answer copy buttons under their own answer segments, but merged each segment's timestamp and copy control onto one small meta row so time appears first and copy follows on the same line.
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`

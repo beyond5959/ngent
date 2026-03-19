@@ -153,7 +153,7 @@ func main() {
 	handler := httpapi.New(httpapi.Config{
 		AuthToken:       *authToken,
 		Agents:          agents,
-		AllowedAgentIDs: []string{"codex", "opencode", "gemini", "kimi", "qwen", "claude"},
+		AllowedAgentIDs: agentimpl.AllAgentIDs(),
 		AllowedRoots:    allowedRoots,
 		Store:           store,
 		TurnController:  turnController,
@@ -162,7 +162,7 @@ func main() {
 			sessionID := extractSessionID(thread.AgentOptionsJSON)
 			configOverrides := extractConfigOverrides(thread.AgentOptionsJSON)
 			switch thread.AgentID {
-			case "codex":
+			case agentimpl.AgentIDCodex:
 				return codexagent.New(codexagent.Config{
 					Dir:             thread.CWD,
 					ModelID:         modelID,
@@ -171,35 +171,35 @@ func main() {
 					Name:            "codex-embedded",
 					RuntimeConfig:   codexRuntimeConfig,
 				})
-			case "opencode":
+			case agentimpl.AgentIDOpencode:
 				return opencodeagent.New(opencodeagent.Config{
 					Dir:             thread.CWD,
 					ModelID:         modelID,
 					SessionID:       sessionID,
 					ConfigOverrides: configOverrides,
 				})
-			case "gemini":
+			case agentimpl.AgentIDGemini:
 				return geminiagent.New(geminiagent.Config{
 					Dir:             thread.CWD,
 					ModelID:         modelID,
 					SessionID:       sessionID,
 					ConfigOverrides: configOverrides,
 				})
-			case "kimi":
+			case agentimpl.AgentIDKimi:
 				return kimiagent.New(kimiagent.Config{
 					Dir:             thread.CWD,
 					ModelID:         modelID,
 					SessionID:       sessionID,
 					ConfigOverrides: configOverrides,
 				})
-			case "qwen":
+			case agentimpl.AgentIDQwen:
 				return qwenagent.New(qwenagent.Config{
 					Dir:             thread.CWD,
 					ModelID:         modelID,
 					SessionID:       sessionID,
 					ConfigOverrides: configOverrides,
 				})
-			case "claude":
+			case agentimpl.AgentIDClaude:
 				return claudeagent.New(claudeagent.Config{
 					Dir:             thread.CWD,
 					ModelID:         modelID,
@@ -213,7 +213,7 @@ func main() {
 		},
 		AgentModelsFactory: func(ctx context.Context, agentID string) ([]agentimpl.ModelOption, error) {
 			switch agentID {
-			case "codex":
+			case agentimpl.AgentIDCodex:
 				if codexPreflightErr != nil {
 					return nil, codexPreflightErr
 				}
@@ -222,7 +222,7 @@ func main() {
 					Name:          "codex-embedded",
 					RuntimeConfig: codexRuntimeConfig,
 				})
-			case "claude":
+			case agentimpl.AgentIDClaude:
 				if claudePreflightErr != nil {
 					return nil, claudePreflightErr
 				}
@@ -230,22 +230,22 @@ func main() {
 					Dir:  modelDiscoveryDir,
 					Name: "claude-embedded",
 				})
-			case "gemini":
+			case agentimpl.AgentIDGemini:
 				if geminiPreflightErr != nil {
 					return nil, geminiPreflightErr
 				}
 				return geminiagent.DiscoverModels(ctx, geminiagent.Config{Dir: modelDiscoveryDir})
-			case "kimi":
+			case agentimpl.AgentIDKimi:
 				if kimiPreflightErr != nil {
 					return nil, kimiPreflightErr
 				}
 				return kimiagent.DiscoverModels(ctx, kimiagent.Config{Dir: modelDiscoveryDir})
-			case "qwen":
+			case agentimpl.AgentIDQwen:
 				if qwenPreflightErr != nil {
 					return nil, qwenPreflightErr
 				}
 				return qwenagent.DiscoverModels(ctx, qwenagent.Config{Dir: modelDiscoveryDir})
-			case "opencode":
+			case agentimpl.AgentIDOpencode:
 				if opencodePreflightErr != nil {
 					return nil, opencodePreflightErr
 				}
@@ -355,10 +355,10 @@ func buildAgentConfigCatalogRefresher(
 	return &agentConfigCatalogRefresher{
 		store:    store,
 		logger:   logger,
-		agentIDs: []string{"codex", "claude", "gemini", "kimi", "qwen", "opencode"},
+		agentIDs: agentimpl.AllAgentIDs(),
 		fetchConfigOptions: func(ctx context.Context, agentID, modelID string) ([]agentimpl.ConfigOption, error) {
 			switch agentID {
-			case "codex":
+			case agentimpl.AgentIDCodex:
 				if codexPreflightErr != nil {
 					return nil, codexPreflightErr
 				}
@@ -372,7 +372,7 @@ func buildAgentConfigCatalogRefresher(
 					return nil, err
 				}
 				return queryAgentConfigOptions(ctx, client)
-			case "claude":
+			case agentimpl.AgentIDClaude:
 				if claudePreflightErr != nil {
 					return nil, claudePreflightErr
 				}
@@ -385,7 +385,7 @@ func buildAgentConfigCatalogRefresher(
 					return nil, err
 				}
 				return queryAgentConfigOptions(ctx, client)
-			case "gemini":
+			case agentimpl.AgentIDGemini:
 				if geminiPreflightErr != nil {
 					return nil, geminiPreflightErr
 				}
@@ -397,7 +397,7 @@ func buildAgentConfigCatalogRefresher(
 					return nil, err
 				}
 				return queryAgentConfigOptions(ctx, client)
-			case "kimi":
+			case agentimpl.AgentIDKimi:
 				if kimiPreflightErr != nil {
 					return nil, kimiPreflightErr
 				}
@@ -409,7 +409,7 @@ func buildAgentConfigCatalogRefresher(
 					return nil, err
 				}
 				return queryAgentConfigOptions(ctx, client)
-			case "qwen":
+			case agentimpl.AgentIDQwen:
 				if qwenPreflightErr != nil {
 					return nil, qwenPreflightErr
 				}
@@ -421,7 +421,7 @@ func buildAgentConfigCatalogRefresher(
 					return nil, err
 				}
 				return queryAgentConfigOptions(ctx, client)
-			case "opencode":
+			case agentimpl.AgentIDOpencode:
 				if opencodePreflightErr != nil {
 					return nil, opencodePreflightErr
 				}
@@ -752,12 +752,12 @@ func supportedAgents(codexAvailable, opencodeAvailable, geminiAvailable, kimiAva
 	}
 
 	return []httpapi.AgentInfo{
-		{ID: "codex", Name: "Codex", Status: codexStatus},
-		{ID: "claude", Name: "Claude Code", Status: claudeStatus},
-		{ID: "gemini", Name: "Gemini CLI", Status: geminiStatus},
-		{ID: "kimi", Name: "Kimi CLI", Status: kimiStatus},
-		{ID: "qwen", Name: "Qwen Code", Status: qwenStatus},
-		{ID: "opencode", Name: "OpenCode", Status: opencodeStatus},
+		{ID: agentimpl.AgentIDCodex, Name: "Codex", Status: codexStatus},
+		{ID: agentimpl.AgentIDClaude, Name: "Claude Code", Status: claudeStatus},
+		{ID: agentimpl.AgentIDGemini, Name: "Gemini CLI", Status: geminiStatus},
+		{ID: agentimpl.AgentIDKimi, Name: "Kimi CLI", Status: kimiStatus},
+		{ID: agentimpl.AgentIDQwen, Name: "Qwen Code", Status: qwenStatus},
+		{ID: agentimpl.AgentIDOpencode, Name: "OpenCode", Status: opencodeStatus},
 	}
 }
 

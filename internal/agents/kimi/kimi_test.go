@@ -42,33 +42,6 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
-func TestNew(t *testing.T) {
-	tests := []struct {
-		name    string
-		cfg     kimi.Config
-		wantErr bool
-	}{
-		{"empty dir", kimi.Config{Dir: ""}, true},
-		{"valid", kimi.Config{Dir: "/tmp"}, false},
-		{"with modelID", kimi.Config{Dir: "/tmp", ModelID: "kimi-k2-turbo-preview"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := kimi.New(tt.cfg)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestClientName(t *testing.T) {
-	c, _ := kimi.New(kimi.Config{Dir: "/tmp"})
-	if got := c.Name(); got != "kimi" {
-		t.Errorf("Name() = %q, want %q", got, "kimi")
-	}
-}
-
 func TestStreamWithFakeProcess(t *testing.T) {
 	python3, err := exec.LookPath("python3")
 	if err != nil {

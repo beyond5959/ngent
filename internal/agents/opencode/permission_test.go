@@ -3,6 +3,9 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/beyond5959/ngent/internal/agents"
@@ -11,7 +14,13 @@ import (
 func TestHandlePermissionRequestParsesExternalDirectoryPayload(t *testing.T) {
 	t.Parallel()
 
-	raw := json.RawMessage(`{
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("failed to get home dir: %v", err)
+	}
+	expectedPath := filepath.Join(homeDir, ".config/opencode")
+
+	raw := json.RawMessage(fmt.Sprintf(`{
 		"sessionId": "ses_opencode_perm",
 		"options": [
 			{"optionId":"once","kind":"allow_once"},
@@ -23,11 +32,11 @@ func TestHandlePermissionRequestParsesExternalDirectoryPayload(t *testing.T) {
 			"kind": "other",
 			"toolCallId": "call_function_test_1",
 			"rawInput": {
-				"filepath": "/Users/niuniu/.config/opencode",
-				"parentDir": "/Users/niuniu/.config/opencode"
+				"filepath": %q,
+				"parentDir": %q
 			}
 		}
-	}`)
+	}`, expectedPath, expectedPath))
 
 	var got agents.PermissionRequest
 	resp, err := handlePermissionRequest(
@@ -46,14 +55,14 @@ func TestHandlePermissionRequestParsesExternalDirectoryPayload(t *testing.T) {
 	if got.Approval != "file" {
 		t.Fatalf("req.Approval = %q, want %q", got.Approval, "file")
 	}
-	if got.Command != "/Users/niuniu/.config/opencode" {
-		t.Fatalf("req.Command = %q, want %q", got.Command, "/Users/niuniu/.config/opencode")
+	if got.Command != expectedPath {
+		t.Fatalf("req.Command = %q, want %q", got.Command, expectedPath)
 	}
 	if sessionID, _ := got.RawParams["sessionId"].(string); sessionID != "ses_opencode_perm" {
 		t.Fatalf("req.RawParams[sessionId] = %q, want %q", sessionID, "ses_opencode_perm")
 	}
-	if path, _ := got.RawParams["path"].(string); path != "/Users/niuniu/.config/opencode" {
-		t.Fatalf("req.RawParams[path] = %q, want %q", path, "/Users/niuniu/.config/opencode")
+	if path, _ := got.RawParams["path"].(string); path != expectedPath {
+		t.Fatalf("req.RawParams[path] = %q, want %q", path, expectedPath)
 	}
 
 	var decoded struct {

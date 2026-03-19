@@ -14,8 +14,7 @@
 - ADR-010: M6 codex-acp-go runtime wiring. (Superseded)
 - ADR-011: M7 context window injection and compact policy. (Accepted)
 - ADR-012: M8 reliability alignment (TTL, shutdown, error codes). (Accepted)
-- ADR-013: Canonical Go module path finalization. (Accepted)
-- ADR-014: Codex provider migration from sidecar binary to embedded library. (Accepted)
+- ADR-013: Codex provider migration from sidecar binary to embedded library. (Accepted)
 - ADR-015: First-turn prompt passthrough for slash-command compatibility in embedded codex mode. (Accepted)
 - ADR-016: Remove `--allowed-root` runtime parameter and default to absolute-cwd policy. (Accepted)
 - ADR-017: Human-readable startup summary and request completion access logs. (Accepted)
@@ -50,6 +49,54 @@
 - ADR-045: Surface hidden agent reasoning as first-class SSE/history events in the Web UI. (Accepted)
 - ADR-046: Collapse finalized Web UI thinking panels by default. (Accepted)
 - ADR-047: Defer thread config-option apply until the next turn boundary. (Accepted)
+- ADR-049: Align Web UI navigation with a left agent rail and left session panel. (Accepted)
+- ADR-050: Keep the left agent rail permanently expanded. (Accepted)
+
+## ADR-050: Keep The Left Agent Rail Permanently Expanded
+
+- Status: Accepted
+- Date: 2026-03-19
+- Context:
+  - ADR-049 introduced a collapsible compact agent rail to mimic OpenCode's left-most project strip more closely.
+  - in follow-up product review, that compact state was judged less useful than expected because the ngent left column represents full agent/thread items rather than tiny project icons, and collapsing it hid search plus thread metadata too aggressively.
+  - the session panel still benefits from collapsibility because it is secondary context and can be hidden to reclaim chat width.
+- Decision:
+  - keep the left agent rail permanently expanded on desktop and mobile overlay states.
+  - remove the agent-rail collapse/expand trigger and compact monogram-only rendering path.
+  - retain the left-side session panel collapse/expand control as the only navigation-width toggle.
+  - keep the session panel contextual to the current selection: if no thread is active yet, do not render a placeholder session column.
+- Consequences:
+  - the main navigation always exposes thread metadata and thread actions without an extra click.
+  - layout stays simpler because only one left-side panel now owns collapse state.
+  - first-load navigation density improves because chat sits directly beside the agent rail until a thread is chosen.
+  - the left rail no longer mirrors OpenCode's narrow icon strip exactly, but preserves the more useful ngent-specific thread browsing surface.
+- Alternatives considered:
+  - keep both rails collapsible (rejected: too much state and weaker scanning ergonomics for ngent's denser thread rows).
+  - remove all collapse controls entirely (rejected: the session panel still benefits from being dismissible when chat width matters).
+
+## ADR-049: Align Web UI Navigation With A Left Agent Rail And Left Session Panel
+
+- Status: Accepted
+- Date: 2026-03-19
+- Context:
+  - the Web UI had been using a wide left thread list plus a separate right session sidebar.
+  - users wanted the navigation model to feel closer to OpenCode's web UI, where project/session browsing sits on the left side of the workspace and the first column can collapse into a compact rail.
+  - the old layout also forced session context away from the currently selected agent/thread, making it harder to see which project path and session set were active together.
+- Decision:
+  - render navigation as two left-side columns: a collapsible agent/thread rail and a collapsible session panel between that rail and the chat area.
+  - default the agent rail to its collapsed state; collapsed items use the displayed agent/thread title's first character, uppercasing ASCII letters and preserving non-Latin first characters directly.
+  - keep the full agent list, search box, and thread action menu available in the expanded rail.
+  - move `New agent` below the agent list instead of keeping it in the rail header.
+  - when the session panel is expanded, show the active agent/thread title, provider badge, project path, and a full-width `New session` action before the session list.
+- Consequences:
+  - desktop navigation matches the requested OpenCode-style mental model more closely and keeps both agent selection and session browsing on the same side of the workspace.
+  - the compact default rail saves horizontal space while still allowing quick switching between agents/threads.
+  - the session panel can still be collapsed independently when users want more room for chat content.
+  - mobile behavior stays conservative: the existing small-screen sidebar overlay path remains the fallback, and the dedicated session panel still hides below the narrower desktop breakpoint.
+- Alternatives considered:
+  - keep the old right-side session sidebar and only restyle it (rejected: does not satisfy the requested navigation model).
+  - move sessions left but keep the agent list permanently wide (rejected: wastes space and misses the requested compact rail).
+  - use provider logos for collapsed rail markers (rejected: product request explicitly prefers first-character monograms).
 
 ## ADR-047: Defer Thread Config-Option Apply Until The Next Turn Boundary
 
@@ -135,7 +182,6 @@
   - reuse the same shared normalization path for OpenCode instead of adding another provider-local decoder.
 - Consequences:
   - real OpenCode file-creation requests now surface through the normal ngent permission card flow instead of failing invisibly.
-  - the Web UI gets a stable path preview like `/Users/niuniu/.config/opencode/opencode.json` even when the upstream provider only reports `external_directory` or another generic title.
   - future ACP providers can attach path previews in multiple shapes without forcing another adapter-specific parser.
 - Alternatives considered:
   - leave OpenCode on provider-default RPC handling and only fix Kimi/Qwen (rejected: direct ACP providers would keep drifting on identical permission semantics).
@@ -572,7 +618,7 @@ Use this template for new decisions.
 
 ## ADR-010: M6 Codex-ACP-Go Runtime Wiring
 
-- Status: Superseded by ADR-014
+- Status: Superseded by ADR-013
 - Date: 2026-02-28
 - Context: M6 needs real codex provider enablement while keeping default tests stable in environments without codex binaries.
 - Decision:
@@ -617,19 +663,7 @@ Use this template for new decisions.
 - Alternatives considered: no idle janitor (manual cleanup only), immediate hard shutdown without grace period, preserving non-unified legacy error codes.
 - Follow-up actions: optional enhancements after M8 include WebSocket transport, paginated history, RBAC, and audit expansion.
 
-## ADR-013: Canonical Go Module Path Finalization
-
-- Status: Accepted
-- Date: 2026-02-28
-- Context: repository ownership and canonical GitHub path are now stable (`github.com/beyond5959/ngent`), while source imports still used a placeholder module path.
-- Decision:
-  - set `go.mod` module path to `github.com/beyond5959/ngent`.
-  - update all in-repo imports from `github.com/example/code-agent-hub-server/...` to canonical module path.
-- Consequences: local builds/tests and downstream module consumers resolve a single stable import path; placeholder path drift is removed.
-- Alternatives considered: keep placeholder path longer and defer until post-release.
-- Follow-up actions: ensure any external examples/scripts use canonical import path only.
-
-## ADR-014: Codex Provider Migration to Embedded Library
+## ADR-013: Codex Provider Migration to Embedded Library
 
 - Status: Accepted
 - Date: 2026-02-28
@@ -810,16 +844,13 @@ Use this template for new decisions.
   - replace `codexacp` references with `claudeacp`; `Preflight()` checks `ANTHROPIC_AUTH_TOKEN != ""` (no binary lookup).
   - `DefaultRuntimeConfig()` delegates to `claudeacp.DefaultRuntimeConfig()`, which reads `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` from environment.
   - wire into server startup: preflight, `/v1/agents` status, `AllowedAgentIDs`, and `TurnAgentFactory`.
-  - for local development, add `replace github.com/beyond5959/acp-adapter => /path/to/local/acp-adapter` in `go.mod`; remove or publish before production release.
 - Consequences:
   - claude availability is purely environment-variable dependent; no binary installation required beyond valid API credentials.
   - `ANTHROPIC_BASE_URL` allows pointing at a compatible proxy or local endpoint (e.g., for testing or corporate gateways).
-  - local `go.mod` replace directive must be removed or updated to a published version before CI/release builds.
 - Alternatives considered:
   - implement as an ACP stdio provider wrapping the `claude` CLI binary (rejected: CLI spawns its own runtime per invocation with higher latency and no direct permission bridge).
   - share implementation with codex via generics/interface (rejected: would couple two independently-versioned runtimes).
 - Follow-up actions:
-  - publish `acp-adapter` with `pkg/claudeacp` to a versioned tag and remove the `replace` directive from `go.mod`.
   - add permission round-trip E2E test for Claude (approved/declined/cancelled paths).
 
 ## ADR-025: Thread-level model switching via ACP session config options
@@ -1202,3 +1233,43 @@ Use this template for new decisions.
   - continue ignoring tool-call updates outside transcript replay (rejected: loses important execution state in the UI).
   - flatten tool-call payloads into `message_delta` text (rejected: destroys structure and makes incremental updates ambiguous).
   - keep tool-call state only in browser memory (rejected: reload/history would still lose it).
+
+## ADR-050: Render assistant turns as ordered UI segments instead of one aggregated bubble
+
+- Status: Accepted
+- Date: 2026-03-19
+- Context:
+  - ngent already persisted `message_delta`, `reasoning_delta`, `tool_call`, and `tool_call_update` turn events in order.
+  - the Web UI still collapsed those into one final assistant bubble plus aggregated reasoning/tool sections, which hid the actual execution sequence and felt noticeably worse than Kimi/Codex-style timelines during tool-heavy turns.
+  - tool-call updates can arrive after later reasoning or assistant text, so the UI needs stable per-tool identity without losing the first-seen ordering.
+- Decision:
+  - extend the frontend assistant-message model with ordered `segments` and rebuild those segments from persisted turn events for finalized history.
+  - treat `message_delta` and `reasoning_delta` as append-only text segments that coalesce only while the stream stays in the same mode.
+  - treat each `tool_call` / `tool_call_update` as a stable segment keyed by `toolCallId`; later updates mutate that segment in place instead of appending a second duplicate card.
+  - render assistant content segments as plain answer blocks rather than chat bubbles so visible answer text sits in the same timeline grammar as thought/tool blocks.
+  - drop the IM-style left/right transcript layout in the Web UI; both user prompts and agent output render in one left-aligned reading column so a user prompt can flow directly into the agent timeline below it.
+  - during streaming, keep only the currently active answer segment in the plain-text typing state; once the stream moves on, completed answer segments should immediately render through the finalized markdown pipeline so tables and lists appear without waiting for turn completion.
+  - during streaming, keep only the currently active thought segment in the expanded/plain-text state; once a later event arrives, the completed thought segment should immediately become a collapsed finalized panel even before the overall turn ends.
+  - apply the same panel model to tool-call segments: keep the currently updating tool call expanded during streaming, but render finalized tool calls as collapsed panels that can be manually reopened.
+  - keep permission-request cards out of the ordered segment collapse model because approval prompts are independent workflow interruptions and should remain immediately visible/actionable.
+  - attach copy actions to finalized assistant content segments instead of the whole assistant message footer, so copy semantics match the visible `Thought / Tool / Answer` segmentation.
+  - keep those per-segment copy actions attached to their own answer blocks, but render each block's timestamp and copy control together on one local meta row with time first, to avoid burning an extra line.
+  - style rendered markdown tables explicitly in answer/thought content instead of relying on browser defaults, so GFM tables remain visually recognizable inside the single-column transcript.
+  - wrap rendered markdown tables in a dedicated fit-content scroll container, so table borders track the natural table width while still allowing horizontal overflow for wide tables.
+  - keep plan updates outside the ordered segment list for now because `plan_update` is a replace-style progress snapshot rather than append-only assistant content.
+- Consequences:
+  - live streaming and history reload now show `Thought -> Tool -> Answer` in the order the agent actually emitted them.
+  - finalized assistant messages can contain multiple visible answer blocks when the model alternates between tool use and visible output.
+  - completed answer blocks can render markdown tables/lists during long-running turns instead of exposing raw markdown syntax until the final completion event.
+  - markdown tables now read as actual tabular UI with cell boundaries and scroll behavior, especially for wider technical summaries.
+  - narrow tables no longer show an oversized empty right gutter inside the table border.
+  - longer in-flight tool runs no longer keep every previous thought segment expanded; completed thoughts collapse as soon as the stream moves on.
+  - tool-call-heavy turns no longer leave large verbose tool cards permanently expanded in the transcript; users see a compact per-tool timeline and can reopen details selectively.
+  - permission prompts continue to render outside those collapsible tool panels, so approval state is not hidden behind a disclosure control.
+  - copying a multi-answer turn no longer merges unrelated answer fragments together; users can copy only the specific answer block they intend.
+  - each finalized answer block now owns its own compact `time + copy` meta row, so copy stays visually attached to that block without adding another stacked control line.
+  - provider-owned `/session-history` replay still falls back to transcript-only bubbles when no turn-event history exists.
+- Alternatives considered:
+  - keep the old single-bubble layout and only restyle the tool/reasoning sections (rejected: still loses chronological structure).
+  - flatten tool/thought events into one markdown transcript string (rejected: harder to update incrementally and loses structured tool metadata).
+  - move `plan_update` into the same segment list immediately (deferred: it is replace-style state and needs separate UX rules).

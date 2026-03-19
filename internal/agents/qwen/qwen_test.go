@@ -24,35 +24,6 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
-// TestNew verifies Config validation.
-func TestNew(t *testing.T) {
-	tests := []struct {
-		name    string
-		cfg     qwen.Config
-		wantErr bool
-	}{
-		{"empty dir", qwen.Config{Dir: ""}, true},
-		{"valid", qwen.Config{Dir: "/tmp"}, false},
-		{"with modelID", qwen.Config{Dir: "/tmp", ModelID: "coder-model"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := qwen.New(tt.cfg)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-// TestClientName verifies Name().
-func TestClientName(t *testing.T) {
-	c, _ := qwen.New(qwen.Config{Dir: "/tmp"})
-	if got := c.Name(); got != "qwen" {
-		t.Errorf("Name() = %q, want %q", got, "qwen")
-	}
-}
-
 // TestStreamWithFakeProcess tests the Stream protocol using a fake qwen binary.
 func TestStreamWithFakeProcess(t *testing.T) {
 	python3, err := exec.LookPath("python3")

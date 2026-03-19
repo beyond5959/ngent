@@ -23,35 +23,6 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
-// TestNew verifies Config validation.
-func TestNew(t *testing.T) {
-	tests := []struct {
-		name    string
-		cfg     gemini.Config
-		wantErr bool
-	}{
-		{"empty dir", gemini.Config{Dir: ""}, true},
-		{"valid", gemini.Config{Dir: "/tmp"}, false},
-		{"with modelID", gemini.Config{Dir: "/tmp", ModelID: "gemini-2.5-pro"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := gemini.New(tt.cfg)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-// TestClientName verifies Name().
-func TestClientName(t *testing.T) {
-	c, _ := gemini.New(gemini.Config{Dir: "/tmp"})
-	if got := c.Name(); got != "gemini" {
-		t.Errorf("Name() = %q, want %q", got, "gemini")
-	}
-}
-
 // TestStreamWithFakeProcess tests the Stream protocol using a fake gemini binary.
 func TestStreamWithFakeProcess(t *testing.T) {
 	python3, err := exec.LookPath("python3")

@@ -1911,24 +1911,6 @@ body {
 .permission-resolved--declined,
 .permission-resolved--timeout  { color: var(--error); }
 
-/* Countdown progress bar */
-.permission-progress {
-  height: 3px;
-  background: var(--border);
-  border-radius: var(--r-full);
-  overflow: hidden;
-  margin-top: 5px;
-  max-width: 440px;
-}
-
-.permission-progress-bar {
-  height: 100%;
-  width: 100%;
-  background: var(--warning);
-  border-radius: var(--r-full);
-  transition: width .1s linear;
-}
-
 /* Permission avatar */
 .perm-avatar {
   background: var(--warning-bg) !important;

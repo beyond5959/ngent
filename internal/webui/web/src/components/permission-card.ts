@@ -65,9 +65,6 @@ function buildHtml(event: PermissionRequiredPayload, timeoutMs: number): string 
         </div>
 
       </div>
-      <div class="permission-progress">
-        <div class="permission-progress-bar" id="perm-bar-${pid}"></div>
-      </div>
     </div>`
 }
 
@@ -94,12 +91,9 @@ function bindCard(
 
     elapsed += TICK_MS
     const remaining = Math.max(0, timeoutMs - elapsed)
-    const pct        = (remaining / timeoutMs) * 100
 
-    const cdEl  = document.getElementById(`perm-cd-${pid}`)
-    const barEl = document.getElementById(`perm-bar-${pid}`)
-    if (cdEl)  cdEl.textContent    = formatRemaining(remaining)
-    if (barEl) barEl.style.width   = `${pct}%`
+    const cdEl = document.getElementById(`perm-cd-${pid}`)
+    if (cdEl) cdEl.textContent = formatRemaining(remaining)
 
     if (remaining === 0 && !resolved) {
       resolved = true
@@ -163,8 +157,6 @@ function showResolved(
   const cardEl    = document.getElementById(`perm-card-${pid}`)
   const actionsEl = document.getElementById(`perm-actions-${pid}`)
   const cdEl      = document.getElementById(`perm-cd-${pid}`)
-  const barEl     = document.getElementById(`perm-bar-${pid}`)
-
   if (!cardEl) {
     onResolved?.(outcome)
     return
@@ -172,15 +164,6 @@ function showResolved(
 
   // Hide countdown text
   if (cdEl) cdEl.textContent = ''
-
-  // Snap progress bar to full (approved) or empty (denied/timeout)
-  if (barEl) {
-    barEl.style.transition = 'none'
-    barEl.style.width      = outcome === 'approved' ? '100%' : '0%'
-    barEl.style.background = outcome === 'approved'
-      ? 'var(--success)'
-      : 'var(--error)'
-  }
 
   // Replace Allow/Deny buttons with a resolved label
   if (actionsEl) {

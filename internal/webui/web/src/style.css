@@ -47,9 +47,9 @@
   --scrollbar-thumb: #d1d1d6;
 
   /* Dimensions */
-  --sidebar-w:      260px;
+  --sidebar-w:      228px;
   --session-sidebar-collapsed-w: 48px;
-  --session-sidebar-w: 296px;
+  --session-sidebar-w: 272px;
   --header-h:       54px;
 
   /* Radii */
@@ -312,16 +312,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.4;
-}
-
-.thread-item-preview {
-  font-size: var(--font-size-sm);
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 1px;
   line-height: 1.4;
 }
 
@@ -658,9 +648,7 @@ body {
 .session-item {
   width: 100%;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
+  align-items: stretch;
   padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: var(--r-lg);
@@ -681,10 +669,19 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-.session-item-title-row {
+.session-item-main {
   width: 100%;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.session-item-title-row {
+  display: flex;
+  align-items: center;
+  flex: 1;
   gap: 8px;
   min-width: 0;
 }
@@ -702,9 +699,11 @@ body {
 }
 
 .session-item-meta {
-  margin-top: 4px;
   color: var(--text-3);
   font-size: var(--font-size-xs);
+  flex-shrink: 0;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .session-status-indicator {
@@ -1158,6 +1157,7 @@ body {
   gap: 6px;
   width: 100%;
   max-width: min(760px, 100%);
+  min-width: 0;
 }
 
 .message--user .message-group {
@@ -1183,10 +1183,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .message-segment {
   width: 100%;
+  min-width: 0;
 }
 
 .message-segment--content {
@@ -1337,6 +1339,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .message-tool-calls__header {
@@ -1355,6 +1358,7 @@ body {
 
 .message-tool-call {
   width: 100%;
+  min-width: 0;
 }
 
 .message-tool-call__toggle {
@@ -1370,6 +1374,7 @@ body {
   cursor: pointer;
   font: inherit;
   text-align: left;
+  min-width: 0;
 }
 
 .message-tool-call__toggle:hover {
@@ -1425,8 +1430,11 @@ body {
 .message-tool-call__toggle-meta {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .message-tool-call__chevron {
@@ -1451,6 +1459,7 @@ body {
 
 .message-tool-call__panel {
   margin-top: 8px;
+  min-width: 0;
 }
 
 .message-tool-call__card {
@@ -1459,6 +1468,8 @@ body {
   border: 1px solid var(--border);
   background: var(--bg-2);
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message-tool-call__card--running,
@@ -1480,32 +1491,44 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .message-tool-call__title {
+  flex: 1 1 240px;
+  min-width: 0;
   font-size: var(--font-size-sm);
   font-weight: 700;
   line-height: 1.4;
   color: var(--text-1);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-tool-call__meta {
   display: flex;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+  min-width: 0;
 }
 
 .message-tool-call__tag {
   display: inline-flex;
   align-items: center;
   min-height: 20px;
+  max-width: 100%;
   padding: 0 7px;
   border-radius: var(--r-full);
   background: var(--bg-3);
   color: var(--text-2);
   font-size: var(--font-size-xs);
   text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .message-tool-call__tag--status {
@@ -1514,6 +1537,7 @@ body {
 
 .message-tool-call__section {
   margin-top: 10px;
+  min-width: 0;
 }
 
 .message-tool-call__section-title {
@@ -1534,6 +1558,8 @@ body {
   margin-bottom: 4px;
   font-size: var(--font-size-xs);
   color: var(--text-3);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-tool-call__diff-block + .message-tool-call__diff-block {
@@ -1545,11 +1571,14 @@ body {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
+  width: 100%;
+  min-width: 0;
 }
 
 .message-tool-call__pre {
   margin: 0;
   width: 100%;
+  max-width: 100%;
   padding: 8px 10px;
   border-radius: var(--r-md);
   background: var(--bg);
@@ -1600,23 +1629,29 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .message-tool-call__location-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .message-tool-call__path {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   color: var(--text-1);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-tool-call__location-meta {
   font-size: var(--font-size-xs);
   color: var(--text-3);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-reasoning {
@@ -3005,9 +3040,9 @@ button:disabled, .btn:disabled {
   text-decoration: underline;
 }
 
-/* Widen agent message group to accommodate code blocks */
+/* Keep agent responses aligned with the same message width as user prompts. */
 .message--agent .message-group {
-  max-width: min(660px, 90%);
+  max-width: min(760px, 100%);
 }
 
 /* ===== Code block ===== */

@@ -10,7 +10,7 @@
 
 ## What is Ngent?
 
-Ngent acts as a bridge between **ACP-compatible agents** (like Claude Code, Codex, Gemini CLI, Kimi CLI) and **web clients**:
+Ngent acts as a bridge between **ACP-compatible agents** (like Codex, Kimi CLI, OpenCode, etc.) and **web clients**:
 
 ```
 ┌─────────────┐     HTTP/WebSocket     ┌─────────┐     JSON-RPC (ACP)     ┌──────────────┐
@@ -21,13 +21,13 @@ Ngent acts as a bridge between **ACP-compatible agents** (like Claude Code, Code
 
 ### How it Works
 
-1. **ACP Protocol**: Agents like Claude Code, Codex, and Kimi CLI expose their capabilities through the Agent Client Protocol (ACP) — a JSON-RPC protocol over stdio
+1. **ACP Protocol**: Agents like Codex, Kimi CLI, OpenCode, etc. expose their capabilities through the Agent Client Protocol (ACP) — a JSON-RPC protocol over stdio
 2. **Ngent Bridge**: Ngent spawns these CLI agents as child processes and translates their ACP protocol into HTTP/JSON APIs
 3. **Web Interface**: Provides a built-in Web UI and REST API for creating conversations, sending prompts, and managing permissions
 
 ### Features
 
-- 🔌 **Multi-Agent Support**: Works with any ACP-compatible agent (Codex, Claude Code, Gemini, Kimi, Qwen, OpenCode)
+- 🔌 **Multi-Agent Support**: Works with any ACP-compatible agent (Codex, Kimi CLI, OpenCode, etc.)
 - 🌐 **Web API**: HTTP/JSON endpoints with Server-Sent Events (SSE) for streaming responses
 - 🖥️ **Built-in UI**: No separate frontend deployment needed — the web UI is embedded in the binary
 - 🔒 **Permission Control**: Fine-grained approval system for agent file/system operations
@@ -45,6 +45,7 @@ Ngent acts as a bridge between **ACP-compatible agents** (like Claude Code, Code
 | Kimi CLI | ✅ |
 | Qwen Code | ✅ |
 | OpenCode | ✅ |
+| BLACKBOX AI | ✅ |
 
 
 

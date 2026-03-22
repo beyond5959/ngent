@@ -4,7 +4,7 @@
 
 Code Agent Hub Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
 The system targets ACP-compatible agent providers, lazily starts per-thread agents, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
-Current built-in providers are `codex`, `claude`, `opencode`, `gemini`, `kimi`, and `qwen`.
+Current built-in providers are `codex`, `claude`, `opencode`, `gemini`, `kimi`, `qwen`, and `blackbox`.
 This file is the source of milestone progress, validation commands, and next actions.
 
 ## Current Milestone
@@ -12,6 +12,31 @@ This file is the source of milestone progress, validation commands, and next act
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
 ## Latest Update (2026-03-22)
+
+- `Post-M8` BLACKBOX Web UI tool-call rendering normalization completed:
+  - dropped standalone whitespace-only assistant chunks when they arrive as isolated separators around tool calls, preventing BLACKBOX turns from rendering large blank answer blocks or effectively empty assistant messages.
+  - widened Web UI tool-call payload handling so `content` / `locations` no longer require array-only shapes; single-object payloads are normalized and still rendered.
+  - improved tool-call titles for generic BLACKBOX payloads such as search calls titled only `.` by falling back to kind/path-derived labels.
+  - validation:
+    - pending: `cd internal/webui/web && npm run build`
+    - pending: `go test ./...`
+
+- `Post-M8` BLACKBOX AI ACP integration completed:
+  - added `internal/agents/blackbox` on top of the shared `acpcli` driver, using `blackbox --experimental-acp` with stdout-noise tolerance because the CLI can emit non-JSON process/telemetry lines before or between ACP frames.
+  - wired `blackbox` into startup preflight, `/v1/agents`, thread allowlist, turn factory, and agent-model discovery flow.
+  - confirmed against local `blackbox 1.2.47` ACP probing that:
+    - `initialize` and `session/new` succeed with the standard ACP handshake.
+    - current initialize capabilities advertise `loadSession=false`.
+    - real `session/load` returns `-32601 method not found`, so existing-session replay and session sidebar resume remain unavailable for now.
+    - ACP startup itself does not require explicitly passing `BLACKBOX_API_KEY` as long as the local BLACKBOX CLI already has a usable auth method configured; actual prompt execution still depends on valid upstream auth/network state.
+  - added fake-process coverage for:
+    - streaming with noisy stdout.
+    - model forwarding through startup args plus ACP `session/new` / `session/prompt`.
+    - fail-closed structured permission bridging.
+    - unsupported `session/list` behavior when `loadSession=false`.
+  - validation:
+    - pending: `cd internal/webui/web && npm run build`
+    - pending: `go test ./...`
 
 - `Post-M8` Web UI agent-list overflow trigger hover-only reveal completed:
   - changed the agent-list three-dot trigger to stay hidden by default and reveal only on row hover, keyboard focus, or while its menu is open.

@@ -109,6 +109,7 @@ const codexIconURL = '/codex-icon.png'
 const geminiIconURL = '/gemini-icon.png'
 const claudeIconURL = '/claude-icon.png'
 const qwenIconURL = '/qwen-icon.png'
+const blackboxIconURL = '/blackbox.png'
 
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
@@ -240,13 +241,19 @@ function cloneToolCalls(toolCalls: ToolCall[] | null | undefined): ToolCall[] | 
       title: rawToolCall.title?.trim() || undefined,
       kind: rawToolCall.kind?.trim() || undefined,
       status: rawToolCall.status?.trim() || undefined,
-      content: Array.isArray(rawToolCall.content) ? cloneJSONValue(rawToolCall.content) : undefined,
-      locations: Array.isArray(rawToolCall.locations) ? cloneJSONValue(rawToolCall.locations) : undefined,
+      content: normalizeToolCallItems(rawToolCall.content),
+      locations: normalizeToolCallItems(rawToolCall.locations),
       rawInput: rawToolCall.rawInput === undefined ? undefined : cloneJSONValue(rawToolCall.rawInput),
       rawOutput: rawToolCall.rawOutput === undefined ? undefined : cloneJSONValue(rawToolCall.rawOutput),
     })
   }
   return cloned.length ? cloned : undefined
+}
+
+function normalizeToolCallItems(value: unknown): unknown[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (Array.isArray(value)) return cloneJSONValue(value)
+  return [cloneJSONValue(value)]
 }
 
 function nextMessageSegmentID(prefix: string, kind: MessageSegment['kind'], index: number): string {
@@ -290,6 +297,9 @@ function appendTextSegment(
 
   const next = cloneMessageSegments(segments) ?? []
   const last = next[next.length - 1]
+  if (kind === 'content' && !delta.trim() && last?.kind !== 'content') {
+    return next
+  }
   if (last?.kind === kind) {
     next[next.length - 1] = {
       ...last,
@@ -358,6 +368,10 @@ function messageSegmentsContent(segments: MessageSegment[] | null | undefined): 
     .join('')
 }
 
+function hasVisibleContent(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
 function messageSegmentsReasoning(segments: MessageSegment[] | null | undefined): string {
   return (cloneMessageSegments(segments) ?? [])
     .filter(segment => segment.kind === 'reasoning')
@@ -374,7 +388,7 @@ function messageSegmentsToolCalls(segments: MessageSegment[] | null | undefined)
 }
 
 function messageHasContentSegment(segments: MessageSegment[] | null | undefined): boolean {
-  return (segments ?? []).some(segment => segment.kind === 'content' && !!segment.content)
+  return (segments ?? []).some(segment => segment.kind === 'content' && hasVisibleContent(segment.content))
 }
 
 function applyToolCallEvent(toolCalls: ToolCall[], payload: Record<string, unknown>): ToolCall[] {
@@ -402,10 +416,10 @@ function applyToolCallEvent(toolCalls: ToolCall[], payload: Record<string, unkno
       : undefined
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'content')) {
-    merged.content = Array.isArray(payload.content) ? cloneJSONValue(payload.content) : undefined
+    merged.content = normalizeToolCallItems(payload.content)
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'locations')) {
-    merged.locations = Array.isArray(payload.locations) ? cloneJSONValue(payload.locations) : undefined
+    merged.locations = normalizeToolCallItems(payload.locations)
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'rawInput')) {
     merged.rawInput = payload.rawInput === undefined || payload.rawInput === null
@@ -554,7 +568,7 @@ function buildMessageSegmentsFromTurn(
     }
   }
 
-  if (!messageHasContentSegment(segments) && responseText) {
+  if (!messageHasContentSegment(segments) && hasVisibleContent(responseText)) {
     segments = appendTextSegment(segments, 'content', responseText, idPrefix)
   }
 
@@ -2048,6 +2062,9 @@ function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): stri
   if (normalized === 'qwen') {
     return `<img src="${qwenIconURL}" alt="Qwen Code" class="${cls}" loading="lazy" decoding="async">`
   }
+  if (normalized === 'blackbox') {
+    return `<img src="${blackboxIconURL}" alt="BLACKBOX AI" class="${cls}" loading="lazy" decoding="async">`
+  }
   return escHtml((agentId || 'A').slice(0, 1).toUpperCase())
 }
 
@@ -2059,6 +2076,7 @@ function hasAgentAvatarIcon(agentId: string): boolean {
     || normalized === 'kimi'
     || normalized === 'opencode'
     || normalized === 'qwen'
+    || normalized === 'blackbox'
 }
 
 type ThreadActivityIndicator = 'loading' | 'done' | null
@@ -2549,10 +2567,49 @@ function formatToolCallLabel(value: string | undefined): string {
 
 function toolCallDisplayTitle(toolCall: ToolCall): string {
   const title = toolCall.title?.trim()
-  if (title) return title
+  if (title && !isGenericToolCallTitle(title)) return title
+  const path = toolCallPreviewPath(toolCall)
   const kind = formatToolCallLabel(toolCall.kind)
+  if (kind && path) return `${kind} · ${path}`
   if (kind) return kind
+  if (title) return title
   return 'Tool call'
+}
+
+function isGenericToolCallTitle(title: string): boolean {
+  switch (title.trim()) {
+    case '':
+    case '.':
+    case '/':
+      return true
+    default:
+      return false
+  }
+}
+
+function toolCallPreviewPath(toolCall: ToolCall): string {
+  const locationPath = firstToolCallPath(toolCall.locations)
+  if (locationPath) return locationPath
+  const contentPath = firstToolCallPath(toolCall.content)
+  if (contentPath) return contentPath
+  if (toolCall.rawInput && typeof toolCall.rawInput === 'object') {
+    const rawInput = toolCall.rawInput as Record<string, unknown>
+    for (const key of ['path', 'filepath', 'filePath', 'directory', 'dir']) {
+      const value = rawInput[key]
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+  }
+  return ''
+}
+
+function firstToolCallPath(items: unknown[] | undefined): string {
+  for (const item of items ?? []) {
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    const path = typeof record.path === 'string' ? record.path.trim() : ''
+    if (path) return path
+  }
+  return ''
 }
 
 function toolCallStatusClassName(status: string | undefined): string {
@@ -2806,7 +2863,7 @@ function renderMessageSegmentContentHTML(
   timestamp: string,
 ): string {
   const content = segment.content ?? ''
-  if (!streaming && !content) return ''
+  if (!streaming && !hasVisibleContent(content)) return ''
 
   let blockClass = 'message-answer'
   let blockContent = ''
@@ -4112,7 +4169,11 @@ function handleSend(): void {
       // Clear stream tracking BEFORE addMessageToStore (so subscribe calls updateMessageList)
       const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const finalContent = messageSegmentsContent(finalSegments) || (streamBufferByScope.get(capturedScopeKey) ?? '')
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const finalContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
       const finalToolCalls = messageSegmentsToolCalls(finalSegments)
       const finalReasoning = messageSegmentsReasoning(finalSegments)
       clearScopeStreamRuntime(capturedScopeKey)
@@ -4145,7 +4206,11 @@ function handleSend(): void {
     onError({ code, message: msg }) {
       const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const partialContent = messageSegmentsContent(finalSegments) || (streamBufferByScope.get(capturedScopeKey) ?? '')
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const partialContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
       const finalToolCalls = messageSegmentsToolCalls(finalSegments)
       const finalReasoning = messageSegmentsReasoning(finalSegments)
       clearScopeStreamRuntime(capturedScopeKey)
@@ -4178,7 +4243,11 @@ function handleSend(): void {
     onDisconnect() {
       const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const partialContent = messageSegmentsContent(finalSegments) || (streamBufferByScope.get(capturedScopeKey) ?? '')
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const partialContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
       const finalToolCalls = messageSegmentsToolCalls(finalSegments)
       const finalReasoning = messageSegmentsReasoning(finalSegments)
       clearScopeStreamRuntime(capturedScopeKey)

@@ -389,6 +389,23 @@
 - Follow-up plan:
   - if upstream CLIs eventually expose model/config catalogs without creating sessions, consider adopting those non-session surfaces so ngent can prefill metadata without reintroducing empty probe sessions.
 
+- ID: KI-037
+- Title: BLACKBOX ACP currently lacks session resume and catalog discovery surfaces
+- Status: Open
+- Severity: Medium
+- Affects: `blackbox` threads, `/session-history`, session sidebar browsing, and model picker/catalog endpoints for BLACKBOX
+- Symptom:
+  - local probing on 2026-03-22 against `blackbox 1.2.47` showed `initialize` advertising `agentCapabilities.loadSession=false`.
+  - real `session/load` currently returns `-32601 method not found`.
+  - `session/new` currently returns only `sessionId`, without `models.availableModels` or `configOptions`.
+  - BLACKBOX can also emit stdout noise unrelated to ACP frames; ngent now tolerates that noise during transport, but the missing ACP resume/catalog surfaces still limit UX.
+- Workaround:
+  - use BLACKBOX through normal ngent thread turns; ngent-local `/history` still preserves turns created through ngent itself.
+  - if a specific model must be forced, set `agentOptions.modelId` directly via API/advanced thread options even though no picker/catalog is currently available.
+- Follow-up plan:
+  - keep validating newer BLACKBOX CLI releases for `session/list` / `session/load` / model-catalog support.
+  - wire those surfaces into ngent immediately once upstream ACP exposes them consistently.
+
 ## Recently Closed
 
 - ID: KI-033

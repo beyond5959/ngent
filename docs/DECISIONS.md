@@ -50,6 +50,34 @@
 - ADR-047: Defer thread config-option apply until the next turn boundary. (Accepted)
 - ADR-049: Align Web UI navigation with a left agent rail and left session panel. (Accepted)
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
+- ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
+
+## ADR-051: BLACKBOX AI ACP Provider Integration Via Shared ACP CLI Driver
+
+- Status: Accepted
+- Date: 2026-03-22
+- Context:
+  - BLACKBOX AI CLI now exposes ACP mode through `blackbox --experimental-acp`, and the user already has the local CLI installed/configured.
+  - local probing against `blackbox 1.2.47` showed that the CLI can emit non-JSON stdout noise (process-info and telemetry-related lines) before or between ACP frames.
+  - the same probing showed current ACP capability limits:
+    - `initialize` advertises `agentCapabilities.loadSession=false`.
+    - real `session/load` returns `-32601 method not found`.
+    - `session/new` currently does not expose `models.availableModels` or `configOptions`.
+  - the CLI can start ACP without explicitly passing `BLACKBOX_API_KEY` when another local auth method is already configured, but prompt execution still depends on valid upstream auth/network readiness.
+- Decision:
+  - add `internal/agents/blackbox` as a first-class provider on top of the shared `internal/agents/acpcli` driver.
+  - start BLACKBOX with `blackbox --experimental-acp`, plus hub-side compatibility flags `--skip-update` and `--telemetry=false`.
+  - enable `acpstdio.ConnOptions.AllowStdoutNoise` for BLACKBOX so provider stdout noise does not corrupt the JSON-RPC stream.
+  - forward thread-selected `modelId` through both process startup (`--model`) and ACP request hints (`session/new.model` / `modelId`, `session/prompt.model`).
+  - keep session browsing/replay unavailable until BLACKBOX exposes standard ACP resume surfaces.
+- Consequences:
+  - ngent can now run BLACKBOX turns through the same direct ACP path as Qwen/OpenCode/Gemini/Kimi without introducing another custom lifecycle stack.
+  - BLACKBOX threads remain usable for normal multi-turn conversation through ngent's own persisted history/context injection even though provider-owned `session/load` is not available.
+  - the Web UI/API will not show resumable BLACKBOX session history or model catalogs until upstream ACP surfaces them.
+- Alternatives considered:
+  - delay BLACKBOX support until `session/load` and model discovery are fully available upstream.
+  - build a provider-local non-ACP integration path just for BLACKBOX.
+  - require `BLACKBOX_API_KEY` unconditionally at ngent startup instead of reusing whichever auth method the local CLI already has configured.
 
 ## ADR-050: Keep The Left Agent Rail Permanently Expanded
 

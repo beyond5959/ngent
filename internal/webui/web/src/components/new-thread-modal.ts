@@ -22,6 +22,7 @@ const agentIcons: Record<string, string> = {
   kimi: `<span class="agent-card-kimi-icon" role="img" aria-label="Kimi CLI"></span>`,
   opencode: `<span class="agent-card-opencode-icon" role="img" aria-label="OpenCode"></span>`,
   qwen: `<img src="/qwen-icon.png" width="32" height="32" alt="Qwen Code" style="border-radius:8px;display:block;">`,
+  blackbox: `<img src="/blackbox.png" width="32" height="32" alt="BLACKBOX AI" style="border-radius:8px;display:block;">`,
 }
 
 const iconAgentDefault = `<svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">

@@ -7,7 +7,7 @@ Build a local-first Code Agent Hub Server that:
 - serves HTTP/JSON APIs.
 - streams turn events via SSE (`text/event-stream`).
 - supports multi-client and multi-thread execution.
-- is designed to support ACP-compatible agents (for example Claude Code, Gemini, Kimi, OpenCode, Codex).
+- is designed to support ACP-compatible agents (for example Claude Code, Gemini, Kimi, OpenCode, Qwen, BLACKBOX AI, Codex).
 - persists interaction state/events in SQLite.
 - forwards runtime permissions to the owning client with fail-closed behavior.
 
@@ -19,7 +19,7 @@ Modules:
 - `internal/runtime`: thread controller, turn state machine, cancellation coordination.
 - `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
   - per-turn provider resolution selects implementation by thread metadata (agent id + cwd).
-  - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, and `kimi`; provider-specific hooks own command startup, request parameter shaping, permission mapping, and cancel quirks.
+  - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, `kimi`, and `blackbox`; provider-specific hooks own command startup, request parameter shaping, permission mapping, and cancel quirks.
 - `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
 - `internal/sse`: event formatting, stream fanout, resume helpers.
 - `internal/storage`: SQLite repository and migration management.
@@ -40,7 +40,7 @@ Modules:
 - On server boot: no agent process is started.
 - On first thread usage: runtime requests provider instance for that thread.
 - On first turn execution for embedded-provider thread (currently `codex`): server creates the in-process runtime and initializes ACP session lazily.
-- Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
+- Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`, `blackbox`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
 - Embedded runtime `session/new` is created with `cwd=thread.cwd` (validated as absolute path at thread creation).
 - If `thread.agent_options_json` contains `modelId` / `configOverrides`, those values are the persisted desired session config for the thread.
 - Provider instances are cached per thread + session/fresh-session scope and reclaimed by idle TTL (`--agent-idle-ttl`) when that scope has no active turn.
@@ -140,7 +140,7 @@ See `docs/API.md` for endpoint and schema contracts.
   - request parameter schemas
   - permission-request response encoding
   - cancel strategy
-  - provider quirks such as Kimi model/reasoning startup hints and Gemini stdout-noise filtering
+  - provider quirks such as Kimi model/reasoning startup hints and Gemini/BLACKBOX stdout-noise filtering
 - `internal/agents/acpstdio` now supports opt-in stdout-noise tolerance so providers like Gemini can ignore non-JSON stdout lines without maintaining a separate transport implementation.
 
 ## 10. Error Contract
@@ -315,6 +315,49 @@ and upstream ACP schema:
 - Active thread header uses model dropdown + apply button (runtime options from `GET /v1/agents/{agentId}/models`):
   - apply calls `PATCH /v1/threads/{threadId}`.
   - controls are disabled while model list is loading or while a turn is streaming.
+
+## 14. BLACKBOX AI ACP Integration (2026-03-22)
+
+### 14.1 Objective and Scope
+
+- add `blackbox` as a first-class ACP provider using the BLACKBOX CLI ACP mode.
+- preserve existing runtime/security invariants:
+  - one active turn per `(thread, session)` scope.
+  - fail-closed permission workflow.
+  - allowlisted `agent` and absolute+allowed `cwd` validation.
+  - protocol-only stdout/HTTP payloads, JSON logs on stderr.
+
+### 14.2 Observed BLACKBOX ACP Protocol Profile
+
+The integration follows the official ACP startup form `blackbox --experimental-acp` plus local probing of `blackbox 1.2.47`:
+
+- startup/runtime:
+  - BLACKBOX currently emits extra non-JSON stdout lines (for example process-info / telemetry errors) before or between ACP frames.
+  - ngent must therefore use stdout-noise-tolerant ACP transport for BLACKBOX.
+  - the hub also adds `--skip-update` and `--telemetry=false` when launching ACP mode.
+- ACP requests:
+  - `initialize` works with `protocolVersion: 1` and `clientCapabilities.fs`.
+  - `session/new` accepts `cwd`, `mcpServers: []`, and optional model hints.
+  - `session/prompt` uses ACP content blocks (`[{type:"text", text:...}]`) and accepts optional `model`.
+- current upstream capability limits:
+  - `initialize` currently advertises `agentCapabilities.loadSession=false`.
+  - real `session/load` returns `-32601 method not found`.
+  - `session/new` currently returns no `models.availableModels` or `configOptions`.
+- auth:
+  - ACP startup itself does not require explicitly passing `BLACKBOX_API_KEY` when the local CLI already has another usable auth method configured.
+  - actual prompt execution still depends on valid BLACKBOX/upstream auth and network readiness.
+
+### 14.3 Server Wiring
+
+- add `internal/agents/blackbox` provider package with:
+  - `Preflight()` checking `blackbox` in PATH.
+  - `DiscoverModels()` wired through the shared ACP `session/new` probe, even though current upstream returns no model catalog.
+  - shared structured permission handling and `session/cancel` support.
+- wire `blackbox` into:
+  - startup preflight diagnostics and `/v1/agents`.
+  - thread agent allowlist and `TurnAgentFactory`.
+  - shared model-discovery/config-catalog plumbing.
+- keep session browsing/replay unsupported until upstream BLACKBOX ACP exposes `session/list` / `session/load`.
 
 ## 13. Thread Session Config Options and Immediate Model Switch (2026-03-05)
 

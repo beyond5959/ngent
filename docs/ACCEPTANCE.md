@@ -172,6 +172,25 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2E -count=1 -v -timeout 240s` (pass)
   - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiE2ESmoke -count=1 -v -timeout 180s` (pass)
 
+## Requirement 16B: BLACKBOX AI Agent
+
+- Operation: verify blackbox provider is listed and can complete a turn over ACP.
+- Expected:
+  - `GET /v1/agents` includes `{"id":"blackbox","name":"BLACKBOX AI","status":"available"}` when `blackbox` is in PATH, and omits `blackbox` entirely when the binary is unavailable.
+  - thread creation accepts `agent=blackbox`.
+  - turn streaming emits `message_delta` and finishes with `turn_completed` (or explicit upstream error envelope).
+  - current upstream BLACKBOX ACP capability limits are reflected accurately: no `session/load` / session sidebar replay and no ACP model catalog until upstream exposes those surfaces.
+- Verification commands:
+  - `blackbox --version`
+  - `go test ./internal/agents/blackbox -count=1`
+  - `E2E_BLACKBOX=1 go test ./internal/agents/blackbox -run TestBlackboxE2ESmoke -v -timeout 120s`
+  - `go test ./cmd/ngent ./internal/httpapi -count=1`
+- Latest observed validation (2026-03-22):
+  - local CLI probe: `blackbox --version` returned `1.2.47`
+  - local ACP probe: `initialize` and `session/new` passed; `session/load` returned `-32601 method not found`
+  - fake-process/unit path: pending this change set's validation run
+  - real smoke: not run in the restricted sandbox environment used for this implementation pass
+
 ## Requirement 17: Thread Delete Lifecycle
 
 - Operation: delete an existing thread from API/UI, verify ownership behavior, conflict behavior, and provider cleanup.

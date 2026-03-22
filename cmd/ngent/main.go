@@ -254,6 +254,38 @@ func main() {
 				return nil, fmt.Errorf("unsupported agent %q", agentID)
 			}
 		},
+		AgentSessionsFactory: func(ctx context.Context, agentID, cwd, cursor string) (agentimpl.SessionListResult, error) {
+			req := agentimpl.SessionListRequest{CWD: cwd, Cursor: cursor}
+			switch agentID {
+			case agentimpl.AgentIDCodex:
+				if codexPreflightErr != nil {
+					return agentimpl.SessionListResult{}, agentimpl.ErrSessionListUnsupported
+				}
+				client, err := codexagent.New(codexagent.Config{
+					Dir:           cwd,
+					Name:          "codex-embedded",
+					RuntimeConfig: codexRuntimeConfig,
+				})
+				if err != nil {
+					return agentimpl.SessionListResult{}, err
+				}
+				return queryAgentSessions(ctx, client, req)
+			case agentimpl.AgentIDClaude:
+				if claudePreflightErr != nil {
+					return agentimpl.SessionListResult{}, agentimpl.ErrSessionListUnsupported
+				}
+				client, err := claudeagent.New(claudeagent.Config{
+					Dir:  cwd,
+					Name: "claude-embedded",
+				})
+				if err != nil {
+					return agentimpl.SessionListResult{}, err
+				}
+				return queryAgentSessions(ctx, client, req)
+			default:
+				return agentimpl.SessionListResult{}, agentimpl.ErrSessionListUnsupported
+			}
+		},
 		ContextRecentTurns: *contextRecentTurns,
 		ContextMaxChars:    *contextMaxChars,
 		CompactMaxChars:    *compactMaxChars,
@@ -626,6 +658,15 @@ func newAgentConfigCatalogEntry(
 		ModelID:           modelID,
 		ConfigOptionsJSON: string(encoded),
 	}, nil
+}
+
+func queryAgentSessions(ctx context.Context, lister agentimpl.SessionLister, req agentimpl.SessionListRequest) (agentimpl.SessionListResult, error) {
+	if closer, ok := lister.(io.Closer); ok {
+		defer func() {
+			_ = closer.Close()
+		}()
+	}
+	return lister.ListSessions(ctx, req)
 }
 
 func queryAgentConfigOptions(ctx context.Context, manager agentimpl.ConfigOptionManager) ([]agentimpl.ConfigOption, error) {

@@ -30,9 +30,27 @@ import (
 
 // AgentInfo describes one supported agent entry returned by /v1/agents.
 type AgentInfo struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Status      string       `json:"status"`
+	AdapterInfo *AdapterInfo `json:"adapterInfo,omitempty"`
+}
+
+// AdapterInfo carries adapter name and version from the ACP initialize handshake.
+type AdapterInfo struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+// AgentProfile is one named runtime profile preset.
+type AgentProfile struct {
+	Name               string `json:"name"`
+	Model              string `json:"model,omitempty"`
+	ThoughtLevel       string `json:"thoughtLevel,omitempty"`
+	ApprovalPolicy     string `json:"approvalPolicy,omitempty"`
+	Sandbox            string `json:"sandbox,omitempty"`
+	Personality        string `json:"personality,omitempty"`
+	SystemInstructions string `json:"systemInstructions,omitempty"`
 }
 
 // ThreadStore is the storage contract required by HTTP APIs.
@@ -89,6 +107,8 @@ type Config struct {
 	ContextMaxChars      int
 	CompactMaxChars      int
 	PermissionTimeout    time.Duration
+	// AgentProfilesMap maps agentID → named profiles for that agent.
+	AgentProfilesMap map[string][]AgentProfile
 	// FrontendHandler, if non-nil, is served for any request that does not
 	// match /healthz or /v1/*. Intended for the embedded web UI.
 	FrontendHandler http.Handler
@@ -105,6 +125,7 @@ type Server struct {
 	turnAgentFactory     TurnAgentFactory
 	agentModelsFactory   AgentModelsFactory
 	agentSessionsFactory AgentSessionsFactory
+	agentProfilesMap     map[string][]AgentProfile
 	agentIdleTTL         time.Duration
 	logger               *slog.Logger
 	contextRecentTurns   int
@@ -227,6 +248,7 @@ func New(cfg Config) *Server {
 		turnAgentFactory:     turnAgentFactory,
 		agentModelsFactory:   cfg.AgentModelsFactory,
 		agentSessionsFactory: cfg.AgentSessionsFactory,
+		agentProfilesMap:     cfg.AgentProfilesMap,
 		agentIdleTTL:         agentIdleTTL,
 		logger:               logger,
 		contextRecentTurns:   contextRecentTurns,
@@ -321,6 +343,10 @@ func (s *Server) routeV1(w http.ResponseWriter, r *http.Request, clientID string
 	}
 	if agentID, ok := parseAgentModelsPath(r.URL.Path); ok {
 		s.handleAgentModels(w, r, agentID)
+		return
+	}
+	if agentID, ok := parseAgentProfilesPath(r.URL.Path); ok {
+		s.handleAgentProfiles(w, r, agentID)
 		return
 	}
 	if agentID, ok := parseAgentSessionsPath(r.URL.Path); ok {

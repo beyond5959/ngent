@@ -35,6 +35,9 @@ func NewACPNotificationHandler(
 			if update.Delta != "" && onDelta != nil {
 				return onDelta(update.Delta)
 			}
+			if update.MessageContent != nil {
+				return NotifyMessageContent(ctx, *update.MessageContent)
+			}
 		case ACPUpdateTypeThoughtMessageChunk:
 			return NotifyReasoningDelta(ctx, update.Delta)
 		case ACPUpdateTypePlan:

@@ -2,6 +2,8 @@
 
 This repository implements the **Ngent** — a local-first Go service exposing HTTP/JSON APIs and SSE streaming for multi-client, multi-thread ACP-compatible agent turns.
 
+ACP protocol reference: <https://agentclientprotocol.com/>
+
 ## Mandatory Rules
 
 - MUST use Go 1.24.

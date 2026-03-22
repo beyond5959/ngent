@@ -33,14 +33,15 @@ type PlanEntry struct {
 
 // ACPUpdate is one normalized ACP session/update payload.
 type ACPUpdate struct {
-	Type        string
-	Role        string
-	Delta       string
-	MessageID   string
-	Timestamp   string
-	PlanEntries []PlanEntry
-	Commands    []SlashCommand
-	ToolCall    *ACPToolCall
+	Type           string
+	Role           string
+	Delta          string
+	MessageID      string
+	Timestamp      string
+	PlanEntries    []PlanEntry
+	Commands       []SlashCommand
+	MessageContent *ACPMessageContent
+	ToolCall       *ACPToolCall
 }
 
 // ParseACPUpdate normalizes provider-specific session/update payloads.
@@ -98,24 +99,22 @@ func ParseACPUpdate(raw json.RawMessage) (ACPUpdate, error) {
 			),
 		}, nil
 	case ACPUpdateTypeAgentMessageChunk, ACPUpdateTypeUserMessageChunk, ACPUpdateTypeThoughtMessageChunk, acpUpdateTypeAgentThoughtChunk:
-		content, ok, err := parseACPUpdateTextContent(payload.Update.Content)
+		delta, isText, rawContent, hasContent, err := parseACPUpdateMessageContent(payload.Update.Content)
 		if err != nil {
 			return ACPUpdate{}, err
 		}
-		if !ok {
-			return ACPUpdate{Type: normalizeACPUpdateType(payload.Update.SessionUpdate)}, nil
-		}
+		normalizedType := normalizeACPUpdateType(payload.Update.SessionUpdate)
 		role := ""
-		switch normalizeACPUpdateType(payload.Update.SessionUpdate) {
+		switch normalizedType {
 		case ACPUpdateTypeAgentMessageChunk:
 			role = "assistant"
 		case ACPUpdateTypeUserMessageChunk:
 			role = "user"
 		}
-		return ACPUpdate{
-			Type:  normalizeACPUpdateType(payload.Update.SessionUpdate),
+		update := ACPUpdate{
+			Type:  normalizedType,
 			Role:  role,
-			Delta: content,
+			Delta: delta,
 			MessageID: normalizeACPUpdateString(
 				payload.Update.MessageID,
 				payload.MessageID,
@@ -128,7 +127,14 @@ func ParseACPUpdate(raw json.RawMessage) (ACPUpdate, error) {
 				acpUpdateMetaString(payload.Update.Meta, "timestamp"),
 				acpUpdateMetaString(payload.Meta, "timestamp"),
 			),
-		}, nil
+		}
+		if !isText && hasContent && normalizedType == ACPUpdateTypeAgentMessageChunk {
+			update.MessageContent = &ACPMessageContent{
+				Content:    rawContent,
+				HasContent: true,
+			}
+		}
+		return update, nil
 	case ACPUpdateTypePlan:
 		return ACPUpdate{
 			Type:        ACPUpdateTypePlan,
@@ -213,26 +219,27 @@ func parseACPUpdateSlashCommands(rawCommands []json.RawMessage) []SlashCommand {
 	return CloneSlashCommands(commands)
 }
 
-func parseACPUpdateTextContent(raw json.RawMessage) (string, bool, error) {
+func parseACPUpdateMessageContent(raw json.RawMessage) (string, bool, json.RawMessage, bool, error) {
 	raw = json.RawMessage(strings.TrimSpace(string(raw)))
 	if len(raw) == 0 || string(raw) == "null" {
-		return "", false, nil
+		return "", false, nil, false, nil
 	}
 
-	var content struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+	var record map[string]any
+	if err := json.Unmarshal(raw, &record); err != nil {
+		// Providers can emit non-text payloads with a schema that differs from
+		// standard text chunks. Preserve those raw blocks instead of aborting
+		// the whole turn or transcript replay.
+		return "", false, cloneACPUpdateJSON(raw), true, nil
 	}
-	if err := json.Unmarshal(raw, &content); err != nil {
-		// Providers like Qwen emit non-text updates such as tool_call_update
-		// whose content is an array/object with a different schema. Those
-		// updates should be ignored rather than aborting the whole replay.
-		return "", false, nil
+
+	contentType, _ := record["type"].(string)
+	text, hasText := record["text"].(string)
+	contentType = strings.TrimSpace(contentType)
+	if contentType == "text" || (contentType == "" && hasText) {
+		return text, true, cloneACPUpdateJSON(raw), true, nil
 	}
-	if contentType := strings.TrimSpace(content.Type); contentType != "" && contentType != "text" {
-		return "", false, nil
-	}
-	return content.Text, true, nil
+	return "", false, cloneACPUpdateJSON(raw), true, nil
 }
 
 func acpUpdateMetaString(values map[string]any, key string) string {

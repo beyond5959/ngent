@@ -13,6 +13,15 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-03-22)
 
+- `Post-M8` ACP assistant image/resource content rendering completed:
+  - extended shared ACP `agent_message_chunk` parsing so non-text assistant payloads are preserved as structured content blocks instead of being dropped when they are not `{type:"text",text:...}` deltas.
+  - added a first-class assistant message-content callback in the agent layer and bridged those blocks through HTTP/SSE/history as `message_content` events alongside the existing `message_delta` text stream.
+  - updated the Web UI assistant segment timeline to render `message_content` blocks during streaming and after reload/history reconstruction, with dedicated cards for image content and embedded resource content plus JSON fallback for unknown block shapes.
+  - kept `responseText` as the visible-text aggregate only, so existing API consumers remain compatible while structured content survives in turn events.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
 - `Post-M8` BLACKBOX Web UI tool-call rendering normalization completed:
   - dropped standalone whitespace-only assistant chunks when they arrive as isolated separators around tool calls, preventing BLACKBOX turns from rendering large blank answer blocks or effectively empty assistant messages.
   - widened Web UI tool-call payload handling so `content` / `locations` no longer require array-only shapes; single-object payloads are normalized and still rendered.

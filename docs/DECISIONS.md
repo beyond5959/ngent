@@ -1377,3 +1377,25 @@ Use this template for new decisions.
   - keep only thread-local state and accept that switching back requires another turn (rejected: poor UX and contradicts the intent of session-driven discovery).
   - repopulate by proactively calling `session/load` on session switch (rejected: reintroduces probe-style metadata fetches outside real turn flow).
   - key everything only by `agent + model` (rejected: multiple sessions can share a model id but differ in other config values such as reasoning/mode).
+
+## ADR-055: Preserve non-text assistant ACP content as first-class turn events
+
+- Status: Accepted
+- Date: 2026-03-22
+- Context:
+  - ACP `agent_message_chunk` is not limited to plain text; providers can emit structured visible assistant content such as image blocks or embedded resources.
+  - ngent previously treated ordinary assistant message chunks as text-only, so any non-text payload was silently ignored unless it happened to appear inside a tool-call payload.
+  - flattening those blocks into markdown or ad-hoc strings would lose protocol structure and make future richer rendering harder.
+- Decision:
+  - extend shared ACP update parsing so text `agent_message_chunk` payloads continue to populate `message_delta`, while non-text assistant blocks are preserved as raw structured `content`.
+  - add a per-turn assistant message-content callback in the agent layer and persist/stream those blocks as first-class `message_content` turn events.
+  - keep `responseText` as the aggregate visible text only, and let rich assistant content be reconstructed from persisted turn events in the Web UI.
+  - render common assistant image/resource blocks directly in the Web UI while leaving unknown block shapes on a JSON fallback path.
+- Consequences:
+  - hub-created turns no longer lose assistant images or embedded resources during live streaming or history reload.
+  - downstream clients can evolve richer renderers without changing the transport contract again because the raw ACP `content` JSON is preserved.
+  - provider-owned `/session-history` replay remains text-only for now because its transcript schema has not yet grown structured content support.
+- Alternatives considered:
+  - ignore non-text assistant blocks outside tool calls (rejected: visibly loses model output).
+  - stringify image/resource payloads into `message_delta` (rejected: destroys structure and produces poor UI).
+  - change `responseText` into a heterogeneous rich-content blob (rejected: larger API break and unnecessary when turn events already provide the ordered detail).

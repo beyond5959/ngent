@@ -153,6 +153,45 @@ func TestParseACPUpdateAgentThoughtChunkAlias(t *testing.T) {
 	}
 }
 
+func TestParseACPUpdateAgentMessageChunkKeepsNonTextContent(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{
+		"update": {
+			"sessionUpdate": "agent_message_chunk",
+			"content": {
+				"type": "image",
+				"mimeType": "image/png",
+				"data": "aGVsbG8="
+			}
+		}
+	}`)
+
+	update, err := ParseACPUpdate(raw)
+	if err != nil {
+		t.Fatalf("ParseACPUpdate() error = %v", err)
+	}
+	if update.Type != ACPUpdateTypeMessageChunk {
+		t.Fatalf("update.Type = %q, want %q", update.Type, ACPUpdateTypeMessageChunk)
+	}
+	if update.Delta != "" {
+		t.Fatalf("update.Delta = %q, want empty", update.Delta)
+	}
+	if update.MessageContent == nil {
+		t.Fatal("update.MessageContent = nil, want structured content")
+	}
+	if !update.MessageContent.HasContent {
+		t.Fatal("update.MessageContent.HasContent = false, want true")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(update.MessageContent.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(update.MessageContent.Content): %v", err)
+	}
+	if got, _ := payload["type"].(string); got != "image" {
+		t.Fatalf("payload.type = %q, want %q", got, "image")
+	}
+}
+
 func TestParseACPUpdateIgnoresNonTextToolCallPayload(t *testing.T) {
 	t.Parallel()
 

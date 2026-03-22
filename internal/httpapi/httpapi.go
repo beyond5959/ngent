@@ -127,6 +127,7 @@ const (
 	defaultPermissionTimeout  = 2 * time.Hour
 
 	threadAgentOptionFreshSessionKey = "_ngentFreshSession"
+	eventTypeMessageContent          = "message_content"
 	eventTypeReasoningDelta          = "reasoning_delta"
 	eventTypeToolCall                = "tool_call"
 	eventTypeToolCallUpdate          = "tool_call_update"
@@ -869,6 +870,10 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 			"delta":  delta,
 		})
 	})
+	turnCtx = agents.WithMessageContentHandler(turnCtx, func(messageCtx context.Context, event agents.ACPMessageContent) error {
+		_ = messageCtx
+		return emit(eventTypeMessageContent, event.EventPayload(turnID))
+	})
 	turnCtx = agents.WithToolCallHandler(turnCtx, func(toolCallCtx context.Context, event agents.ACPToolCall) error {
 		_ = toolCallCtx
 		eventType := strings.TrimSpace(event.Type)
@@ -1098,6 +1103,10 @@ func (s *Server) handleCompactThread(w http.ResponseWriter, r *http.Request, cli
 			"turnId": turnID,
 			"delta":  delta,
 		})
+	})
+	turnCtx = agents.WithMessageContentHandler(turnCtx, func(messageCtx context.Context, event agents.ACPMessageContent) error {
+		_ = messageCtx
+		return appendOnlyEvent(eventTypeMessageContent, event.EventPayload(turnID))
 	})
 	turnCtx = agents.WithToolCallHandler(turnCtx, func(toolCallCtx context.Context, event agents.ACPToolCall) error {
 		_ = toolCallCtx

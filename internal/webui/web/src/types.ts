@@ -93,6 +93,7 @@ export interface MessageSegment {
   id: string
   kind: MessageSegmentKind
   content?: string
+  contentBlock?: unknown
   toolCall?: ToolCall
 }
 

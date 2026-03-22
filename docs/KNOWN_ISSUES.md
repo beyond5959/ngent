@@ -310,13 +310,13 @@
   - decide whether denied-permission turns should persist a lightweight terminal message, or whether the Web UI should keep the resolved permission card visible after turn completion.
 
 - ID: KI-030
-- Title: Provider-owned historical session replay still omits hidden reasoning and tool timeline
+- Title: Provider-owned historical session replay still omits hidden reasoning, tool timeline, and rich content blocks
 - Status: Open
 - Severity: Low
 - Affects: `GET /v1/threads/{threadId}/session-history` and Web UI session-sidebar replay for pre-existing provider sessions
 - Symptom:
   - ngent now surfaces hidden reasoning and ordered tool/content/thought segments for hub-created turns by persisting turn events in normal history.
-  - provider-owned historical replay returned by `/session-history` still exposes only visible `user` / `assistant` transcript messages, so switching to an older external session in the Web UI does not reconstruct past hidden reasoning blocks or the tool-call timeline.
+  - provider-owned historical replay returned by `/session-history` still exposes only visible `user` / `assistant` transcript messages, so switching to an older external session in the Web UI does not reconstruct past hidden reasoning blocks, the tool-call timeline, or non-text assistant content such as images/embedded resources.
 - Workaround:
   - use regular ngent turn history for turns created through ngent itself; those now preserve reasoning and the ordered assistant segment timeline after reload.
   - treat provider-owned session replay as visible transcript-only until the replay contract is extended.

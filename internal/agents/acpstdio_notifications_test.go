@@ -92,3 +92,48 @@ func TestNewACPNotificationHandlerRoutesToolCallsToToolCallHandler(t *testing.T)
 		t.Fatalf("rawOutput = %#v, want ok=true", rawOutput)
 	}
 }
+
+func TestNewACPNotificationHandlerRoutesStructuredMessageContent(t *testing.T) {
+	t.Parallel()
+
+	var received ACPMessageContent
+	ctx := WithMessageContentHandler(context.Background(), func(ctx context.Context, event ACPMessageContent) error {
+		_ = ctx
+		received = CloneACPMessageContent(event)
+		return nil
+	})
+
+	handler, markPromptStarted := NewACPNotificationHandler(ctx, func(delta string) error {
+		_ = delta
+		return nil
+	})
+	markPromptStarted()
+
+	raw := json.RawMessage(`{
+		"update": {
+			"sessionUpdate": "agent_message_chunk",
+			"content": {
+				"type": "resource",
+				"resource": {
+					"uri": "file:///tmp/demo.txt",
+					"mimeType": "text/plain",
+					"text": "hello"
+				}
+			}
+		}
+	}`)
+	if err := handler("session/update", raw); err != nil {
+		t.Fatalf("handler() error = %v", err)
+	}
+
+	if !received.HasContent {
+		t.Fatal("received.HasContent = false, want true")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(received.Content, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(received.Content): %v", err)
+	}
+	if got, _ := payload["type"].(string); got != "resource" {
+		t.Fatalf("payload.type = %q, want %q", got, "resource")
+	}
+}

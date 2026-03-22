@@ -487,3 +487,25 @@ This checklist defines executable acceptance checks for requirements 1-16.
     - run `go run ./cmd/ngent -db-path /tmp/ngent-session-load-config.db -port 8687 --debug`
     - without sending any turn, click an existing Codex session from the sidebar
     - confirm `Model` and `Reasoning` buttons appear immediately after the user-triggered session switch
+
+## Requirement 27: ACP Assistant Image and Embedded Resource Content
+
+- Operation:
+  - run a turn against an ACP-backed agent that emits visible assistant text interleaved with non-text `agent_message_chunk` payloads such as image content and embedded resource content.
+  - observe the SSE stream from `POST /v1/threads/{threadId}/turns`.
+  - query `GET /v1/threads/{threadId}/history?includeEvents=true`.
+  - open the same thread in the Web UI during streaming and again after reload/history fetch.
+- Expected:
+  - shared ACP parsing preserves non-text assistant `content` blocks instead of dropping them when they are not plain `{type:"text",text:...}` chunks.
+  - SSE emits `message_content` events with `turnId` and the raw structured ACP `content` payload.
+  - turn history persists those same `message_content` events unchanged.
+  - ordinary visible assistant text still arrives as `message_delta`, and `responseText` remains the visible-text aggregate only.
+  - the Web UI timeline keeps text segments and `message_content` segments in the original emission order.
+  - image content renders as an inline preview card rather than raw JSON.
+  - embedded resource content renders as a resource card with URI and/or text preview when the payload provides them, and unknown shapes still fall back to JSON.
+  - the same structured assistant content remains visible after a full page reload/history reconstruction for hub-created turns.
+- Verification commands (executed 2026-03-22):
+  - `go test ./internal/agents -run 'TestParseACPUpdateAgentMessageChunkKeepsNonTextContent|TestNewACPNotificationHandlerRoutesStructuredMessageContent' -count=1`
+  - `go test ./internal/httpapi -run 'TestTurnsSSEIncludesStructuredMessageContentAndPersistsHistory' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`

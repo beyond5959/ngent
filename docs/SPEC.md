@@ -85,7 +85,7 @@ SQLite stores:
 Properties:
 
 - all outbound stream events are persisted before or atomically with emission strategy.
-- streamed auxiliary events such as `reasoning_delta`, `plan_update`, and `permission_required` share the same append-only event log as `message_delta`.
+- streamed auxiliary events such as `message_content`, `reasoning_delta`, `plan_update`, and `permission_required` share the same append-only event log as `message_delta`.
 - each event has monotonic sequence per thread or turn.
 - thread deletion removes dependent rows in order (`events` -> `turns` -> `threads`) in one transaction.
 - restart can rebuild state from durable turn status plus event log.
@@ -109,7 +109,7 @@ On restart:
 - thread compact (`POST /v1/threads/{threadId}/compact`)
 - SSE stream for real-time events
 - permission decision endpoint
-- turn history with optional persisted event replay (`message_delta`, `reasoning_delta`, `plan_update`, terminal/error events)
+- turn history with optional persisted event replay (`message_delta`, `message_content`, `reasoning_delta`, `plan_update`, terminal/error events)
 
 See `docs/API.md` for endpoint and schema contracts.
 
@@ -624,8 +624,12 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 ### 18.1 Backend Event Model
 
 - Shared ACP `session/update` parsing must recognize:
+  - non-text assistant `agent_message_chunk` payloads that carry structured `content`
   - `tool_call`
   - `tool_call_update`
+- Parsed assistant message content keeps the ACP field structure instead of flattening to text:
+  - `message_delta` remains the transport for visible text deltas
+  - non-text assistant blocks become `message_content` events carrying the raw ACP `content` JSON
 - Parsed tool-call events keep the ACP field structure instead of flattening to text:
   - `toolCallId`
   - optional `title`
@@ -636,25 +640,27 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - optional raw JSON `rawInput`
   - optional raw JSON `rawOutput`
 - Providers bridge those parsed events through one per-turn callback, just like plan/reasoning callbacks.
-- HTTP turn handling persists and streams the same event names (`tool_call`, `tool_call_update`) with:
-  - `turnId`
-  - the ACP tool-call fields listed above
+- HTTP turn handling persists and streams the same event names with:
+  - `message_content`: `turnId` plus the raw ACP `content`
+  - `tool_call` / `tool_call_update`: `turnId` plus the ACP tool-call fields listed above
 - Event persistence remains append-only at the turn-event layer; ngent does not store a second derived tool-call snapshot table.
 
 ### 18.2 History Reconstruction
 
-- `GET /v1/threads/{threadId}/history?includeEvents=true` returns the persisted `tool_call` / `tool_call_update` events unchanged in turn event history.
+- `GET /v1/threads/{threadId}/history?includeEvents=true` returns the persisted `message_content`, `tool_call`, and `tool_call_update` events unchanged in turn event history.
 - Tool-call updates are partial replacements:
   - clients must merge them by `toolCallId`
   - omitted fields mean "leave previous value unchanged"
   - explicitly present empty string / empty array / `null` payloads mean "clear or replace with empty value"
 - Session transcript replay stays separate from tool-call history:
   - `session/load` replay collectors still ignore tool-call notifications because transcript replay only reconstructs user/assistant message content.
+  - provider-owned transcript replay currently remains text-only, so non-text assistant content blocks are preserved only for hub-created turns whose normal turn events were persisted by ngent.
 
 ### 18.3 Web UI
 
 - Assistant rendering is timeline-based:
   - `message_delta` becomes visible assistant content segments
+  - `message_content` becomes structured assistant content segments
   - `reasoning_delta` / `thought_delta` becomes thinking segments
   - `tool_call` / `tool_call_update` becomes tool segments
 - Visible assistant content segments render as plain answer blocks, not agent chat bubbles.
@@ -676,6 +682,8 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 - Permission-request cards are not rendered as tool-call segments and do not participate in tool/thought collapse state.
 - `plan_update` remains a separate replace-style plan card above the ordered assistant segments.
 - The Web UI renders:
+  - assistant image content cards
+  - assistant embedded resource cards with URI/text previews when available
   - title / kind / status badges
   - text content blocks
   - command blocks
@@ -683,6 +691,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - path/location lists
   - raw JSON input/output blocks
 - Unsupported non-text ACP tool-call payload shapes are still shown via generic JSON fallback so the information is visible even when no richer renderer exists yet.
+- Unsupported ordinary assistant content block shapes are still shown via generic JSON fallback so the information remains visible even before a richer renderer exists.
 
 ### 18.4 Session-Driven Config Discovery
 

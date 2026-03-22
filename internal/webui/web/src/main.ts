@@ -21,6 +21,7 @@ import type {
   ToolCall,
 } from './types.ts'
 import type {
+  MessageContentPayload,
   TurnStream,
   PermissionRequiredPayload,
   PlanUpdatePayload,
@@ -256,6 +257,12 @@ function normalizeToolCallItems(value: unknown): unknown[] | undefined {
   return [cloneJSONValue(value)]
 }
 
+function normalizeMessageContentItems(value: unknown): unknown[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (Array.isArray(value)) return cloneJSONValue(value)
+  return [cloneJSONValue(value)]
+}
+
 function nextMessageSegmentID(prefix: string, kind: MessageSegment['kind'], index: number): string {
   return `${prefix}-${kind}-${index}`
 }
@@ -274,6 +281,14 @@ function cloneMessageSegments(segments: MessageSegment[] | null | undefined): Me
         id,
         kind: 'tool_call',
         toolCall,
+      })
+      continue
+    }
+    if (segment.kind === 'content' && segment.contentBlock !== undefined) {
+      cloned.push({
+        id,
+        kind: 'content',
+        contentBlock: cloneJSONValue(segment.contentBlock),
       })
       continue
     }
@@ -313,6 +328,25 @@ function appendTextSegment(
     kind,
     content: delta,
   })
+  return next
+}
+
+function appendMessageContentSegments(
+  segments: MessageSegment[] | null | undefined,
+  value: unknown,
+  idPrefix: string,
+): MessageSegment[] {
+  const items = normalizeMessageContentItems(value)
+  if (!items?.length) return cloneMessageSegments(segments) ?? []
+
+  const next = cloneMessageSegments(segments) ?? []
+  for (const item of items) {
+    next.push({
+      id: nextMessageSegmentID(idPrefix, 'content', next.length + 1),
+      kind: 'content',
+      contentBlock: item,
+    })
+  }
   return next
 }
 
@@ -388,7 +422,10 @@ function messageSegmentsToolCalls(segments: MessageSegment[] | null | undefined)
 }
 
 function messageHasContentSegment(segments: MessageSegment[] | null | undefined): boolean {
-  return (segments ?? []).some(segment => segment.kind === 'content' && hasVisibleContent(segment.content))
+  return (segments ?? []).some(segment => (
+    segment.kind === 'content'
+    && (hasVisibleContent(segment.content) || segment.contentBlock !== undefined)
+  ))
 }
 
 function applyToolCallEvent(toolCalls: ToolCall[], payload: Record<string, unknown>): ToolCall[] {
@@ -553,6 +590,10 @@ function buildMessageSegmentsFromTurn(
         segments = appendTextSegment(segments, 'content', event.data.delta, idPrefix)
         break
       }
+      case 'message_content':
+        if (!Object.prototype.hasOwnProperty.call(event.data, 'content')) continue
+        segments = appendMessageContentSegments(segments, event.data.content, idPrefix)
+        break
       case 'reasoning_delta':
       case 'thought_delta': {
         if (typeof event.data.delta !== 'string' || !event.data.delta) continue
@@ -2805,6 +2846,150 @@ function renderToolCallPanelHTML(
     </div>`
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function recordString(record: Record<string, unknown> | null, key: string): string {
+  if (!record) return ''
+  const value = record[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function safeContentURL(value: string, allowImageData = false): string | null {
+  value = value.trim()
+  if (!value) return null
+  if (allowImageData && /^data:image\//i.test(value)) return value
+  if (/^(https?:|blob:|file:)/i.test(value)) return value
+  if (/^(\/|\.\/|\.\.\/)/.test(value)) return value
+  return null
+}
+
+function contentImageSource(record: Record<string, unknown> | null): string | null {
+  if (!record) return null
+  const mimeType = recordString(record, 'mimeType')
+  const encodedData = recordString(record, 'data') || recordString(record, 'blob')
+  if (encodedData && mimeType.toLowerCase().startsWith('image/')) {
+    return `data:${mimeType};base64,${encodedData}`
+  }
+  return safeContentURL(
+    recordString(record, 'url') || recordString(record, 'uri') || recordString(record, 'href'),
+    true,
+  )
+}
+
+function renderMessageContentCardHTML(title: string, metaItems: string[], body: string): string {
+  const metaHTML = metaItems
+    .filter(Boolean)
+    .map(item => `<span class="message-content-card__meta-item">${escHtml(item)}</span>`)
+    .join('')
+
+  return `
+    <div class="message-content-card">
+      <div class="message-content-card__header">
+        <div class="message-content-card__title">${escHtml(title)}</div>
+        ${metaHTML ? `<div class="message-content-card__meta">${metaHTML}</div>` : ''}
+      </div>
+      ${body}
+    </div>`
+}
+
+function renderMessageImageContentHTML(item: unknown): string {
+  const record = asRecord(item)
+  if (!record) return renderToolCallJSON(item, true)
+
+  const title = recordString(record, 'title') || formatToolCallLabel(recordString(record, 'type')) || 'Image'
+  const mimeType = recordString(record, 'mimeType')
+  const uri = recordString(record, 'uri') || recordString(record, 'url') || recordString(record, 'href')
+  const src = contentImageSource(record)
+  const body = [
+    src
+      ? `<img class="message-content-card__image" src="${escHtml(src)}" alt="${escHtml(title)}" loading="lazy" />`
+      : '',
+    uri
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Source</div>
+          <div class="message-content-card__uri">${escHtml(uri)}</div>
+        </div>`
+      : '',
+    !src
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Payload</div>
+          ${renderToolCallJSON(item, true)}
+        </div>`
+      : '',
+  ].filter(Boolean).join('')
+
+  return renderMessageContentCardHTML(title, [mimeType], body)
+}
+
+function renderMessageResourceContentHTML(item: unknown): string {
+  const record = asRecord(item)
+  if (!record) return renderToolCallJSON(item, true)
+
+  const resource = asRecord(record.resource) ?? record
+  const title = recordString(record, 'title')
+    || recordString(resource, 'title')
+    || formatToolCallLabel(recordString(record, 'type'))
+    || 'Resource'
+  const mimeType = recordString(resource, 'mimeType') || recordString(record, 'mimeType')
+  const uri = recordString(resource, 'uri') || recordString(record, 'uri')
+  const text = recordString(resource, 'text') || recordString(record, 'text')
+  const imageSrc = contentImageSource(resource)
+  const body = [
+    uri
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">URI</div>
+          <div class="message-content-card__uri">${escHtml(uri)}</div>
+        </div>`
+      : '',
+    imageSrc
+      ? `<img class="message-content-card__image" src="${escHtml(imageSrc)}" alt="${escHtml(title)}" loading="lazy" />`
+      : '',
+    text
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Content</div>
+          ${renderToolCallPreHTML(text, true)}
+        </div>`
+      : '',
+    !imageSrc && !text
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Payload</div>
+          ${renderToolCallJSON(item, true)}
+        </div>`
+      : '',
+  ].filter(Boolean).join('')
+
+  return renderMessageContentCardHTML(title, [mimeType], body)
+}
+
+function renderMessageContentBlockHTML(contentBlock: unknown): string {
+  const record = asRecord(contentBlock)
+  if (!record) return renderToolCallJSON(contentBlock, true)
+
+  const type = recordString(record, 'type').toLowerCase()
+  if (type === 'image') {
+    return renderMessageImageContentHTML(contentBlock)
+  }
+  if (type === 'resource' || type === 'embedded_resource' || asRecord(record.resource)) {
+    return renderMessageResourceContentHTML(contentBlock)
+  }
+
+  const title = formatToolCallLabel(recordString(record, 'type')) || 'Content'
+  return renderMessageContentCardHTML(title, [], `
+    <div class="message-content-card__section">
+      <div class="message-content-card__label">Payload</div>
+      ${renderToolCallJSON(contentBlock, true)}
+    </div>
+  `)
+}
+
 function reasoningPanelState(expanded: boolean): 'open' | 'closed' {
   return expanded ? 'open' : 'closed'
 }
@@ -2863,12 +3048,21 @@ function renderMessageSegmentContentHTML(
   timestamp: string,
 ): string {
   const content = segment.content ?? ''
-  if (!streaming && !hasVisibleContent(content)) return ''
+  const contentBlock = segment.contentBlock
+  const hasTextContent = hasVisibleContent(content)
+  const hasStructuredContent = contentBlock !== undefined
+  if (!streaming && !hasTextContent && !hasStructuredContent) return ''
 
   let blockClass = 'message-answer'
   let blockContent = ''
 
-  if (streaming) {
+  if (hasStructuredContent) {
+    blockClass += ' message-answer--rich'
+    blockContent = renderMessageContentBlockHTML(contentBlock)
+    if (streaming && showTypingIndicator) {
+      blockContent += `<div class="typing-indicator" aria-hidden="true"><span></span><span></span><span></span></div>`
+    }
+  } else if (streaming) {
     blockClass += ' message-answer--streaming'
     blockContent = `<div class="message-answer__text">${escHtml(content)}</div>`
     if (showTypingIndicator) {
@@ -2884,17 +3078,19 @@ function renderMessageSegmentContentHTML(
     blockContent = escHtml(content)
   }
 
-  const metaHTML = !streaming && content
+  const metaHTML = !streaming && (hasTextContent || hasStructuredContent)
     ? `
       <div class="message-segment__meta">
         <span class="message-time">${formatTimestamp(timestamp)}</span>
-        <button
-          class="msg-copy-btn msg-copy-btn--segment"
-          data-copy-text="${encodeURIComponent(content)}"
-          type="button"
-          title="Copy segment"
-          aria-label="Copy segment"
-        >⎘</button>
+        ${hasTextContent ? `
+          <button
+            class="msg-copy-btn msg-copy-btn--segment"
+            data-copy-text="${encodeURIComponent(content)}"
+            type="button"
+            title="Copy segment"
+            aria-label="Copy segment"
+          >⎘</button>
+        ` : ''}
       </div>`
     : ''
 
@@ -2988,14 +3184,14 @@ function renderMessageSegmentsHTML(
   return `<div class="message-segments">${content}${tail}</div>`
 }
 
-function renderMessageStatusBubble(msg: Message): string {
+function renderMessageStatusBubble(msg: Message, hasContent = false): string {
   if (msg.status === 'error') {
     const bodyText = (msg.errorCode ? `[${msg.errorCode}] ` : '') + (msg.errorMessage ?? 'Unknown error')
     return `<div class="message-segment message-segment--status">
       <div class="message-bubble message-bubble--error">${escHtml(bodyText)}</div>
     </div>`
   }
-  if (msg.status === 'cancelled' && !msg.content) {
+  if (msg.status === 'cancelled' && !msg.content && !hasContent) {
     return `<div class="message-segment message-segment--status">
       <div class="message-bubble message-bubble--cancelled">…</div>
     </div>`
@@ -3031,9 +3227,9 @@ function renderMessage(msg: Message): string {
 
   const planHTML = renderPlanSectionHTML(msg.planEntries)
   const segments = resolveMessageSegments(msg)
-  const segmentsHTML = renderMessageSegmentsHTML(msg.id, segments, msg.status, false, null, null, null, msg.timestamp)
-  const statusHTML = renderMessageStatusBubble(msg)
   const hasContent = messageHasContentSegment(segments)
+  const segmentsHTML = renderMessageSegmentsHTML(msg.id, segments, msg.status, false, null, null, null, msg.timestamp)
+  const statusHTML = renderMessageStatusBubble(msg, hasContent)
 
   const stopTag  = isCancelled ? `<span class="message-stop-reason">Cancelled</span>` : ''
   const footerMeta = (!hasContent || stopTag)
@@ -4042,6 +4238,30 @@ function handleSend(): void {
       if (activeChatScopeKey() !== capturedScopeKey) return
       const list      = document.getElementById('message-list')
       const atBottom  = !list || isNearBottom(list)
+      updateStreamingBubbleSegments(
+        agentMsgID,
+        nextSegments,
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
+    onMessageContent({ content }: MessageContentPayload) {
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveReasoningSegmentID(capturedScopeKey, null)
+      setActiveToolCallSegmentID(capturedScopeKey, null)
+      const nextSegments = appendMessageContentSegments(
+        streamSegmentsByScope.get(capturedScopeKey),
+        content,
+        agentMsgID,
+      )
+      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
       updateStreamingBubbleSegments(
         agentMsgID,
         nextSegments,

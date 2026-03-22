@@ -443,12 +443,18 @@ func (c *Client) handleUpdate(
 		}
 		switch update.Type {
 		case agents.ACPUpdateTypeMessageChunk:
-			if update.Delta == "" {
+			if update.Delta != "" {
+				if err := onDelta(update.Delta); err != nil {
+					c.sendSessionCancel(runtime, c.currentSessionID())
+					return err
+				}
 				return nil
 			}
-			if err := onDelta(update.Delta); err != nil {
-				c.sendSessionCancel(runtime, c.currentSessionID())
-				return err
+			if update.MessageContent != nil {
+				if err := agents.NotifyMessageContent(ctx, *update.MessageContent); err != nil {
+					c.sendSessionCancel(runtime, c.currentSessionID())
+					return err
+				}
 			}
 			return nil
 		case agents.ACPUpdateTypePlan:

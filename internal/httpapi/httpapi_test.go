@@ -2615,6 +2615,92 @@ func TestTurnsSSEIncludesToolCallUpdatesAndPersistsHistory(t *testing.T) {
 	}
 }
 
+func TestTurnsSSEIncludesStructuredMessageContentAndPersistsHistory(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		agent:        &messageContentStreamer{},
+	})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+
+	turnRR := performJSONRequest(t, h, http.MethodPost, "/v1/threads/"+threadID+"/turns", map[string]any{
+		"input":  "show content",
+		"stream": true,
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if turnRR.Code != http.StatusOK {
+		t.Fatalf("turn status code = %d, want %d", turnRR.Code, http.StatusOK)
+	}
+
+	events := parseSSEEvents(t, turnRR.Body.String())
+	var seenContent int
+	for _, ev := range events {
+		if ev.Event != eventTypeMessageContent {
+			continue
+		}
+		seenContent += 1
+		content, ok := ev.Data["content"].(map[string]any)
+		if !ok {
+			t.Fatalf("message_content.content type = %T, want map[string]any", ev.Data["content"])
+		}
+		if seenContent == 1 {
+			if got := stringField(content, "type"); got != "image" {
+				t.Fatalf("first message_content.type = %q, want %q", got, "image")
+			}
+		}
+		if seenContent == 2 {
+			if got := stringField(content, "type"); got != "resource" {
+				t.Fatalf("second message_content.type = %q, want %q", got, "resource")
+			}
+			resource, ok := content["resource"].(map[string]any)
+			if !ok {
+				t.Fatalf("message_content.resource type = %T, want map[string]any", content["resource"])
+			}
+			if got := stringField(resource, "uri"); got != "file:///tmp/demo.txt" {
+				t.Fatalf("message_content.resource.uri = %q, want %q", got, "file:///tmp/demo.txt")
+			}
+		}
+	}
+	if seenContent != 2 {
+		t.Fatalf("seen %d message_content events, want 2", seenContent)
+	}
+
+	historyRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID+"/history?includeEvents=true", nil, map[string]string{"X-Client-ID": "client-a"})
+	if historyRR.Code != http.StatusOK {
+		t.Fatalf("history status code = %d, want %d", historyRR.Code, http.StatusOK)
+	}
+
+	var history struct {
+		Turns []struct {
+			ResponseText string `json:"responseText"`
+			Events       []struct {
+				Type string         `json:"type"`
+				Data map[string]any `json:"data"`
+			} `json:"events"`
+		} `json:"turns"`
+	}
+	if err := json.Unmarshal(historyRR.Body.Bytes(), &history); err != nil {
+		t.Fatalf("unmarshal history: %v", err)
+	}
+	if got, want := len(history.Turns), 1; got != want {
+		t.Fatalf("len(history.turns) = %d, want %d", got, want)
+	}
+	if got := history.Turns[0].ResponseText; got != "preview:\n\ndone" {
+		t.Fatalf("history responseText = %q, want %q", got, "preview:\n\ndone")
+	}
+
+	var historyContent int
+	for _, event := range history.Turns[0].Events {
+		if event.Type != eventTypeMessageContent {
+			continue
+		}
+		historyContent += 1
+	}
+	if historyContent != 2 {
+		t.Fatalf("history message_content events = %d, want 2", historyContent)
+	}
+}
+
 func TestCodexTurnWorksWithoutBinaryPathConfig(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
@@ -3737,6 +3823,46 @@ func (s *toolCallStreamer) Stream(ctx context.Context, input string, onDelta fun
 		return agents.StopReasonEndTurn, err
 	}
 	if err := onDelta("tool done"); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+type messageContentStreamer struct{}
+
+func (s *messageContentStreamer) Name() string {
+	return "message-content-streamer"
+}
+
+func (s *messageContentStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = input
+	if err := onDelta("preview:\n"); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := agents.NotifyMessageContent(ctx, agents.ACPMessageContent{
+		Content: json.RawMessage(`{
+			"type":"image",
+			"mimeType":"image/png",
+			"data":"aGVsbG8="
+		}`),
+		HasContent: true,
+	}); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := agents.NotifyMessageContent(ctx, agents.ACPMessageContent{
+		Content: json.RawMessage(`{
+			"type":"resource",
+			"resource":{
+				"uri":"file:///tmp/demo.txt",
+				"mimeType":"text/plain",
+				"text":"embedded text"
+			}
+		}`),
+		HasContent: true,
+	}); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := onDelta("\ndone"); err != nil {
 		return agents.StopReasonEndTurn, err
 	}
 	return agents.StopReasonEndTurn, nil

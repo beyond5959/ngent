@@ -4,17 +4,59 @@
 
 Code Agent Hub Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
 The system targets ACP-compatible agent providers, lazily starts per-thread agents, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
-Current built-in providers are `codex`, `claude`, `opencode`, `gemini`, `kimi`, and `qwen`.
+Current built-in providers are `codex`, `claude`, `opencode`, `gemini`, `kimi`, `qwen`, and `blackbox`.
 This file is the source of milestone progress, validation commands, and next actions.
 
 ## Current Milestone
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-03-19)
+## Latest Update (2026-03-22)
+
+- `Post-M8` ACP assistant image/resource content rendering completed:
+  - extended shared ACP `agent_message_chunk` parsing so non-text assistant payloads are preserved as structured content blocks instead of being dropped when they are not `{type:"text",text:...}` deltas.
+  - added a first-class assistant message-content callback in the agent layer and bridged those blocks through HTTP/SSE/history as `message_content` events alongside the existing `message_delta` text stream.
+  - updated the Web UI assistant segment timeline to render `message_content` blocks during streaming and after reload/history reconstruction, with dedicated cards for image content and embedded resource content plus JSON fallback for unknown block shapes.
+  - kept `responseText` as the visible-text aggregate only, so existing API consumers remain compatible while structured content survives in turn events.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-M8` BLACKBOX Web UI tool-call rendering normalization completed:
+  - dropped standalone whitespace-only assistant chunks when they arrive as isolated separators around tool calls, preventing BLACKBOX turns from rendering large blank answer blocks or effectively empty assistant messages.
+  - widened Web UI tool-call payload handling so `content` / `locations` no longer require array-only shapes; single-object payloads are normalized and still rendered.
+  - improved tool-call titles for generic BLACKBOX payloads such as search calls titled only `.` by falling back to kind/path-derived labels.
+  - validation:
+    - pending: `cd internal/webui/web && npm run build`
+    - pending: `go test ./...`
+
+- `Post-M8` BLACKBOX AI ACP integration completed:
+  - added `internal/agents/blackbox` on top of the shared `acpcli` driver, using `blackbox --experimental-acp` with stdout-noise tolerance because the CLI can emit non-JSON process/telemetry lines before or between ACP frames.
+  - wired `blackbox` into startup preflight, `/v1/agents`, thread allowlist, turn factory, and agent-model discovery flow.
+  - confirmed against local `blackbox 1.2.47` ACP probing that:
+    - `initialize` and `session/new` succeed with the standard ACP handshake.
+    - current initialize capabilities advertise `loadSession=false`.
+    - real `session/load` returns `-32601 method not found`, so existing-session replay and session sidebar resume remain unavailable for now.
+    - ACP startup itself does not require explicitly passing `BLACKBOX_API_KEY` as long as the local BLACKBOX CLI already has a usable auth method configured; actual prompt execution still depends on valid upstream auth/network state.
+  - added fake-process coverage for:
+    - streaming with noisy stdout.
+    - model forwarding through startup args plus ACP `session/new` / `session/prompt`.
+    - fail-closed structured permission bridging.
+    - unsupported `session/list` behavior when `loadSession=false`.
+  - validation:
+    - pending: `cd internal/webui/web && npm run build`
+    - pending: `go test ./...`
+
+- `Post-M8` Web UI agent-list overflow trigger hover-only reveal completed:
+  - changed the agent-list three-dot trigger to stay hidden by default and reveal only on row hover, keyboard focus, or while its menu is open.
+  - increased the trigger size slightly while keeping its hover surface compact, so the control is easier to hit once revealed without dominating the action column.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./...`
+
+## Previous Update (2026-03-19)
 
 - `Post-M8` Web UI left-rail layout alignment completed:
-  - moved ACP session browsing from the right edge into a left-side session panel beside chat, following the same high-level navigation pattern as OpenCode's web UI.
   - kept the agent/thread rail permanently expanded after follow-up product review; only the session panel now supports collapse/expand.
   - removed the agent-list search box and its keyboard shortcut/filtering path; the left rail is now a straight thread list with actions only.
   - moved `New agent` below the agent list and updated the expanded session header to show the active agent name, project path, and a full-width `New session` entry above the session list.
@@ -27,7 +69,7 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
 
-## Previous Update (2026-03-16)
+## Earlier Update (2026-03-16)
 
 - `Post-M8` ACP tool-call streaming completed:
   - extended shared ACP `session/update` parsing to preserve structured `tool_call` and `tool_call_update` payloads, including `toolCallId`, status/title/kind, content blocks, locations, and raw input/output payloads.
@@ -98,7 +140,6 @@ This file is the source of milestone progress, validation commands, and next act
   - migrated the four ACP CLI providers to provider-hook configuration instead of maintaining separate copies of the same stdio/session orchestration logic.
   - extended `internal/agents/acpstdio` with opt-in stdout-noise tolerance so Gemini can reuse the same transport instead of a provider-local JSON-RPC implementation.
   - preserved provider-specific behavior behind hooks:
-    - `kimi` keeps local config sourcing, `kimi acp` / `kimi --acp` fallback, and model-via-startup handling.
     - `gemini` keeps temporary `GEMINI_CLI_HOME` bootstrapping and stdout noise filtering.
     - `qwen` / `kimi` keep selectable permission-option mapping and fail-closed timeout handling.
     - `opencode` keeps synchronous `session/cancel` behavior.
@@ -678,7 +719,6 @@ This file is the source of milestone progress, validation commands, and next act
   - `item/tool/call` now returns structured tool failure payload (`success=false`) instead of JSON-RPC method error, so app-server no longer aborts the whole flow on this request type.
 - 2026-03-09: unified ACP message-chunk constant usage across stdio providers by removing per-provider `updateTypeMessageChunk` definitions and reusing `agents.ACPUpdateTypeMessageChunk`.
 - 2026-03-09: hid the Web UI Reasoning switch when the active agent exposes fewer than two reasoning choices, so agents without switchable reasoning no longer show a dead control.
-- 2026-03-09: switched Kimi model/reasoning catalog queries to local `config.toml` when available, so startup catalog refresh and thread config/model operations no longer create empty Kimi sessions; real prompt turns still use ACP.
 - 2026-03-11: added opt-in `--debug` startup flag; when enabled, stderr now emits sanitized `acp.message` traces for ACP stdio and embedded-runtime request/response traffic, including session prompts, updates, and permission flows.
 - 2026-03-11: added ACP session browsing/resume support across built-in agents:
   - introduced shared agent session abstractions for `session/list`, bound-session reporting, and initialize capability parsing.
@@ -876,3 +916,93 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./...`
+
+- 2026-03-21: deduplicated the built-in ACP provider `DiscoverModels` entrypoints.
+  - `gemini`, `qwen`, `kimi`, and `opencode` all carried the same package-level wrapper that only called `New(cfg)` and then `client.DiscoverModels(ctx)`.
+  - added `internal/agents/acpcli.DiscoverModelsWithClient` so that constructor-plus-delegate path lives in one shared helper.
+  - updated `internal/agents/gemini/models.go`, `internal/agents/qwen/models.go`, `internal/agents/opencode/models.go`, and the ACP fallback in `internal/agents/kimi/models.go` to reuse that helper while preserving Kimi's local-config override behavior.
+  - continued the same cleanup by moving the shared ACP `session/new`, `session/load`, `session/list`, and `sessionCWD` parameter builders into `internal/agents/acpcli`, then rewired `gemini`, `qwen`, `opencode`, and `kimi` to use those common helpers instead of carrying identical local functions.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-03-22: switched model/reasoning discovery from probe sessions to real session snapshots.
+  - root cause: startup refresh plus `GET /v1/threads/{threadId}/config-options` / `GET /v1/agents/{agentId}/models` live fallbacks were still opening probe-only `session/new` calls, which created provider-owned empty sessions and could leak stale default config between unrelated threads.
+  - removed startup config-catalog refresh from `cmd/ngent`, and changed the HTTP config/model read paths to return stored-only sqlite data instead of probing upstream runtimes.
+  - added a shared config snapshot callback in `internal/agents`; user-initiated `session/new` / `session/load` responses from ACP stdio providers and embedded `codex` / `claude` now report their latest `configOptions` during `Stream()`, and session-history `session/load` can also feed the same persistence path.
+  - the HTTP turn handler now persists those real snapshots immediately into sqlite:
+    - `threads.agent_options_json` is updated with the session's actual current `modelId` / `configOverrides`
+    - `agent_config_catalogs` is updated under the actual current model id for later reuse
+  - switching a thread onto an existing session now clears stale thread-local model/reasoning selections first, so the next `session/load` becomes the source of truth for that session's current config.
+  - the Web UI now hides model/reasoning controls until a real config snapshot exists, reloads config options after turns finish, and clears stale thread-local config cache on session switch.
+  - updated HTTP tests to reflect the new lifecycle:
+    - fresh threads expose empty `configOptions` until a real turn runs
+    - stored config rows are only used when the thread already has a concrete `modelId`
+    - agent model lists now come from stored sqlite catalogs only
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-03-22: persisted learned config snapshots per provider session so switching back to a known session restores model controls immediately.
+  - root cause: after the earlier session-driven discovery change, real turns persisted config into thread state plus `agent_config_catalogs`, but a later session switch intentionally cleared thread-local `modelId` / `configOverrides`; switching back to that session then had no session-scoped snapshot to restore from.
+  - added sqlite-backed `session_config_cache(agent_id, cwd, session_id, config_options_json, updated_at)` alongside transcript caching.
+  - real turn config snapshots now write through both:
+    - thread/agent-model state as before
+    - session-scoped config cache keyed by `agent + cwd + sessionId`
+  - when a fresh session reports config before `session_bound`, ngent now backfills the same snapshot into `session_config_cache` as soon as the session id is bound.
+  - `GET /v1/threads/{threadId}/config-options` now restores from the current session cache when the thread points at a known `sessionId` but has no thread-local `modelId`.
+  - user-triggered session switching now also learns config from `GET /v1/threads/{threadId}/session-history`:
+    - if transcript cache exists but session config cache is still missing, ngent performs one live `session/load` instead of stopping at cached transcript data
+    - if that `session/load` returns `configOptions`, ngent persists them into thread state (when the thread is currently bound to that session), `agent_config_catalogs`, and `session_config_cache`
+    - the Web UI refreshes config controls again after session-history replay finishes, so model/reasoning buttons can appear immediately after switching sessions without needing a new turn
+  - added regression coverage for the exact switch-away/switch-back path and verified the real Kimi Web UI flow:
+    - new Kimi session learned `kimi-for-coding (thinking)`
+    - switched to an older session with no model control
+    - switched back to the learned session and confirmed the model button reappeared immediately without sending another turn
+  - additionally verified the session-load-only path with a fresh Codex thread on a fresh sqlite database:
+    - created the thread without sending any turn
+    - switched directly to an existing Codex session
+    - confirmed `Model` and `Reasoning` buttons appeared immediately from that session's `session/load`
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
+
+- 2026-03-22: fixed the composer model/reasoning dropdowns so they remain clickable after session-history refresh updates them in place.
+  - root cause: `bindThreadConfigSwitches()` can run more than once on the same composer DOM after a session switch; repeated `addEventListener('click', ...)` bindings caused one listener to open the menu and the next listener to close it immediately in the same click.
+  - made config-switch binding idempotent per `.thread-model-switch` node, while still allowing later refresh passes to update labels, menu contents, and hidden/disabled state.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
+
+- 2026-03-22: fixed active-turn session switching when the current session had already persisted model/config state.
+  - root cause: `PATCH /v1/threads/{threadId}` intentionally allows session-only selection changes during an active turn, but the session-only detector compared the current thread options against the target options after the target session change had already stripped `modelId` / `configOverrides`; once the active session had learned config, that comparison incorrectly treated a pure session switch as a broader thread update and returned `thread has an active turn`.
+  - `isSessionOnlyAgentOptionsUpdate()` now ignores thread-local config snapshot fields only when checking whether the change is a pure session/fresh-session selection change, while still rejecting unrelated active-turn thread edits such as direct model changes.
+  - added HTTP regression coverage for switching away from an active session after its config snapshot has already been persisted.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
+    - pass: real browser validation with Kimi on `go run ./cmd/ngent -db-path /tmp/ngent-session-switch-active.db -port 8690 -debug`:
+    - started a new Kimi session
+    - triggered a long streaming response
+    - switched to an older session while the turn was still active
+    - confirmed the UI switched without the previous `thread has an active turn` alert
+
+- 2026-03-22: kept active streaming sessions visible in the session sidebar after switching away.
+  - root cause: the Web UI only inserted the currently selected session as an ephemeral row when it was missing from `session/list`; a newly created session that was still streaming but not yet present in the fetched session list disappeared from the sidebar as soon as the user switched to another session.
+  - `renderSessionPanel()` now also prepends any thread-local session ids that are still active in `streamStates`, so running sessions stay visible until the real session list catches up.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
+
+- 2026-03-22: preserved exact provider permission options end-to-end instead of collapsing every request into `Allow` / `Deny`.
+  - root cause: the Web UI hard-coded two buttons and `POST /v1/permissions/{permissionId}` only carried a generic outcome, so multi-option ACP permission requests from providers such as Kimi could not round-trip `allow once` / `allow always` / `reject once` / `reject always` exactly.
+  - extended the shared permission model to keep provider `options[]` and an exact `SelectedOptionID`, and taught the ACP permission bridge to prefer that exact option id when replying to option-aware providers.
+  - `permission_required` SSE payloads now include advertised permission options, `POST /v1/permissions/{permissionId}` now accepts `optionId` alongside the existing `outcome`, and the HTTP permission bridge infers the generic fallback outcome from the selected option kind when possible.
+  - updated the Web UI permission card to render all advertised options dynamically, fall back to `Allow` / `Deny` only when no options are provided, and show the selected option label in the resolved state.
+  - added regression coverage for exact option pass-through at the HTTP layer and for Kimi's structured permission handler preserving non-default selected option ids.
+  - updated API / spec / frontend docs and acceptance criteria to describe dynamic permission options.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./internal/agents/kimi -run 'TestHandlePermissionRequest(ParsesRichToolCallPayload|HonorsSelectedOptionID)' -count=1`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./internal/httpapi -run 'TestTurnPermission(RequiredSSEEvent|ApprovedContinuesAndCompletes|SelectedOptionFlowsThroughExactAgentChoice|TimeoutFailClosed|SSEDisconnectFailClosed)' -count=1`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`

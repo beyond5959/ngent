@@ -35,7 +35,6 @@
 - ADR-031: Kimi CLI ACP stdio provider with dual startup syntax fallback. (Accepted)
 - ADR-032: Shared common agent config/state helper without protocol unification. (Accepted)
 - ADR-033: Surface ACP plan updates as first-class SSE and Web UI state. (Accepted)
-- ADR-034: Source Kimi config catalogs from local config to avoid empty sessions. (Accepted)
 - ADR-035: Add opt-in ACP debug tracing behind `--debug`. (Accepted)
 - ADR-036: Persist stable Codex session ids and normalize Codex transcript replay. (Superseded)
 - ADR-037: Replay Kimi session history from local Kimi session files. (Superseded)
@@ -51,6 +50,34 @@
 - ADR-047: Defer thread config-option apply until the next turn boundary. (Accepted)
 - ADR-049: Align Web UI navigation with a left agent rail and left session panel. (Accepted)
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
+- ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
+
+## ADR-051: BLACKBOX AI ACP Provider Integration Via Shared ACP CLI Driver
+
+- Status: Accepted
+- Date: 2026-03-22
+- Context:
+  - BLACKBOX AI CLI now exposes ACP mode through `blackbox --experimental-acp`, and the user already has the local CLI installed/configured.
+  - local probing against `blackbox 1.2.47` showed that the CLI can emit non-JSON stdout noise (process-info and telemetry-related lines) before or between ACP frames.
+  - the same probing showed current ACP capability limits:
+    - `initialize` advertises `agentCapabilities.loadSession=false`.
+    - real `session/load` returns `-32601 method not found`.
+    - `session/new` currently does not expose `models.availableModels` or `configOptions`.
+  - the CLI can start ACP without explicitly passing `BLACKBOX_API_KEY` when another local auth method is already configured, but prompt execution still depends on valid upstream auth/network readiness.
+- Decision:
+  - add `internal/agents/blackbox` as a first-class provider on top of the shared `internal/agents/acpcli` driver.
+  - start BLACKBOX with `blackbox --experimental-acp`, plus hub-side compatibility flags `--skip-update` and `--telemetry=false`.
+  - enable `acpstdio.ConnOptions.AllowStdoutNoise` for BLACKBOX so provider stdout noise does not corrupt the JSON-RPC stream.
+  - forward thread-selected `modelId` through both process startup (`--model`) and ACP request hints (`session/new.model` / `modelId`, `session/prompt.model`).
+  - keep session browsing/replay unavailable until BLACKBOX exposes standard ACP resume surfaces.
+- Consequences:
+  - ngent can now run BLACKBOX turns through the same direct ACP path as Qwen/OpenCode/Gemini/Kimi without introducing another custom lifecycle stack.
+  - BLACKBOX threads remain usable for normal multi-turn conversation through ngent's own persisted history/context injection even though provider-owned `session/load` is not available.
+  - the Web UI/API will not show resumable BLACKBOX session history or model catalogs until upstream ACP surfaces them.
+- Alternatives considered:
+  - delay BLACKBOX support until `session/load` and model discovery are fully available upstream.
+  - build a provider-local non-ACP integration path just for BLACKBOX.
+  - require `BLACKBOX_API_KEY` unconditionally at ngent startup instead of reusing whichever auth method the local CLI already has configured.
 
 ## ADR-050: Keep The Left Agent Rail Permanently Expanded
 
@@ -1019,26 +1046,6 @@ Use this template for new decisions.
   - fold plan text into `message_delta` (rejected: mixes distinct ACP concepts and loses replacement semantics).
   - keep plan rendering purely transient in the browser (rejected: history reload would still discard plan state).
 
-## ADR-034: Source Kimi config catalogs from local config to avoid empty sessions
-
-- Status: Accepted
-- Date: 2026-03-09
-- Context:
-  - Kimi CLI persists ACP `session/new` handshakes as local session history, even when the hub only wants model/config metadata and never sends a prompt.
-  - the previous Kimi provider queried models and thread config options through `session/new`, which polluted `~/.kimi/sessions` with empty sessions during startup catalog refresh, thread config loads, and model changes.
-  - local Kimi config already exposes the needed metadata: `default_model`, `default_thinking`, and model capabilities.
-- Decision:
-  - read Kimi model catalog and default thinking state from local `config.toml` when available.
-  - synthesize thread `ConfigOptions` and `DiscoverModels()` results from that local config instead of ACP `session/new`.
-  - apply reasoning overrides for real prompt turns through Kimi startup flags (`--thinking` / `--no-thinking`) and keep model selection on `--model`.
-  - retain ACP fallback only when local config cannot be read or parsed.
-- Consequences:
-  - Kimi thread config queries and startup catalog refresh no longer create empty session history entries in normal local setups.
-  - Kimi keeps real ACP turns for actual prompts, permissions, streaming, and cancellation behavior.
-  - local config structure becomes part of the provider compatibility surface, so future Kimi config schema drift must be monitored.
-- Alternatives considered:
-  - keep ACP-only config discovery (rejected: side effect creates noisy empty sessions).
-  - disable Kimi config/model catalog refresh entirely (rejected: would regress model picker accuracy).
 
 ## ADR-035: Add opt-in ACP debug tracing behind `--debug`
 
@@ -1293,3 +1300,123 @@ Use this template for new decisions.
 - Alternatives considered:
   - keep returning unavailable agents and suppress only refresh warnings (rejected: frontend/runtime behavior would still disagree about what is usable).
   - make refresh failures silent while leaving the static allowlist intact (rejected: still permits users to create threads for agents that cannot start).
+
+## ADR-052: Share repeated ACP discovery and session-param helpers across built-in providers
+
+- Status: Accepted
+- Date: 2026-03-21
+- Context:
+  - `gemini`, `qwen`, `kimi`, and `opencode` each had an identical package-level `DiscoverModels(ctx, cfg)` implementation that only constructed the provider client and delegated to `client.DiscoverModels(ctx)`.
+  - the shared behavior already lived in `internal/agents/acpcli.Client.DiscoverModels`; the duplication was only in package entrypoints.
+  - those same four providers also duplicated the ACP request parameter builders for `session/new`, `session/load`, `session/list`, and the `cwd` fallback helper used by `session/list`.
+- Decision:
+  - add `acpcli.DiscoverModelsWithClient`, a small shared helper that constructs a provider client and invokes its `DiscoverModels` method.
+  - add shared `acpcli.SessionNewParams`, `acpcli.DiscoverModelsParams`, `acpcli.SessionLoadParams`, `acpcli.SessionListParams`, and `acpcli.SessionCWD` helpers for the common ACP request shapes used by these providers.
+  - route `gemini`, `qwen`, `kimi`, and `opencode` package-level `DiscoverModels` through that helper.
+  - keep Kimi's local-config fast path in `internal/agents/kimi/models.go`, but use the same helper for its ACP fallback path.
+  - wire `gemini`, `qwen`, `opencode`, and `kimi` to those shared ACP param helpers, leaving only genuinely provider-specific hooks local.
+- Consequences:
+  - package-level model discovery entrypoints now share one implementation for the repeated constructor-plus-delegate pattern.
+  - the four ACP-backed providers no longer carry copy-pasted param-builder functions for the common `cwd + mcpServers + optional model/cursor/sessionId` request shapes.
+  - future ACP providers with the same shape can reuse the helper instead of adding another near-identical `models.go` body.
+  - Kimi still preserves its provider-specific local configuration behavior without forking the common ACP fallback.
+- Alternatives considered:
+  - leave the wrappers duplicated because they are small (rejected: unnecessary repetition across multiple providers).
+  - leave the param builders local because they are short (rejected: they were identical across four providers and changed together conceptually).
+  - move the local-config branch into `acpcli` as well (rejected: that behavior is provider-specific and should stay in `kimi`).
+
+## ADR-053: Learn model/reasoning metadata only from real session lifecycle events
+
+- Status: Accepted
+- Date: 2026-03-22
+- Context:
+  - ngent had accumulated several probe-only metadata paths for model/reasoning discovery:
+    - startup config-catalog refresh
+    - `GET /v1/threads/{threadId}/config-options` live fallback
+    - `GET /v1/agents/{agentId}/models` live fallback
+  - for ACP-backed providers, those paths ultimately used `session/new`, which created provider-side empty sessions even when the user had not actually started or resumed a conversation.
+  - the old agent-scoped "default catalog" assumption was also too coarse once threads could point at arbitrary existing sessions; two threads without explicit `modelId` could legitimately load different actual session configs.
+- Decision:
+  - treat user-initiated `session/new` / `session/load` as the authoritative source for model/reasoning metadata.
+  - add a shared config snapshot callback so providers can report the `configOptions` returned by those session lifecycle calls.
+  - persist those real snapshots immediately into sqlite:
+    - update the thread row with the session's actual current `modelId` / `configOverrides`
+    - update the agent config catalog under the actual current model id
+  - remove proactive startup refresh and stop `/config-options` / `/models` endpoints from opening probe sessions just to discover metadata.
+  - when a thread switches to an existing session, clear stale thread-local model/reasoning selections first so the next user-triggered `session/load` can repopulate the real values.
+- Consequences:
+  - ngent no longer creates empty provider sessions just because the UI opened a thread or the server started up.
+  - fresh threads now show no model/reasoning metadata until at least one real turn (or resumed session turn) reports it.
+  - model/reasoning controls in the Web UI become session-driven instead of agent-default-driven, which avoids cross-thread leakage from a shared default snapshot.
+  - `/v1/agents/{agentId}/models` may legitimately return an empty list until sqlite has learned at least one real config snapshot for that agent.
+- Alternatives considered:
+  - keep proactive refresh and only hide the frontend controls (rejected: still creates empty upstream sessions and keeps sqlite detached from real session state).
+  - keep using one shared default catalog row for threads without explicit `modelId` (rejected: stale or unrelated session config can leak between threads).
+  - update only the agent catalog and leave thread rows untouched (rejected: thread-level model/reasoning state would stay ambiguous when multiple sessions of the same agent differ).
+
+## ADR-054: Persist learned config snapshots per provider session
+
+- Status: Accepted
+- Date: 2026-03-22
+- Context:
+  - ADR-053 removed probe sessions and made real `session/new` / `session/load` the only source of config metadata.
+  - ngent persisted those learned snapshots into the thread row and `agent_config_catalogs`, but a later switch to another existing session intentionally clears stale thread-local `modelId` / `configOverrides`.
+  - when the user switched back to the original session before sending another turn, ngent only had the `sessionId`; the learned model/reasoning snapshot was no longer addressable, so the Web UI hid the controls again.
+- Decision:
+  - add sqlite table `session_config_cache(agent_id, cwd, session_id, config_options_json, updated_at)`.
+  - whenever a user-triggered turn/session load reports config for a bound session, persist the normalized snapshot under that `agent + cwd + sessionId` key in addition to the thread row and `agent_config_catalogs`.
+  - if a fresh session reports config before `session_bound`, replay the already persisted thread/model snapshot into `session_config_cache` as soon as the session id becomes known.
+  - when `/v1/threads/{threadId}/session-history?sessionId=...` is served from cached transcript data but the destination session still has no cached config snapshot, bypass the transcript-only short circuit and perform one live `session/load` so that user-triggered session switching can still teach sqlite that session's config.
+  - change `GET /v1/threads/{threadId}/config-options` to restore from session cache when the thread currently points at a known session but has no thread-local `modelId`.
+- Consequences:
+  - switching away from a learned session and then back to it restores model/reasoning controls immediately without requiring another turn.
+  - switching directly onto an unseen existing session can now also reveal model/reasoning controls immediately when that session's user-triggered `session/load` returns config metadata.
+  - session-specific config state no longer depends on thread-local mirrors surviving every session change.
+  - unseen sessions still legitimately return no config metadata until one real turn (or other real session lifecycle event during a turn) teaches ngent that session's snapshot.
+- Alternatives considered:
+  - keep only thread-local state and accept that switching back requires another turn (rejected: poor UX and contradicts the intent of session-driven discovery).
+  - repopulate by proactively calling `session/load` on session switch (rejected: reintroduces probe-style metadata fetches outside real turn flow).
+  - key everything only by `agent + model` (rejected: multiple sessions can share a model id but differ in other config values such as reasoning/mode).
+
+## ADR-055: Preserve non-text assistant ACP content as first-class turn events
+
+- Status: Accepted
+- Date: 2026-03-22
+- Context:
+  - ACP `agent_message_chunk` is not limited to plain text; providers can emit structured visible assistant content such as image blocks or embedded resources.
+  - ngent previously treated ordinary assistant message chunks as text-only, so any non-text payload was silently ignored unless it happened to appear inside a tool-call payload.
+  - flattening those blocks into markdown or ad-hoc strings would lose protocol structure and make future richer rendering harder.
+- Decision:
+  - extend shared ACP update parsing so text `agent_message_chunk` payloads continue to populate `message_delta`, while non-text assistant blocks are preserved as raw structured `content`.
+  - add a per-turn assistant message-content callback in the agent layer and persist/stream those blocks as first-class `message_content` turn events.
+  - keep `responseText` as the aggregate visible text only, and let rich assistant content be reconstructed from persisted turn events in the Web UI.
+  - render common assistant image/resource blocks directly in the Web UI while leaving unknown block shapes on a JSON fallback path.
+- Consequences:
+  - hub-created turns no longer lose assistant images or embedded resources during live streaming or history reload.
+  - downstream clients can evolve richer renderers without changing the transport contract again because the raw ACP `content` JSON is preserved.
+  - provider-owned `/session-history` replay remains text-only for now because its transcript schema has not yet grown structured content support.
+- Alternatives considered:
+  - ignore non-text assistant blocks outside tool calls (rejected: visibly loses model output).
+  - stringify image/resource payloads into `message_delta` (rejected: destroys structure and produces poor UI).
+  - change `responseText` into a heterogeneous rich-content blob (rejected: larger API break and unnecessary when turn events already provide the ordered detail).
+
+## ADR-056: Preserve exact provider permission options through the hub permission flow
+
+- Status: Accepted
+- Date: 2026-03-22
+- Context:
+  - ngent's permission UI and HTTP endpoint originally collapsed every permission request into a binary `approved` / `declined` choice.
+  - real ACP-backed providers such as Kimi, Qwen, and OpenCode can advertise richer permission option sets such as `allow_once`, `allow_always`, `reject_once`, and `reject_always`, each with a distinct `optionId`.
+  - once the hub reduced those requests to a generic outcome, the Web UI could no longer present the provider's real choices and the backend could only approximate the response by picking a default allow/reject option.
+- Decision:
+  - extend the shared permission request model so provider-advertised `options[]` are preserved and forwarded in the `permission_required` SSE payload.
+  - extend `POST /v1/permissions/{permissionId}` to accept `optionId` alongside the existing generic `outcome`.
+  - when a client submits an exact `optionId`, prefer forwarding that exact selection back to option-aware providers; keep generic outcome fallback behavior for providers that still only understand `approved` / `declined` / `cancelled`.
+  - keep fail-closed behavior unchanged: missing, invalid, timed-out, or disconnected permission decisions still default to deny.
+- Consequences:
+  - the Web UI can render all provider permission choices instead of hard-coding `Allow` / `Deny`.
+  - Kimi/Qwen/OpenCode-style permission flows preserve provider-specific semantics such as `allow always` vs `allow once`.
+  - existing outcome-only clients and generic providers remain compatible.
+- Alternatives considered:
+  - keep the UI binary and continue mapping approvals to the first allow/reject option (rejected: loses provider semantics and hides real choices from the user).
+  - expose provider options in SSE but keep the HTTP endpoint outcome-only (rejected: UI would still be unable to return the exact selected option).

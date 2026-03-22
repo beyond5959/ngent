@@ -21,6 +21,8 @@ import (
 	"github.com/beyond5959/acp-adapter/pkg/codexacp"
 	agentimpl "github.com/beyond5959/ngent/internal/agents"
 	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/agents/agentutil"
+	blackboxagent "github.com/beyond5959/ngent/internal/agents/blackbox"
 	claudeagent "github.com/beyond5959/ngent/internal/agents/claude"
 	codexagent "github.com/beyond5959/ngent/internal/agents/codex"
 	geminiagent "github.com/beyond5959/ngent/internal/agents/gemini"
@@ -69,6 +71,7 @@ func main() {
 	geminiPreflightErr := geminiagent.Preflight()
 	kimiPreflightErr := kimiagent.Preflight()
 	qwenPreflightErr := qwenagent.Preflight()
+	blackboxPreflightErr := blackboxagent.Preflight()
 	claudePreflightErr := claudeagent.Preflight()
 
 	if *contextRecentTurns <= 0 {
@@ -97,29 +100,27 @@ func main() {
 	geminiAvailable := geminiPreflightErr == nil
 	kimiAvailable := kimiPreflightErr == nil
 	qwenAvailable := qwenPreflightErr == nil
+	blackboxAvailable := blackboxPreflightErr == nil
 	claudeAvailable := claudePreflightErr == nil
-	if codexPreflightErr != nil {
-		logger.Warn("startup.codex_embedded_unavailable", "error", codexPreflightErr.Error())
-	}
-	if opencodePreflightErr != nil {
-		logger.Warn("startup.opencode_unavailable", "error", opencodePreflightErr.Error())
-	}
-	if geminiPreflightErr != nil {
-		logger.Warn("startup.gemini_unavailable", "error", geminiPreflightErr.Error())
-	}
-	if kimiPreflightErr != nil {
-		logger.Warn("startup.kimi_unavailable", "error", kimiPreflightErr.Error())
-	}
-	if qwenPreflightErr != nil {
-		logger.Warn("startup.qwen_unavailable", "error", qwenPreflightErr.Error())
-	}
-	if claudePreflightErr != nil {
-		logger.Warn("startup.claude_unavailable", "error", claudePreflightErr.Error())
-	}
+	logStartupPreflight(logger, "startup.codex_embedded_unavailable", codexPreflightErr)
+	logStartupPreflight(logger, "startup.opencode_unavailable", opencodePreflightErr)
+	logStartupPreflight(logger, "startup.gemini_unavailable", geminiPreflightErr)
+	logStartupPreflight(logger, "startup.kimi_unavailable", kimiPreflightErr)
+	logStartupPreflight(logger, "startup.qwen_unavailable", qwenPreflightErr)
+	logStartupPreflight(logger, "startup.blackbox_unavailable", blackboxPreflightErr)
+	logStartupPreflight(logger, "startup.claude_unavailable", claudePreflightErr)
 	if *debugFlag {
 		logger.Info("startup.debug_enabled", "acpTrace", true)
 	}
-	agents := supportedAgents(codexAvailable, opencodeAvailable, geminiAvailable, kimiAvailable, qwenAvailable, claudeAvailable)
+	agents := supportedAgents(
+		codexAvailable,
+		opencodeAvailable,
+		geminiAvailable,
+		kimiAvailable,
+		qwenAvailable,
+		blackboxAvailable,
+		claudeAvailable,
+	)
 	allowedAgentIDs := agentIDsFromInfos(agents)
 
 	listenAddr, port, err := resolveListenAddr(*portFlag, *allowPublic)
@@ -200,6 +201,13 @@ func main() {
 					SessionID:       sessionID,
 					ConfigOverrides: configOverrides,
 				})
+			case agentimpl.AgentIDBlackbox:
+				return blackboxagent.New(blackboxagent.Config{
+					Dir:             thread.CWD,
+					ModelID:         modelID,
+					SessionID:       sessionID,
+					ConfigOverrides: configOverrides,
+				})
 			case agentimpl.AgentIDClaude:
 				return claudeagent.New(claudeagent.Config{
 					Dir:             thread.CWD,
@@ -246,6 +254,11 @@ func main() {
 					return nil, qwenPreflightErr
 				}
 				return qwenagent.DiscoverModels(ctx, qwenagent.Config{Dir: modelDiscoveryDir})
+			case agentimpl.AgentIDBlackbox:
+				if blackboxPreflightErr != nil {
+					return nil, blackboxPreflightErr
+				}
+				return blackboxagent.DiscoverModels(ctx, blackboxagent.Config{Dir: modelDiscoveryDir})
 			case agentimpl.AgentIDOpencode:
 				if opencodePreflightErr != nil {
 					return nil, opencodePreflightErr
@@ -262,21 +275,6 @@ func main() {
 		Logger:             logger,
 		FrontendHandler:    webui.Handler(),
 	})
-	refreshCtx, refreshCancel := context.WithCancel(context.Background())
-	defer refreshCancel()
-	startAgentConfigCatalogRefresh(refreshCtx, buildAgentConfigCatalogRefresher(
-		store,
-		logger,
-		allowedAgentIDs,
-		modelDiscoveryDir,
-		codexRuntimeConfig,
-		codexPreflightErr,
-		opencodePreflightErr,
-		geminiPreflightErr,
-		kimiPreflightErr,
-		qwenPreflightErr,
-		claudePreflightErr,
-	))
 	defer func() {
 		if closeErr := handler.Close(); closeErr != nil {
 			logger.Error("shutdown.httpapi_close_failed", "error", closeErr.Error())
@@ -346,6 +344,7 @@ func buildAgentConfigCatalogRefresher(
 	geminiPreflightErr error,
 	kimiPreflightErr error,
 	qwenPreflightErr error,
+	blackboxPreflightErr error,
 	claudePreflightErr error,
 ) *agentConfigCatalogRefresher {
 	if store == nil {
@@ -424,6 +423,18 @@ func buildAgentConfigCatalogRefresher(
 					return nil, err
 				}
 				return queryAgentConfigOptions(ctx, client)
+			case agentimpl.AgentIDBlackbox:
+				if blackboxPreflightErr != nil {
+					return nil, blackboxPreflightErr
+				}
+				client, err := blackboxagent.New(blackboxagent.Config{
+					Dir:     modelDiscoveryDir,
+					ModelID: modelID,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return queryAgentConfigOptions(ctx, client)
 			case agentimpl.AgentIDOpencode:
 				if opencodePreflightErr != nil {
 					return nil, opencodePreflightErr
@@ -478,6 +489,11 @@ func buildAgentConfigCatalogRefresher(
 					return nil, qwenPreflightErr
 				}
 				return qwenagent.DiscoverModels(ctx, qwenagent.Config{Dir: modelDiscoveryDir})
+			case "blackbox":
+				if blackboxPreflightErr != nil {
+					return nil, blackboxPreflightErr
+				}
+				return blackboxagent.DiscoverModels(ctx, blackboxagent.Config{Dir: modelDiscoveryDir})
 			case "opencode":
 				if opencodePreflightErr != nil {
 					return nil, opencodePreflightErr
@@ -728,7 +744,15 @@ func extractConfigOverrides(agentOptionsJSON string) map[string]string {
 	return normalized
 }
 
-func supportedAgents(codexAvailable, opencodeAvailable, geminiAvailable, kimiAvailable, qwenAvailable, claudeAvailable bool) []httpapi.AgentInfo {
+func supportedAgents(
+	codexAvailable,
+	opencodeAvailable,
+	geminiAvailable,
+	kimiAvailable,
+	qwenAvailable,
+	blackboxAvailable,
+	claudeAvailable bool,
+) []httpapi.AgentInfo {
 	agents := make([]httpapi.AgentInfo, 0, len(agentimpl.AllAgentIDs()))
 	appendIfAvailable := func(available bool, agentID, name string) {
 		if !available {
@@ -747,6 +771,7 @@ func supportedAgents(codexAvailable, opencodeAvailable, geminiAvailable, kimiAva
 	appendIfAvailable(kimiAvailable, agentimpl.AgentIDKimi, "Kimi CLI")
 	appendIfAvailable(qwenAvailable, agentimpl.AgentIDQwen, "Qwen Code")
 	appendIfAvailable(opencodeAvailable, agentimpl.AgentIDOpencode, "OpenCode")
+	appendIfAvailable(blackboxAvailable, agentimpl.AgentIDBlackbox, "BLACKBOX AI")
 
 	return agents
 }
@@ -795,6 +820,16 @@ func resolveListenAddr(port int, allowPublic bool) (string, int, error) {
 
 	listenAddr := net.JoinHostPort(host, strconv.Itoa(port))
 	return listenAddr, port, nil
+}
+
+func logStartupPreflight(logger *slog.Logger, event string, err error) {
+	if logger == nil || err == nil {
+		return
+	}
+	if agentutil.IsMissingBinaryError(err) {
+		return
+	}
+	logger.Warn(event, "error", err.Error())
 }
 
 func gracefulShutdown(

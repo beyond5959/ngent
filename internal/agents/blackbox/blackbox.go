@@ -1,4 +1,4 @@
-package qwen
+package blackbox
 
 import (
 	"context"
@@ -17,10 +17,10 @@ const defaultPermissionTimeout = 15 * time.Second
 
 var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(defaultPermissionTimeout)
 
-// Config configures the Qwen CLI ACP stdio provider.
+// Config configures the BLACKBOX AI CLI ACP stdio provider.
 type Config = agentutil.Config
 
-// Client runs one qwen --acp process per ACP operation.
+// Client runs one blackbox --experimental-acp process per ACP operation.
 type Client struct {
 	*acpcli.Client
 }
@@ -31,9 +31,9 @@ var _ agents.SessionLister = (*Client)(nil)
 var _ agents.SessionTranscriptLoader = (*Client)(nil)
 var _ agents.SlashCommandsProvider = (*Client)(nil)
 
-// New constructs a Qwen ACP client.
+// New constructs a BLACKBOX AI ACP client.
 func New(cfg Config) (*Client, error) {
-	base, err := acpcli.New(agents.AgentIDQwen, cfg, acpcli.Hooks{
+	base, err := acpcli.New(agents.AgentIDBlackbox, cfg, acpcli.Hooks{
 		OpenConn:                openConn(cfg.Dir),
 		SessionNewParams:        acpcli.SessionNewParams(cfg.Dir),
 		SessionLoadParams:       acpcli.SessionLoadParams(cfg.Dir),
@@ -41,7 +41,7 @@ func New(cfg Config) (*Client, error) {
 		PromptParams:            promptParams,
 		DiscoverModelsParams:    acpcli.DiscoverModelsParams(cfg.Dir),
 		HandlePermissionRequest: handlePermissionRequest,
-		Cancel:                  cancelWithNotify,
+		Cancel:                  cancelWithCall,
 	})
 	if err != nil {
 		return nil, err
@@ -49,9 +49,9 @@ func New(cfg Config) (*Client, error) {
 	return &Client{Client: base}, nil
 }
 
-// Preflight checks that the qwen binary is available in PATH.
+// Preflight checks that the blackbox binary is available in PATH.
 func Preflight() error {
-	return agentutil.PreflightBinary(agents.AgentIDQwen)
+	return agentutil.PreflightBinary(agents.AgentIDBlackbox)
 }
 
 func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstdio.Conn, func(), json.RawMessage, error) {
@@ -59,21 +59,35 @@ func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstd
 		ctx context.Context,
 		req acpcli.OpenConnRequest,
 	) (*acpstdio.Conn, func(), json.RawMessage, error) {
+		modelID := strings.TrimSpace(req.ModelID)
+		if req.Purpose == acpcli.OpenPurposeDiscoverModels {
+			modelID = ""
+		}
+
 		conn, cleanup, initResult, err := acpcli.OpenProcess(ctx, acpcli.ProcessConfig{
-			Command: agents.AgentIDQwen,
-			Args:    []string{"--acp"},
+			Command: agents.AgentIDBlackbox,
+			Args:    commandArgs(modelID),
 			Dir:     strings.TrimSpace(dir),
 			Env:     os.Environ(),
 			ConnOptions: acpstdio.ConnOptions{
-				Prefix: agents.AgentIDQwen,
+				Prefix:           agents.AgentIDBlackbox,
+				AllowStdoutNoise: true,
 			},
 			InitializeParams: initializeParams(),
 		})
 		if err != nil {
-			return nil, nil, nil, acpcli.WrapOpenError(agents.AgentIDQwen, req.Purpose, err)
+			return nil, nil, nil, acpcli.WrapOpenError(agents.AgentIDBlackbox, req.Purpose, err)
 		}
 		return conn, cleanup, initResult, nil
 	}
+}
+
+func commandArgs(modelID string) []string {
+	args := []string{"--skip-update", "--telemetry=false"}
+	if modelID = strings.TrimSpace(modelID); modelID != "" {
+		args = append(args, "--model", modelID)
+	}
+	return append(args, "--experimental-acp")
 }
 
 func initializeParams() map[string]any {
@@ -99,17 +113,21 @@ func promptParams(sessionID, input, modelID string) map[string]any {
 	return params
 }
 
-func cancelWithNotify(conn *acpstdio.Conn, sessionID string) {
+func cancelWithCall(conn *acpstdio.Conn, sessionID string) {
 	if conn == nil {
 		return
 	}
-	conn.Notify("session/cancel", map[string]any{"sessionId": strings.TrimSpace(sessionID)})
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = conn.Call(cancelCtx, "session/cancel", map[string]any{
+		"sessionId": strings.TrimSpace(sessionID),
+	})
 }
 
 // Name returns the provider identifier.
 func (c *Client) Name() string {
 	if c == nil || c.Client == nil {
-		return agents.AgentIDQwen
+		return agents.AgentIDBlackbox
 	}
 	return c.Client.Name()
 }

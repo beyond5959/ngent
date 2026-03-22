@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -84,6 +86,37 @@ func TestResolveListenAddr(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLogStartupPreflight(t *testing.T) {
+	t.Run("skip missing binary warning", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+		logStartupPreflight(logger, "startup.qwen_unavailable", &exec.Error{Name: "qwen", Err: exec.ErrNotFound})
+
+		if got := strings.TrimSpace(buf.String()); got != "" {
+			t.Fatalf("logStartupPreflight() wrote %q, want empty output", got)
+		}
+	})
+
+	t.Run("warn on other preflight error", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+		logStartupPreflight(logger, "startup.qwen_unavailable", errors.New("permission denied"))
+
+		got := buf.String()
+		if !strings.Contains(got, `"level":"WARN"`) {
+			t.Fatalf("log output = %q, want WARN level", got)
+		}
+		if !strings.Contains(got, `"msg":"startup.qwen_unavailable"`) {
+			t.Fatalf("log output = %q, want startup event", got)
+		}
+		if !strings.Contains(got, `"error":"permission denied"`) {
+			t.Fatalf("log output = %q, want error payload", got)
+		}
+	})
 }
 
 func TestResolveAllowedRoots(t *testing.T) {
@@ -268,12 +301,12 @@ func TestAgentConfigCatalogRefresherPartialKeepsExistingRows(t *testing.T) {
 }
 
 func TestSupportedAgentsOnlyIncludesAvailableAgents(t *testing.T) {
-	agentsUnavailable := supportedAgents(false, false, false, false, false, false)
+	agentsUnavailable := supportedAgents(false, false, false, false, false, false, false)
 	if got := len(agentsUnavailable); got != 0 {
 		t.Fatalf("len(agentsUnavailable) = %d, want 0", got)
 	}
 
-	agentsSubset := supportedAgents(true, false, false, true, false, false)
+	agentsSubset := supportedAgents(true, false, false, true, false, false, false)
 	if got, want := len(agentsSubset), 2; got != want {
 		t.Fatalf("len(agentsSubset) = %d, want %d", got, want)
 	}
@@ -290,11 +323,11 @@ func TestSupportedAgentsOnlyIncludesAvailableAgents(t *testing.T) {
 		t.Fatalf("agentsSubset[1].Status = %q, want %q", agentsSubset[1].Status, "available")
 	}
 
-	agentsAvailable := supportedAgents(true, true, true, true, true, true)
-	if got, want := len(agentsAvailable), 6; got != want {
+	agentsAvailable := supportedAgents(true, true, true, true, true, true, true)
+	if got, want := len(agentsAvailable), 7; got != want {
 		t.Fatalf("len(agentsAvailable) = %d, want %d", got, want)
 	}
-	for i, wantID := range []string{"codex", "claude", "gemini", "kimi", "qwen", "opencode"} {
+	for i, wantID := range []string{"codex", "claude", "gemini", "kimi", "qwen", "opencode", "blackbox"} {
 		if agentsAvailable[i].ID != wantID {
 			t.Fatalf("agentsAvailable[%d].ID = %q, want %q", i, agentsAvailable[i].ID, wantID)
 		}

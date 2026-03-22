@@ -50,6 +50,7 @@ type Hooks struct {
 	PromptParams            func(sessionID, input, modelID string) map[string]any
 	DiscoverModelsParams    func(modelID string) map[string]any
 	PrepareConfigSession    func(modelID string, overrides map[string]string, configID, value string) ConfigSessionPlan
+	SelectSessionModel      func(ctx context.Context, conn *acpstdio.Conn, sessionID, modelID string, options []agents.ConfigOption) ([]agents.ConfigOption, error)
 	HandlePermissionRequest func(ctx context.Context, params json.RawMessage, handler agents.PermissionHandler, hasHandler bool) (json.RawMessage, error)
 	Cancel                  func(conn *acpstdio.Conn, sessionID string)
 }
@@ -61,6 +62,11 @@ type Client struct {
 	provider      string
 	hooks         Hooks
 	slashCommands agents.SlashCommandsCache
+}
+
+// ModelDiscoverer describes the client capability needed by shared DiscoverModels helpers.
+type ModelDiscoverer interface {
+	DiscoverModels(ctx context.Context) ([]agents.ModelOption, error)
 }
 
 // New constructs one shared ACP CLI client for a provider.
@@ -90,6 +96,78 @@ func New(provider string, cfg agentutil.Config, hooks Hooks) (*Client, error) {
 		provider: strings.TrimSpace(provider),
 		hooks:    hooks,
 	}, nil
+}
+
+// DiscoverModelsWithClient constructs one provider client and returns its discovered model options.
+func DiscoverModelsWithClient[T ModelDiscoverer](
+	ctx context.Context,
+	newClient func() (T, error),
+) ([]agents.ModelOption, error) {
+	client, err := newClient()
+	if err != nil {
+		return nil, err
+	}
+	return client.DiscoverModels(ctx)
+}
+
+// SessionNewParams returns ACP session/new params for providers that only need cwd and optional model selection.
+func SessionNewParams(dir string) func(string) map[string]any {
+	return func(modelID string) map[string]any {
+		params := map[string]any{
+			"cwd":        strings.TrimSpace(dir),
+			"mcpServers": []any{},
+		}
+		modelID = strings.TrimSpace(modelID)
+		if modelID != "" {
+			params["model"] = modelID
+			params["modelId"] = modelID
+		}
+		return params
+	}
+}
+
+// DiscoverModelsParams returns ACP session/new params for model discovery without forcing a model selection.
+func DiscoverModelsParams(dir string) func(string) map[string]any {
+	return func(string) map[string]any {
+		return map[string]any{
+			"cwd":        strings.TrimSpace(dir),
+			"mcpServers": []any{},
+		}
+	}
+}
+
+// SessionLoadParams returns ACP session/load params for providers that only need session id and cwd.
+func SessionLoadParams(dir string) func(string) map[string]any {
+	return func(sessionID string) map[string]any {
+		return map[string]any{
+			"sessionId":  strings.TrimSpace(sessionID),
+			"cwd":        strings.TrimSpace(dir),
+			"mcpServers": []any{},
+		}
+	}
+}
+
+// SessionListParams returns ACP session/list params for providers that only need cwd, optional cursor, and empty MCP servers.
+func SessionListParams(dir string) func(string, string) map[string]any {
+	return func(cwd, cursor string) map[string]any {
+		params := map[string]any{
+			"cwd":        SessionCWD(dir, cwd),
+			"mcpServers": []any{},
+		}
+		if cursor = strings.TrimSpace(cursor); cursor != "" {
+			params["cursor"] = cursor
+		}
+		return params
+	}
+}
+
+// SessionCWD chooses the explicit session cwd when present, otherwise falling back to the provider default dir.
+func SessionCWD(dir, cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd != "" {
+		return cwd
+	}
+	return strings.TrimSpace(dir)
 }
 
 // Name returns the provider identifier.
@@ -219,9 +297,11 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		if !caps.CanLoad {
 			return agents.StopReasonEndTurn, agents.ErrSessionLoadUnsupported
 		}
-		if _, err := conn.Call(ctx, "session/load", c.hooks.SessionLoadParams(sessionID)); err != nil {
+		loadResult, err := conn.Call(ctx, "session/load", c.hooks.SessionLoadParams(sessionID))
+		if err != nil {
 			return agents.StopReasonEndTurn, fmt.Errorf("%s: session/load: %w", c.nameForError(), err)
 		}
+		initialOptions = acpmodel.ExtractConfigOptions(loadResult)
 	} else {
 		newResult, err := conn.Call(ctx, "session/new", c.hooks.SessionNewParams(modelID))
 		if err != nil {
@@ -234,8 +314,20 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		initialOptions = acpmodel.ExtractConfigOptions(newResult)
 	}
 
-	if _, err := c.applyConfigOverrides(ctx, conn, sessionID, initialOptions, configOverrides); err != nil {
+	if modelID != "" && c.hooks.SelectSessionModel != nil {
+		selectedOptions, err := c.hooks.SelectSessionModel(ctx, conn, sessionID, modelID, initialOptions)
+		if err != nil {
+			return agents.StopReasonEndTurn, err
+		}
+		initialOptions = selectedOptions
+	}
+	initialOptions, err = c.applyConfigOverrides(ctx, conn, sessionID, initialOptions, configOverrides)
+	if err != nil {
 		return agents.StopReasonEndTurn, err
+	}
+	c.ApplyConfigOptionsSnapshot(initialOptions)
+	if err := agents.NotifyConfigOptions(streamCtx, initialOptions); err != nil {
+		return agents.StopReasonEndTurn, fmt.Errorf("%s: report config options: %w", c.nameForError(), err)
 	}
 	if caps.CanLoad {
 		c.SetSessionID(sessionID)
@@ -355,10 +447,13 @@ func (c *Client) LoadSessionTranscript(
 		return collector.HandleRawUpdate(msg.Params)
 	})
 
-	if _, err := conn.Call(ctx, "session/load", c.hooks.SessionLoadParams(session.SessionID)); err != nil {
+	loadResult, err := conn.Call(ctx, "session/load", c.hooks.SessionLoadParams(session.SessionID))
+	if err != nil {
 		return agents.SessionTranscriptResult{}, fmt.Errorf("%s: session/load: %w", c.nameForError(), err)
 	}
-	return collector.Result(), nil
+	result := collector.Result()
+	result.ConfigOptions = acpmodel.ExtractConfigOptions(loadResult)
+	return agents.CloneSessionTranscriptResult(result), nil
 }
 
 // RunConfigSession executes one ACP config query/update session.
@@ -405,7 +500,14 @@ func (c *Client) RunConfigSession(
 		return nil, errors.New(c.nameForError() + ": config options session/new returned empty sessionId")
 	}
 
-	options, err := c.applyConfigOverrides(ctx, conn, sessionID, acpmodel.ExtractConfigOptions(newResult), configOverrides)
+	options := acpmodel.ExtractConfigOptions(newResult)
+	if strings.TrimSpace(plan.SessionModelID) != "" && c.hooks.SelectSessionModel != nil {
+		options, err = c.hooks.SelectSessionModel(ctx, conn, sessionID, plan.SessionModelID, options)
+		if err != nil {
+			return nil, err
+		}
+	}
+	options, err = c.applyConfigOverrides(ctx, conn, sessionID, options, configOverrides)
 	if err != nil {
 		return nil, err
 	}

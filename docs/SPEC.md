@@ -7,7 +7,7 @@ Build a local-first Code Agent Hub Server that:
 - serves HTTP/JSON APIs.
 - streams turn events via SSE (`text/event-stream`).
 - supports multi-client and multi-thread execution.
-- is designed to support ACP-compatible agents (for example Claude Code, Gemini, Kimi, OpenCode, Codex).
+- is designed to support ACP-compatible agents (for example Claude Code, Gemini, Kimi, OpenCode, Qwen, BLACKBOX AI, Codex).
 - persists interaction state/events in SQLite.
 - forwards runtime permissions to the owning client with fail-closed behavior.
 
@@ -19,7 +19,7 @@ Modules:
 - `internal/runtime`: thread controller, turn state machine, cancellation coordination.
 - `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
   - per-turn provider resolution selects implementation by thread metadata (agent id + cwd).
-  - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, and `kimi`; provider-specific hooks own command startup, request parameter shaping, permission mapping, and cancel quirks.
+  - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, `kimi`, and `blackbox`; provider-specific hooks own command startup, request parameter shaping, permission mapping, and cancel quirks.
 - `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
 - `internal/sse`: event formatting, stream fanout, resume helpers.
 - `internal/storage`: SQLite repository and migration management.
@@ -40,7 +40,7 @@ Modules:
 - On server boot: no agent process is started.
 - On first thread usage: runtime requests provider instance for that thread.
 - On first turn execution for embedded-provider thread (currently `codex`): server creates the in-process runtime and initializes ACP session lazily.
-- Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
+- Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`, `blackbox`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
 - Embedded runtime `session/new` is created with `cwd=thread.cwd` (validated as absolute path at thread creation).
 - If `thread.agent_options_json` contains `modelId` / `configOverrides`, those values are the persisted desired session config for the thread.
 - Provider instances are cached per thread + session/fresh-session scope and reclaimed by idle TTL (`--agent-idle-ttl`) when that scope has no active turn.
@@ -61,9 +61,9 @@ Flow:
 
 1. agent emits permission request event.
 2. server persists event and forwards it to client stream/API.
-   - SSE emits `permission_required` with `permissionId`.
+   - SSE emits `permission_required` with `permissionId` and any provider-advertised `options[]`.
 3. turn waits for explicit decision.
-   - client submits `POST /v1/permissions/{permissionId}` with outcome.
+   - client submits `POST /v1/permissions/{permissionId}` with `outcome`, `optionId`, or both.
 4. if decision is missing/late/invalid, default is deny (fail-closed).
 
 Turn-side auxiliary callbacks:
@@ -85,7 +85,7 @@ SQLite stores:
 Properties:
 
 - all outbound stream events are persisted before or atomically with emission strategy.
-- streamed auxiliary events such as `reasoning_delta`, `plan_update`, and `permission_required` share the same append-only event log as `message_delta`.
+- streamed auxiliary events such as `message_content`, `reasoning_delta`, `plan_update`, and `permission_required` share the same append-only event log as `message_delta`.
 - each event has monotonic sequence per thread or turn.
 - thread deletion removes dependent rows in order (`events` -> `turns` -> `threads`) in one transaction.
 - restart can rebuild state from durable turn status plus event log.
@@ -109,7 +109,7 @@ On restart:
 - thread compact (`POST /v1/threads/{threadId}/compact`)
 - SSE stream for real-time events
 - permission decision endpoint
-- turn history with optional persisted event replay (`message_delta`, `reasoning_delta`, `plan_update`, terminal/error events)
+- turn history with optional persisted event replay (`message_delta`, `message_content`, `reasoning_delta`, `plan_update`, terminal/error events)
 
 See `docs/API.md` for endpoint and schema contracts.
 
@@ -140,7 +140,7 @@ See `docs/API.md` for endpoint and schema contracts.
   - request parameter schemas
   - permission-request response encoding
   - cancel strategy
-  - provider quirks such as Kimi local config/model-startup behavior and Gemini stdout-noise filtering
+  - provider quirks such as Kimi model/reasoning startup hints and Gemini/BLACKBOX stdout-noise filtering
 - `internal/agents/acpstdio` now supports opt-in stdout-noise tolerance so providers like Gemini can ignore non-JSON stdout lines without maintaining a separate transport implementation.
 
 ## 10. Error Contract
@@ -187,9 +187,11 @@ and upstream ACP schema:
   - map `update.sessionUpdate == "plan"` into hub `plan_update` SSE events; each `entries[]` payload replaces the current plan list.
 - permission request/response:
   - handle `session/request_permission` request from provider.
+  - preserve provider option ids all the way through the hub permission flow when `options[]` are present.
   - reply with ACP outcome shape:
-    - approve: `{outcome:{outcome:"selected", optionId:<allow option>}}`
-    - decline: `{outcome:{outcome:"selected", optionId:<reject option>}}`
+    - exact selected option: `{outcome:{outcome:"selected", optionId:<selected option>}}`
+    - generic approve fallback: `{outcome:{outcome:"selected", optionId:<allow option>}}`
+    - generic decline fallback: `{outcome:{outcome:"selected", optionId:<reject option>}}`
     - cancel: `{outcome:{outcome:"cancelled"}}`
   - default deny if hub decision is missing/invalid/timeout.
 - cancellation:
@@ -271,14 +273,11 @@ and upstream ACP schema:
 - startup command:
   - official Kimi docs currently show both `kimi acp` and `kimi --acp`.
   - the hub must try `kimi acp` first and fall back to `kimi --acp` when ACP initialization closes immediately.
-- local config sourcing:
-  - model catalog and default thinking state should be read from local Kimi config (`config.toml`) when available.
-  - avoid creating ACP `session/new` calls for model discovery or thread config queries that do not send a real prompt, to prevent empty Kimi sessions.
-  - if local config is unavailable or cannot be parsed, fall back to ACP handshake-based discovery/query behavior.
 - ACP flow:
   - `initialize` with `protocolVersion: 1` and `clientCapabilities.fs`.
   - `session/new` with `cwd` and `mcpServers: []`.
   - `session/prompt` with ACP prompt blocks (`[{type:"text", text:...}]`).
+  - model and config catalogs are sourced directly from `session/new` / returned `configOptions`, matching the other direct ACP providers.
 - streaming:
   - consume `session/update` deltas only when `update.sessionUpdate == "agent_message_chunk"`.
   - delta text is read from `update.content.text`.
@@ -286,6 +285,8 @@ and upstream ACP schema:
 - permissions and cancellation:
   - handle `session/request_permission` with fail-closed approval mapping.
   - on context cancellation, send `session/cancel` quickly and converge to `stopReason=cancelled`.
+- tradeoff:
+  - ACP-only metadata discovery can create provider-owned empty Kimi sessions during startup refresh or config/model probes because `session/new` is the discovery surface.
 
 ### 13.3 Server Wiring
 
@@ -316,6 +317,49 @@ and upstream ACP schema:
 - Active thread header uses model dropdown + apply button (runtime options from `GET /v1/agents/{agentId}/models`):
   - apply calls `PATCH /v1/threads/{threadId}`.
   - controls are disabled while model list is loading or while a turn is streaming.
+
+## 14. BLACKBOX AI ACP Integration (2026-03-22)
+
+### 14.1 Objective and Scope
+
+- add `blackbox` as a first-class ACP provider using the BLACKBOX CLI ACP mode.
+- preserve existing runtime/security invariants:
+  - one active turn per `(thread, session)` scope.
+  - fail-closed permission workflow.
+  - allowlisted `agent` and absolute+allowed `cwd` validation.
+  - protocol-only stdout/HTTP payloads, JSON logs on stderr.
+
+### 14.2 Observed BLACKBOX ACP Protocol Profile
+
+The integration follows the official ACP startup form `blackbox --experimental-acp` plus local probing of `blackbox 1.2.47`:
+
+- startup/runtime:
+  - BLACKBOX currently emits extra non-JSON stdout lines (for example process-info / telemetry errors) before or between ACP frames.
+  - ngent must therefore use stdout-noise-tolerant ACP transport for BLACKBOX.
+  - the hub also adds `--skip-update` and `--telemetry=false` when launching ACP mode.
+- ACP requests:
+  - `initialize` works with `protocolVersion: 1` and `clientCapabilities.fs`.
+  - `session/new` accepts `cwd`, `mcpServers: []`, and optional model hints.
+  - `session/prompt` uses ACP content blocks (`[{type:"text", text:...}]`) and accepts optional `model`.
+- current upstream capability limits:
+  - `initialize` currently advertises `agentCapabilities.loadSession=false`.
+  - real `session/load` returns `-32601 method not found`.
+  - `session/new` currently returns no `models.availableModels` or `configOptions`.
+- auth:
+  - ACP startup itself does not require explicitly passing `BLACKBOX_API_KEY` when the local CLI already has another usable auth method configured.
+  - actual prompt execution still depends on valid BLACKBOX/upstream auth and network readiness.
+
+### 14.3 Server Wiring
+
+- add `internal/agents/blackbox` provider package with:
+  - `Preflight()` checking `blackbox` in PATH.
+  - `DiscoverModels()` wired through the shared ACP `session/new` probe, even though current upstream returns no model catalog.
+  - shared structured permission handling and `session/cancel` support.
+- wire `blackbox` into:
+  - startup preflight diagnostics and `/v1/agents`.
+  - thread agent allowlist and `TurnAgentFactory`.
+  - shared model-discovery/config-catalog plumbing.
+- keep session browsing/replay unsupported until upstream BLACKBOX ACP exposes `session/list` / `session/load`.
 
 ## 13. Thread Session Config Options and Immediate Model Switch (2026-03-05)
 
@@ -582,8 +626,12 @@ and upstream ACP schema:
 ### 18.1 Backend Event Model
 
 - Shared ACP `session/update` parsing must recognize:
+  - non-text assistant `agent_message_chunk` payloads that carry structured `content`
   - `tool_call`
   - `tool_call_update`
+- Parsed assistant message content keeps the ACP field structure instead of flattening to text:
+  - `message_delta` remains the transport for visible text deltas
+  - non-text assistant blocks become `message_content` events carrying the raw ACP `content` JSON
 - Parsed tool-call events keep the ACP field structure instead of flattening to text:
   - `toolCallId`
   - optional `title`
@@ -594,25 +642,27 @@ and upstream ACP schema:
   - optional raw JSON `rawInput`
   - optional raw JSON `rawOutput`
 - Providers bridge those parsed events through one per-turn callback, just like plan/reasoning callbacks.
-- HTTP turn handling persists and streams the same event names (`tool_call`, `tool_call_update`) with:
-  - `turnId`
-  - the ACP tool-call fields listed above
+- HTTP turn handling persists and streams the same event names with:
+  - `message_content`: `turnId` plus the raw ACP `content`
+  - `tool_call` / `tool_call_update`: `turnId` plus the ACP tool-call fields listed above
 - Event persistence remains append-only at the turn-event layer; ngent does not store a second derived tool-call snapshot table.
 
 ### 18.2 History Reconstruction
 
-- `GET /v1/threads/{threadId}/history?includeEvents=true` returns the persisted `tool_call` / `tool_call_update` events unchanged in turn event history.
+- `GET /v1/threads/{threadId}/history?includeEvents=true` returns the persisted `message_content`, `tool_call`, and `tool_call_update` events unchanged in turn event history.
 - Tool-call updates are partial replacements:
   - clients must merge them by `toolCallId`
   - omitted fields mean "leave previous value unchanged"
   - explicitly present empty string / empty array / `null` payloads mean "clear or replace with empty value"
 - Session transcript replay stays separate from tool-call history:
   - `session/load` replay collectors still ignore tool-call notifications because transcript replay only reconstructs user/assistant message content.
+  - provider-owned transcript replay currently remains text-only, so non-text assistant content blocks are preserved only for hub-created turns whose normal turn events were persisted by ngent.
 
 ### 18.3 Web UI
 
 - Assistant rendering is timeline-based:
   - `message_delta` becomes visible assistant content segments
+  - `message_content` becomes structured assistant content segments
   - `reasoning_delta` / `thought_delta` becomes thinking segments
   - `tool_call` / `tool_call_update` becomes tool segments
 - Visible assistant content segments render as plain answer blocks, not agent chat bubbles.
@@ -634,6 +684,8 @@ and upstream ACP schema:
 - Permission-request cards are not rendered as tool-call segments and do not participate in tool/thought collapse state.
 - `plan_update` remains a separate replace-style plan card above the ordered assistant segments.
 - The Web UI renders:
+  - assistant image content cards
+  - assistant embedded resource cards with URI/text previews when available
   - title / kind / status badges
   - text content blocks
   - command blocks
@@ -641,3 +693,31 @@ and upstream ACP schema:
   - path/location lists
   - raw JSON input/output blocks
 - Unsupported non-text ACP tool-call payload shapes are still shown via generic JSON fallback so the information is visible even when no richer renderer exists yet.
+- Unsupported ordinary assistant content block shapes are still shown via generic JSON fallback so the information remains visible even before a richer renderer exists.
+
+### 18.4 Session-Driven Config Discovery
+
+- ngent no longer opens probe-only `session/new` calls during startup or while serving `GET /v1/threads/{threadId}/config-options` / `GET /v1/agents/{agentId}/models`.
+- Model/reasoning metadata now comes only from real user-triggered session lifecycle events:
+  - stdio ACP providers extract `configOptions` from the actual `session/new` / `session/load` response used by `Stream()`.
+  - embedded `codex` / `claude` do the same inside their runtime initialization path and emit the same shared callback.
+  - session-transcript replay paths (`GET /v1/threads/{threadId}/session-history?sessionId=...`) may also extract `configOptions` from their user-triggered `session/load` response when the provider returns them.
+- The HTTP turn handler treats that callback as authoritative and persists the snapshot immediately:
+  - thread `agentOptions.modelId` / `agentOptions.configOverrides` are rewritten to match the session's actual current config.
+  - the normalized snapshot is stored in `agent_config_catalogs` under the actual current model id.
+  - when a `sessionId` is already known, the same normalized snapshot is also stored in `session_config_cache(agent_id, cwd, session_id, config_options_json, updated_at)`.
+  - if config arrives before `session_bound`, ngent writes the session cache entry immediately after binding by replaying the just-learned thread/model snapshot onto the new `sessionId`.
+- Existing-session selection clears stale thread-local model/reasoning selections before the next user-triggered `session/load`, so the loaded session's real state can repopulate the thread instead of inheriting the previous session's config.
+- `GET /v1/threads/{threadId}/config-options` is now stored-only:
+  - if the thread already has a concrete `modelId` and sqlite has a matching catalog row, return that row overlaid with the thread's current selections.
+  - otherwise, if the thread points at a concrete `sessionId` and sqlite has a matching `session_config_cache` row, return that session snapshot directly.
+  - otherwise return an empty `configOptions` list instead of probing upstream.
+- `GET /v1/threads/{threadId}/session-history` keeps using cached transcript replay when possible, except:
+  - if transcript cache exists but `session_config_cache` is still missing for the requested session, ngent performs one live `session/load` so that the user-triggered session switch can learn config metadata.
+- `POST /v1/threads/{threadId}/config-options` now requires the thread to have already learned a concrete config snapshot; before that point it returns `409 CONFLICT` rather than opening a probe session.
+- `/v1/agents/{agentId}/models` now returns only models already learned into sqlite; it may be empty for a brand-new agent until at least one real turn reports config metadata.
+- The Web UI follows the same lifecycle:
+  - model/reasoning controls stay hidden until the thread has a real config snapshot.
+  - after a turn completes (or fails/disconnects after session init), the UI reloads stored config options and reveals the controls if metadata is now known.
+  - switching to a different session clears the thread-local config cache so stale controls do not linger before the destination session cache or next user-triggered `session/load` repopulates the controls.
+  - after session-history replay finishes for the selected session, the UI refreshes stored config options again so controls can appear immediately if that replay taught sqlite a new session snapshot.

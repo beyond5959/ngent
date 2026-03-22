@@ -21,6 +21,7 @@ import type {
   ToolCall,
 } from './types.ts'
 import type {
+  MessageContentPayload,
   TurnStream,
   PermissionRequiredPayload,
   PlanUpdatePayload,
@@ -99,14 +100,18 @@ const iconChevronRight = `<svg width="12" height="12" viewBox="0 0 24 24" fill="
   <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
+const iconDotsHorizontal = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+  <circle cx="3" cy="7" r="1.15" fill="currentColor"/>
+  <circle cx="7" cy="7" r="1.15" fill="currentColor"/>
+  <circle cx="11" cy="7" r="1.15" fill="currentColor"/>
+</svg>`
+
 const codexIconURL = '/codex-icon.png'
 const geminiIconURL = '/gemini-icon.png'
 const claudeIconURL = '/claude-icon.png'
-const kimiIconURL = '/kimi-icon.png'
-const opencodeIconURL = '/opencode-icon.png'
 const qwenIconURL = '/qwen-icon.png'
+const blackboxIconURL = '/blackbox.png'
 
-const defaultConfigCatalogCacheKey = '__default__'
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -190,7 +195,8 @@ function normalizeConfigCatalogOptions(options: ConfigOption[]): ConfigOption[] 
 function normalizeAgentConfigCatalogKey(agentId: string, modelId = ''): string {
   const normalizedAgentID = agentId.trim().toLowerCase()
   if (!normalizedAgentID) return ''
-  const normalizedModelID = modelId.trim() || defaultConfigCatalogCacheKey
+  const normalizedModelID = modelId.trim()
+  if (!normalizedModelID) return ''
   return `${normalizedAgentID}::${normalizedModelID}`
 }
 
@@ -236,13 +242,25 @@ function cloneToolCalls(toolCalls: ToolCall[] | null | undefined): ToolCall[] | 
       title: rawToolCall.title?.trim() || undefined,
       kind: rawToolCall.kind?.trim() || undefined,
       status: rawToolCall.status?.trim() || undefined,
-      content: Array.isArray(rawToolCall.content) ? cloneJSONValue(rawToolCall.content) : undefined,
-      locations: Array.isArray(rawToolCall.locations) ? cloneJSONValue(rawToolCall.locations) : undefined,
+      content: normalizeToolCallItems(rawToolCall.content),
+      locations: normalizeToolCallItems(rawToolCall.locations),
       rawInput: rawToolCall.rawInput === undefined ? undefined : cloneJSONValue(rawToolCall.rawInput),
       rawOutput: rawToolCall.rawOutput === undefined ? undefined : cloneJSONValue(rawToolCall.rawOutput),
     })
   }
   return cloned.length ? cloned : undefined
+}
+
+function normalizeToolCallItems(value: unknown): unknown[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (Array.isArray(value)) return cloneJSONValue(value)
+  return [cloneJSONValue(value)]
+}
+
+function normalizeMessageContentItems(value: unknown): unknown[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (Array.isArray(value)) return cloneJSONValue(value)
+  return [cloneJSONValue(value)]
 }
 
 function nextMessageSegmentID(prefix: string, kind: MessageSegment['kind'], index: number): string {
@@ -266,6 +284,14 @@ function cloneMessageSegments(segments: MessageSegment[] | null | undefined): Me
       })
       continue
     }
+    if (segment.kind === 'content' && segment.contentBlock !== undefined) {
+      cloned.push({
+        id,
+        kind: 'content',
+        contentBlock: cloneJSONValue(segment.contentBlock),
+      })
+      continue
+    }
 
     cloned.push({
       id,
@@ -286,6 +312,9 @@ function appendTextSegment(
 
   const next = cloneMessageSegments(segments) ?? []
   const last = next[next.length - 1]
+  if (kind === 'content' && !delta.trim() && last?.kind !== 'content') {
+    return next
+  }
   if (last?.kind === kind) {
     next[next.length - 1] = {
       ...last,
@@ -299,6 +328,25 @@ function appendTextSegment(
     kind,
     content: delta,
   })
+  return next
+}
+
+function appendMessageContentSegments(
+  segments: MessageSegment[] | null | undefined,
+  value: unknown,
+  idPrefix: string,
+): MessageSegment[] {
+  const items = normalizeMessageContentItems(value)
+  if (!items?.length) return cloneMessageSegments(segments) ?? []
+
+  const next = cloneMessageSegments(segments) ?? []
+  for (const item of items) {
+    next.push({
+      id: nextMessageSegmentID(idPrefix, 'content', next.length + 1),
+      kind: 'content',
+      contentBlock: item,
+    })
+  }
   return next
 }
 
@@ -354,6 +402,10 @@ function messageSegmentsContent(segments: MessageSegment[] | null | undefined): 
     .join('')
 }
 
+function hasVisibleContent(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
 function messageSegmentsReasoning(segments: MessageSegment[] | null | undefined): string {
   return (cloneMessageSegments(segments) ?? [])
     .filter(segment => segment.kind === 'reasoning')
@@ -370,7 +422,10 @@ function messageSegmentsToolCalls(segments: MessageSegment[] | null | undefined)
 }
 
 function messageHasContentSegment(segments: MessageSegment[] | null | undefined): boolean {
-  return (segments ?? []).some(segment => segment.kind === 'content' && !!segment.content)
+  return (segments ?? []).some(segment => (
+    segment.kind === 'content'
+    && (hasVisibleContent(segment.content) || segment.contentBlock !== undefined)
+  ))
 }
 
 function applyToolCallEvent(toolCalls: ToolCall[], payload: Record<string, unknown>): ToolCall[] {
@@ -398,10 +453,10 @@ function applyToolCallEvent(toolCalls: ToolCall[], payload: Record<string, unkno
       : undefined
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'content')) {
-    merged.content = Array.isArray(payload.content) ? cloneJSONValue(payload.content) : undefined
+    merged.content = normalizeToolCallItems(payload.content)
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'locations')) {
-    merged.locations = Array.isArray(payload.locations) ? cloneJSONValue(payload.locations) : undefined
+    merged.locations = normalizeToolCallItems(payload.locations)
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'rawInput')) {
     merged.rawInput = payload.rawInput === undefined || payload.rawInput === null
@@ -535,6 +590,10 @@ function buildMessageSegmentsFromTurn(
         segments = appendTextSegment(segments, 'content', event.data.delta, idPrefix)
         break
       }
+      case 'message_content':
+        if (!Object.prototype.hasOwnProperty.call(event.data, 'content')) continue
+        segments = appendMessageContentSegments(segments, event.data.content, idPrefix)
+        break
       case 'reasoning_delta':
       case 'thought_delta': {
         if (typeof event.data.delta !== 'string' || !event.data.delta) continue
@@ -550,7 +609,7 @@ function buildMessageSegmentsFromTurn(
     }
   }
 
-  if (!messageHasContentSegment(segments) && responseText) {
+  if (!messageHasContentSegment(segments) && hasVisibleContent(responseText)) {
     segments = appendTextSegment(segments, 'content', responseText, idPrefix)
   }
 
@@ -614,7 +673,10 @@ function cacheAgentConfigCatalog(agentId: string, modelId: string, options: Conf
 function cacheThreadConfigOptions(thread: Thread, options: ConfigOption[], selectedModelID?: string): ConfigOption[] {
   const normalized = normalizeConfigOptions(options)
   threadConfigCache.set(thread.threadId, normalized)
-  cacheAgentConfigCatalog(thread.agent ?? '', selectedModelID ?? fallbackThreadModelID(thread), normalized)
+  const cacheModelID = selectedModelID?.trim() || fallbackThreadModelID(thread)
+  if (cacheModelID) {
+    cacheAgentConfigCatalog(thread.agent ?? '', cacheModelID, normalized)
+  }
   return normalized
 }
 
@@ -710,7 +772,8 @@ async function loadThreadConfigOptions(threadId: string): Promise<ConfigOption[]
 
   const task = api.getThreadConfigOptions(thread.threadId)
     .then(options => {
-      cacheThreadConfigOptions(thread, options, selectedModelID)
+      const nextModelID = findModelOption(options)?.currentValue?.trim() || selectedModelID
+      cacheThreadConfigOptions(thread, options, nextModelID)
       return cloneConfigOptions(getThreadConfigOptionsForRender(thread))
     })
     .finally(() => {
@@ -719,6 +782,23 @@ async function loadThreadConfigOptions(threadId: string): Promise<ConfigOption[]
 
   if (catalogKey) agentConfigCatalogInFlight.set(catalogKey, task)
   return task
+}
+
+async function refreshThreadConfigState(threadId: string): Promise<void> {
+  const thread = store.get().threads.find(item => item.threadId === threadId)
+  if (!thread) return
+
+  const options = await api.getThreadConfigOptions(thread.threadId)
+  const nextModelID = findModelOption(options)?.currentValue?.trim() || fallbackThreadModelID(thread)
+  const normalized = cacheThreadConfigOptions(thread, options, nextModelID)
+  const state = store.get()
+  store.set({
+    threads: state.threads.map(item => (
+      item.threadId === thread.threadId
+        ? { ...item, agentOptions: buildThreadAgentOptions(item.agentOptions, normalized) }
+        : item
+    )),
+  })
 }
 
 async function loadThreadSlashCommands(threadId: string, force = false): Promise<SlashCommand[]> {
@@ -1451,6 +1531,7 @@ async function switchThreadSession(thread: Thread, nextSessionID: string): Promi
     const updatedThread = await api.updateThread(thread.threadId, {
       agentOptions: buildThreadAgentOptionsWithSession(thread.agentOptions, targetSessionID),
     })
+    threadConfigCache.delete(thread.threadId)
     const state = store.get()
     const nextMessages = !targetSessionID
       ? activateFreshSessionScope(thread.threadId, state.messages)
@@ -1492,6 +1573,17 @@ function renderSessionItem(item: SessionInfo, active: boolean, loading: boolean)
     </button>`
 }
 
+function prependEphemeralSession(
+  sessions: SessionInfo[],
+  knownIDs: Set<string>,
+  sessionID: string,
+): void {
+  const normalized = sessionID.trim()
+  if (!normalized || knownIDs.has(normalized)) return
+  knownIDs.add(normalized)
+  sessions.unshift({ sessionId: normalized, title: normalized })
+}
+
 function renderSessionPanel(): string {
   const { activeThreadId, threads, streamStates } = store.get()
   const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
@@ -1515,16 +1607,20 @@ function renderSessionPanel(): string {
   const disabled = switching
   const refreshDisabled = disabled || state.loading || state.loadingMore
 
+  const loadingSessionIDs = Object.values(streamStates)
+    .filter(streamState => streamState.threadId === thread.threadId && !!streamState.sessionId)
+    .map(streamState => streamState.sessionId.trim())
+    .filter(Boolean)
+
   const knownIDs = new Set(state.sessions.map(item => item.sessionId))
   const sessions = [...state.sessions]
-  if (selectedSessionID && !knownIDs.has(selectedSessionID)) {
-    sessions.unshift({ sessionId: selectedSessionID, title: selectedSessionID })
+  for (let i = loadingSessionIDs.length - 1; i >= 0; i -= 1) {
+    prependEphemeralSession(sessions, knownIDs, loadingSessionIDs[i])
   }
-  const loadingSessionIDs = new Set(
-    Object.values(streamStates)
-      .filter(streamState => streamState.threadId === thread.threadId && !!streamState.sessionId)
-      .map(streamState => streamState.sessionId),
-  )
+  if (selectedSessionID && !knownIDs.has(selectedSessionID)) {
+    prependEphemeralSession(sessions, knownIDs, selectedSessionID)
+  }
+  const loadingSessionIDSet = new Set(loadingSessionIDs)
 
   let bodyHTML = ''
   if (state.loading && !sessions.length) {
@@ -1538,7 +1634,7 @@ function renderSessionPanel(): string {
       ? sessions.map(item => renderSessionItem(
           item,
           item.sessionId === selectedSessionID,
-          loadingSessionIDs.has(item.sessionId),
+          loadingSessionIDSet.has(item.sessionId),
         )).join('')
       : `<div class="session-panel-empty">No previous sessions for this working directory.</div>`
     const showMoreHTML = state.nextCursor
@@ -1762,6 +1858,10 @@ function shouldShowReasoningSwitch(configOption: ConfigOption | null): boolean {
   return countConfigOptionChoices(configOption) > 1
 }
 
+function shouldShowModelSwitch(configOption: ConfigOption | null): boolean {
+  return countConfigOptionChoices(configOption) > 0
+}
+
 function fallbackThreadConfigValue(thread: Thread, configId: string): string {
   const trimmedConfigID = configId.trim()
   if (!trimmedConfigID) return ''
@@ -1784,7 +1884,10 @@ function currentValueForConfig(options: ConfigOption[], configId: string): strin
 
 function getThreadConfigOptionsForRender(thread: Thread): ConfigOption[] {
   const threadOptions = threadConfigCache.get(thread.threadId) ?? []
-  const agentCatalog = getAgentConfigCatalog(thread.agent ?? '', fallbackThreadModelID(thread))
+  const selectedModelID = fallbackThreadModelID(thread)
+  const agentCatalog = selectedModelID
+    ? getAgentConfigCatalog(thread.agent ?? '', selectedModelID)
+    : []
 
   if (!agentCatalog.length) {
     return cloneConfigOptions(threadOptions)
@@ -1942,9 +2045,10 @@ function renderComposerConfigSwitch(
   pickerData: ConfigPickerData,
   labels: ConfigPickerLabels,
   disabled: boolean,
+  visible = true,
 ): string {
   return `
-    <div class="thread-model-switch thread-model-switch--composer" data-picker-key="${escHtml(key)}">
+    <div class="thread-model-switch thread-model-switch--composer" data-picker-key="${escHtml(key)}" ${visible ? '' : 'hidden'}>
       <button
         id="thread-${escHtml(key)}-trigger"
         class="thread-model-trigger"
@@ -1991,15 +2095,29 @@ function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): stri
     return `<img src="${claudeIconURL}" alt="Claude Code" class="${cls}" loading="lazy" decoding="async">`
   }
   if (normalized === 'kimi') {
-    return `<img src="${kimiIconURL}" alt="Kimi CLI" class="${cls} ${cls}--contain" loading="lazy" decoding="async">`
+    return `<span class="${cls} ${cls}--contain ${cls}--kimi" role="img" aria-label="Kimi CLI"></span>`
   }
   if (normalized === 'opencode') {
-    return `<img src="${opencodeIconURL}" alt="OpenCode" class="${cls} ${cls}--contain" loading="lazy" decoding="async">`
+    return `<span class="${cls} ${cls}--contain ${cls}--opencode" role="img" aria-label="OpenCode"></span>`
   }
   if (normalized === 'qwen') {
     return `<img src="${qwenIconURL}" alt="Qwen Code" class="${cls}" loading="lazy" decoding="async">`
   }
+  if (normalized === 'blackbox') {
+    return `<img src="${blackboxIconURL}" alt="BLACKBOX AI" class="${cls}" loading="lazy" decoding="async">`
+  }
   return escHtml((agentId || 'A').slice(0, 1).toUpperCase())
+}
+
+function hasAgentAvatarIcon(agentId: string): boolean {
+  const normalized = (agentId || '').trim().toLowerCase()
+  return normalized === 'codex'
+    || normalized === 'gemini'
+    || normalized === 'claude'
+    || normalized === 'kimi'
+    || normalized === 'opencode'
+    || normalized === 'qwen'
+    || normalized === 'blackbox'
 }
 
 type ThreadActivityIndicator = 'loading' | 'done' | null
@@ -2050,6 +2168,7 @@ function renderThreadItem(
 ): string {
   const isActive = t.threadId === activeId
   const isMenuOpen = openThreadActionMenuId === t.threadId
+  const hasIconAvatar = hasAgentAvatarIcon(t.agent ?? '')
   const avatar = renderAgentAvatar(t.agent ?? '', 'thread')
   const displayTitle = threadTitle(t)
   const relTime = t.updatedAt ? formatRelativeTime(t.updatedAt) : ''
@@ -2060,22 +2179,24 @@ function renderThreadItem(
          role="button"
          tabindex="0"
          aria-label="${escHtml(displayTitle)}">
-      <div class="thread-item-avatar ${isActive ? '' : 'thread-item-avatar--inactive'}">${avatar}</div>
+      <div class="thread-item-avatar ${hasIconAvatar ? 'thread-item-avatar--icon' : (isActive ? '' : 'thread-item-avatar--inactive')}">${avatar}</div>
       <div class="thread-item-body">
         <div class="thread-item-title">${escHtml(displayTitle)}</div>
         <div class="thread-item-foot">
           <span class="badge badge--agent">${escHtml(t.agent ?? '')}</span>
-          <span class="thread-item-time">${relTime}</span>
         </div>
       </div>
       <div class="thread-item-actions">
         ${renderThreadStatusIndicator(activityIndicator)}
-        <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
-                data-thread-id="${escHtml(t.threadId)}"
-                aria-expanded="${isMenuOpen ? 'true' : 'false'}"
-                aria-label="Agent actions">
-          ...
-        </button>
+        <div class="thread-item-action-meta">
+          <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
+                  data-thread-id="${escHtml(t.threadId)}"
+                  aria-expanded="${isMenuOpen ? 'true' : 'false'}"
+                  aria-label="Agent actions">
+            ${iconDotsHorizontal}
+          </button>
+          ${relTime ? `<span class="thread-item-time thread-item-time--actions">${relTime}</span>` : ''}
+        </div>
       </div>
     </div>`
 }
@@ -2398,6 +2519,18 @@ async function loadHistory(threadId: string): Promise<void> {
             const replayMessages = sessionTranscriptToMessages(replay.messages, requestedSessionID)
             nextMessages = mergeSessionReplayMessages(replayMessages, localMessages)
           }
+
+          if (replay.supported) {
+            void refreshThreadConfigState(threadId).then(() => {
+              const refreshedState = store.get()
+              if (refreshedState.activeThreadId !== threadId) return
+              const refreshedThread = refreshedState.threads.find(item => item.threadId === threadId)
+              if (!refreshedThread || threadSessionID(refreshedThread) !== requestedSessionID) return
+              if (activeStreamMsgId) return
+              bindThreadConfigSwitches(refreshedThread)
+              updateInputState()
+            }).catch(() => {})
+          }
         } catch {
           nextMessages = localMessages
         }
@@ -2475,10 +2608,49 @@ function formatToolCallLabel(value: string | undefined): string {
 
 function toolCallDisplayTitle(toolCall: ToolCall): string {
   const title = toolCall.title?.trim()
-  if (title) return title
+  if (title && !isGenericToolCallTitle(title)) return title
+  const path = toolCallPreviewPath(toolCall)
   const kind = formatToolCallLabel(toolCall.kind)
+  if (kind && path) return `${kind} · ${path}`
   if (kind) return kind
+  if (title) return title
   return 'Tool call'
+}
+
+function isGenericToolCallTitle(title: string): boolean {
+  switch (title.trim()) {
+    case '':
+    case '.':
+    case '/':
+      return true
+    default:
+      return false
+  }
+}
+
+function toolCallPreviewPath(toolCall: ToolCall): string {
+  const locationPath = firstToolCallPath(toolCall.locations)
+  if (locationPath) return locationPath
+  const contentPath = firstToolCallPath(toolCall.content)
+  if (contentPath) return contentPath
+  if (toolCall.rawInput && typeof toolCall.rawInput === 'object') {
+    const rawInput = toolCall.rawInput as Record<string, unknown>
+    for (const key of ['path', 'filepath', 'filePath', 'directory', 'dir']) {
+      const value = rawInput[key]
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+  }
+  return ''
+}
+
+function firstToolCallPath(items: unknown[] | undefined): string {
+  for (const item of items ?? []) {
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    const path = typeof record.path === 'string' ? record.path.trim() : ''
+    if (path) return path
+  }
+  return ''
 }
 
 function toolCallStatusClassName(status: string | undefined): string {
@@ -2674,6 +2846,150 @@ function renderToolCallPanelHTML(
     </div>`
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function recordString(record: Record<string, unknown> | null, key: string): string {
+  if (!record) return ''
+  const value = record[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function safeContentURL(value: string, allowImageData = false): string | null {
+  value = value.trim()
+  if (!value) return null
+  if (allowImageData && /^data:image\//i.test(value)) return value
+  if (/^(https?:|blob:|file:)/i.test(value)) return value
+  if (/^(\/|\.\/|\.\.\/)/.test(value)) return value
+  return null
+}
+
+function contentImageSource(record: Record<string, unknown> | null): string | null {
+  if (!record) return null
+  const mimeType = recordString(record, 'mimeType')
+  const encodedData = recordString(record, 'data') || recordString(record, 'blob')
+  if (encodedData && mimeType.toLowerCase().startsWith('image/')) {
+    return `data:${mimeType};base64,${encodedData}`
+  }
+  return safeContentURL(
+    recordString(record, 'url') || recordString(record, 'uri') || recordString(record, 'href'),
+    true,
+  )
+}
+
+function renderMessageContentCardHTML(title: string, metaItems: string[], body: string): string {
+  const metaHTML = metaItems
+    .filter(Boolean)
+    .map(item => `<span class="message-content-card__meta-item">${escHtml(item)}</span>`)
+    .join('')
+
+  return `
+    <div class="message-content-card">
+      <div class="message-content-card__header">
+        <div class="message-content-card__title">${escHtml(title)}</div>
+        ${metaHTML ? `<div class="message-content-card__meta">${metaHTML}</div>` : ''}
+      </div>
+      ${body}
+    </div>`
+}
+
+function renderMessageImageContentHTML(item: unknown): string {
+  const record = asRecord(item)
+  if (!record) return renderToolCallJSON(item, true)
+
+  const title = recordString(record, 'title') || formatToolCallLabel(recordString(record, 'type')) || 'Image'
+  const mimeType = recordString(record, 'mimeType')
+  const uri = recordString(record, 'uri') || recordString(record, 'url') || recordString(record, 'href')
+  const src = contentImageSource(record)
+  const body = [
+    src
+      ? `<img class="message-content-card__image" src="${escHtml(src)}" alt="${escHtml(title)}" loading="lazy" />`
+      : '',
+    uri
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Source</div>
+          <div class="message-content-card__uri">${escHtml(uri)}</div>
+        </div>`
+      : '',
+    !src
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Payload</div>
+          ${renderToolCallJSON(item, true)}
+        </div>`
+      : '',
+  ].filter(Boolean).join('')
+
+  return renderMessageContentCardHTML(title, [mimeType], body)
+}
+
+function renderMessageResourceContentHTML(item: unknown): string {
+  const record = asRecord(item)
+  if (!record) return renderToolCallJSON(item, true)
+
+  const resource = asRecord(record.resource) ?? record
+  const title = recordString(record, 'title')
+    || recordString(resource, 'title')
+    || formatToolCallLabel(recordString(record, 'type'))
+    || 'Resource'
+  const mimeType = recordString(resource, 'mimeType') || recordString(record, 'mimeType')
+  const uri = recordString(resource, 'uri') || recordString(record, 'uri')
+  const text = recordString(resource, 'text') || recordString(record, 'text')
+  const imageSrc = contentImageSource(resource)
+  const body = [
+    uri
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">URI</div>
+          <div class="message-content-card__uri">${escHtml(uri)}</div>
+        </div>`
+      : '',
+    imageSrc
+      ? `<img class="message-content-card__image" src="${escHtml(imageSrc)}" alt="${escHtml(title)}" loading="lazy" />`
+      : '',
+    text
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Content</div>
+          ${renderToolCallPreHTML(text, true)}
+        </div>`
+      : '',
+    !imageSrc && !text
+      ? `
+        <div class="message-content-card__section">
+          <div class="message-content-card__label">Payload</div>
+          ${renderToolCallJSON(item, true)}
+        </div>`
+      : '',
+  ].filter(Boolean).join('')
+
+  return renderMessageContentCardHTML(title, [mimeType], body)
+}
+
+function renderMessageContentBlockHTML(contentBlock: unknown): string {
+  const record = asRecord(contentBlock)
+  if (!record) return renderToolCallJSON(contentBlock, true)
+
+  const type = recordString(record, 'type').toLowerCase()
+  if (type === 'image') {
+    return renderMessageImageContentHTML(contentBlock)
+  }
+  if (type === 'resource' || type === 'embedded_resource' || asRecord(record.resource)) {
+    return renderMessageResourceContentHTML(contentBlock)
+  }
+
+  const title = formatToolCallLabel(recordString(record, 'type')) || 'Content'
+  return renderMessageContentCardHTML(title, [], `
+    <div class="message-content-card__section">
+      <div class="message-content-card__label">Payload</div>
+      ${renderToolCallJSON(contentBlock, true)}
+    </div>
+  `)
+}
+
 function reasoningPanelState(expanded: boolean): 'open' | 'closed' {
   return expanded ? 'open' : 'closed'
 }
@@ -2732,12 +3048,21 @@ function renderMessageSegmentContentHTML(
   timestamp: string,
 ): string {
   const content = segment.content ?? ''
-  if (!streaming && !content) return ''
+  const contentBlock = segment.contentBlock
+  const hasTextContent = hasVisibleContent(content)
+  const hasStructuredContent = contentBlock !== undefined
+  if (!streaming && !hasTextContent && !hasStructuredContent) return ''
 
   let blockClass = 'message-answer'
   let blockContent = ''
 
-  if (streaming) {
+  if (hasStructuredContent) {
+    blockClass += ' message-answer--rich'
+    blockContent = renderMessageContentBlockHTML(contentBlock)
+    if (streaming && showTypingIndicator) {
+      blockContent += `<div class="typing-indicator" aria-hidden="true"><span></span><span></span><span></span></div>`
+    }
+  } else if (streaming) {
     blockClass += ' message-answer--streaming'
     blockContent = `<div class="message-answer__text">${escHtml(content)}</div>`
     if (showTypingIndicator) {
@@ -2753,17 +3078,19 @@ function renderMessageSegmentContentHTML(
     blockContent = escHtml(content)
   }
 
-  const metaHTML = !streaming && content
+  const metaHTML = !streaming && (hasTextContent || hasStructuredContent)
     ? `
       <div class="message-segment__meta">
         <span class="message-time">${formatTimestamp(timestamp)}</span>
-        <button
-          class="msg-copy-btn msg-copy-btn--segment"
-          data-copy-text="${encodeURIComponent(content)}"
-          type="button"
-          title="Copy segment"
-          aria-label="Copy segment"
-        >⎘</button>
+        ${hasTextContent ? `
+          <button
+            class="msg-copy-btn msg-copy-btn--segment"
+            data-copy-text="${encodeURIComponent(content)}"
+            type="button"
+            title="Copy segment"
+            aria-label="Copy segment"
+          >⎘</button>
+        ` : ''}
       </div>`
     : ''
 
@@ -2857,14 +3184,14 @@ function renderMessageSegmentsHTML(
   return `<div class="message-segments">${content}${tail}</div>`
 }
 
-function renderMessageStatusBubble(msg: Message): string {
+function renderMessageStatusBubble(msg: Message, hasContent = false): string {
   if (msg.status === 'error') {
     const bodyText = (msg.errorCode ? `[${msg.errorCode}] ` : '') + (msg.errorMessage ?? 'Unknown error')
     return `<div class="message-segment message-segment--status">
       <div class="message-bubble message-bubble--error">${escHtml(bodyText)}</div>
     </div>`
   }
-  if (msg.status === 'cancelled' && !msg.content) {
+  if (msg.status === 'cancelled' && !msg.content && !hasContent) {
     return `<div class="message-segment message-segment--status">
       <div class="message-bubble message-bubble--cancelled">…</div>
     </div>`
@@ -2900,9 +3227,9 @@ function renderMessage(msg: Message): string {
 
   const planHTML = renderPlanSectionHTML(msg.planEntries)
   const segments = resolveMessageSegments(msg)
-  const segmentsHTML = renderMessageSegmentsHTML(msg.id, segments, msg.status, false, null, null, null, msg.timestamp)
-  const statusHTML = renderMessageStatusBubble(msg)
   const hasContent = messageHasContentSegment(segments)
+  const segmentsHTML = renderMessageSegmentsHTML(msg.id, segments, msg.status, false, null, null, null, msg.timestamp)
+  const statusHTML = renderMessageStatusBubble(msg, hasContent)
 
   const stopTag  = isCancelled ? `<span class="message-stop-reason">Cancelled</span>` : ''
   const footerMeta = (!hasContent || stopTag)
@@ -3355,7 +3682,8 @@ function renderChatThread(t: Thread): string {
     loadingConfig,
     reasoningPickerLabels,
   )
-  const showReasoningSwitch = shouldShowReasoningSwitch(reasoningOption)
+  const showModelSwitch = modelPickerData.state === 'ready' && shouldShowModelSwitch(modelOption)
+  const showReasoningSwitch = reasoningPickerData.state === 'ready' && shouldShowReasoningSwitch(reasoningOption)
   const isSwitching = threadConfigSwitching.has(t.threadId)
 
   return `
@@ -3394,10 +3722,8 @@ function renderChatThread(t: Thread): string {
         ></textarea>
         <div class="input-compose-bar">
           <div class="thread-config-switches">
-            ${renderComposerConfigSwitch('model', 'Model', modelPickerData, modelPickerLabels, isSwitching)}
-            ${showReasoningSwitch
-              ? renderComposerConfigSwitch('reasoning', 'Reasoning', reasoningPickerData, reasoningPickerLabels, isSwitching)
-              : ''}
+            ${renderComposerConfigSwitch('model', 'Model', modelPickerData, modelPickerLabels, isSwitching, showModelSwitch)}
+            ${renderComposerConfigSwitch('reasoning', 'Reasoning', reasoningPickerData, reasoningPickerLabels, isSwitching, showReasoningSwitch)}
           </div>
           <button class="btn btn-primary btn-send" id="send-btn" aria-label="Send message">
             ${iconSend}
@@ -3502,8 +3828,8 @@ function bindThreadConfigSwitches(thread: Thread): void {
       reasoning: reasoningPickerLabels,
     } as const
     const visibleByKey = {
-      model: true,
-      reasoning: shouldShowReasoningSwitch(reasoningOption),
+      model: pickerDataByKey.model.state === 'ready' && shouldShowModelSwitch(modelOption),
+      reasoning: pickerDataByKey.reasoning.state === 'ready' && shouldShowReasoningSwitch(reasoningOption),
     } as const
 
     switchEls.forEach(switchEl => {
@@ -3613,6 +3939,7 @@ function bindThreadConfigSwitches(thread: Thread): void {
     const triggerEl = switchEl.querySelector<HTMLButtonElement>('.thread-model-trigger')
     const menuEl = switchEl.querySelector<HTMLDivElement>('.thread-model-menu')
     if (!triggerEl || !menuEl) return
+    if (switchEl.dataset.bound === 'true') return
 
     const toggleMenu = (): void => {
       const expanded = triggerEl.getAttribute('aria-expanded') === 'true'
@@ -3657,6 +3984,7 @@ function bindThreadConfigSwitches(thread: Thread): void {
     }
     triggerEl.addEventListener('keydown', onEsc)
     menuEl.addEventListener('keydown', onEsc)
+    switchEl.dataset.bound = 'true'
   })
 }
 
@@ -3920,6 +4248,30 @@ function handleSend(): void {
       if (atBottom && list) list.scrollTop = list.scrollHeight
     },
 
+    onMessageContent({ content }: MessageContentPayload) {
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveReasoningSegmentID(capturedScopeKey, null)
+      setActiveToolCallSegmentID(capturedScopeKey, null)
+      const nextSegments = appendMessageContentSegments(
+        streamSegmentsByScope.get(capturedScopeKey),
+        content,
+        agentMsgID,
+      )
+      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubbleSegments(
+        agentMsgID,
+        nextSegments,
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
     onReasoningDelta({ delta }: ReasoningDeltaPayload) {
       setActiveContentSegmentID(capturedScopeKey, null)
       setActiveToolCallSegmentID(capturedScopeKey, null)
@@ -4037,7 +4389,11 @@ function handleSend(): void {
       // Clear stream tracking BEFORE addMessageToStore (so subscribe calls updateMessageList)
       const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const finalContent = messageSegmentsContent(finalSegments) || (streamBufferByScope.get(capturedScopeKey) ?? '')
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const finalContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
       const finalToolCalls = messageSegmentsToolCalls(finalSegments)
       const finalReasoning = messageSegmentsReasoning(finalSegments)
       clearScopeStreamRuntime(capturedScopeKey)
@@ -4058,12 +4414,23 @@ function handleSend(): void {
         toolCalls: finalToolCalls,
         reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       })
+      void refreshThreadConfigState(capturedThreadID)
+        .then(() => {
+          if (store.get().activeThreadId === capturedThreadID && !activeStreamMsgId) {
+            updateChatArea()
+          }
+        })
+        .catch(() => {})
     },
 
     onError({ code, message: msg }) {
       const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const partialContent = messageSegmentsContent(finalSegments) || (streamBufferByScope.get(capturedScopeKey) ?? '')
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const partialContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
       const finalToolCalls = messageSegmentsToolCalls(finalSegments)
       const finalReasoning = messageSegmentsReasoning(finalSegments)
       clearScopeStreamRuntime(capturedScopeKey)
@@ -4084,12 +4451,23 @@ function handleSend(): void {
         toolCalls:    finalToolCalls,
         reasoning:    hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       })
+      void refreshThreadConfigState(capturedThreadID)
+        .then(() => {
+          if (store.get().activeThreadId === capturedThreadID && !activeStreamMsgId) {
+            updateChatArea()
+          }
+        })
+        .catch(() => {})
     },
 
     onDisconnect() {
       const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const partialContent = messageSegmentsContent(finalSegments) || (streamBufferByScope.get(capturedScopeKey) ?? '')
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const partialContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
       const finalToolCalls = messageSegmentsToolCalls(finalSegments)
       const finalReasoning = messageSegmentsReasoning(finalSegments)
       clearScopeStreamRuntime(capturedScopeKey)
@@ -4109,6 +4487,13 @@ function handleSend(): void {
         toolCalls:    finalToolCalls,
         reasoning:    hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       })
+      void refreshThreadConfigState(capturedThreadID)
+        .then(() => {
+          if (store.get().activeThreadId === capturedThreadID && !activeStreamMsgId) {
+            updateChatArea()
+          }
+        })
+        .catch(() => {})
     },
   })
 

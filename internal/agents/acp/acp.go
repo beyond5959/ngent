@@ -162,7 +162,13 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		}
 		switch update.Type {
 		case agents.ACPUpdateTypeMessageChunk:
-			return onDelta(update.Delta)
+			if update.Delta != "" {
+				return onDelta(update.Delta)
+			}
+			if update.MessageContent != nil {
+				return agents.NotifyMessageContent(ctx, *update.MessageContent)
+			}
+			return nil
 		case agents.ACPUpdateTypePlan:
 			if handler, ok := agents.PlanHandlerFromContext(ctx); ok {
 				return handler(ctx, update.PlanEntries)

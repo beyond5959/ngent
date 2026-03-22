@@ -310,13 +310,13 @@
   - decide whether denied-permission turns should persist a lightweight terminal message, or whether the Web UI should keep the resolved permission card visible after turn completion.
 
 - ID: KI-030
-- Title: Provider-owned historical session replay still omits hidden reasoning and tool timeline
+- Title: Provider-owned historical session replay still omits hidden reasoning, tool timeline, and rich content blocks
 - Status: Open
 - Severity: Low
 - Affects: `GET /v1/threads/{threadId}/session-history` and Web UI session-sidebar replay for pre-existing provider sessions
 - Symptom:
   - ngent now surfaces hidden reasoning and ordered tool/content/thought segments for hub-created turns by persisting turn events in normal history.
-  - provider-owned historical replay returned by `/session-history` still exposes only visible `user` / `assistant` transcript messages, so switching to an older external session in the Web UI does not reconstruct past hidden reasoning blocks or the tool-call timeline.
+  - provider-owned historical replay returned by `/session-history` still exposes only visible `user` / `assistant` transcript messages, so switching to an older external session in the Web UI does not reconstruct past hidden reasoning blocks, the tool-call timeline, or non-text assistant content such as images/embedded resources.
 - Workaround:
   - use regular ngent turn history for turns created through ngent itself; those now preserve reasoning and the ordered assistant segment timeline after reload.
   - treat provider-owned session replay as visible transcript-only until the replay contract is extended.
@@ -371,6 +371,40 @@
   - if one package still fails, rerun that package directly to distinguish a transient host-timeout from a real regression.
 - Follow-up plan:
   - reduce test startup latency and remove package-parallel sensitivity in the ACP-heavy fake-process suites so default `go test ./...` stays stable without extra flags.
+
+- ID: KI-036
+- Title: Fresh agents do not expose model/reasoning metadata until one real session reports it
+- Status: Open
+- Severity: Low
+- Affects: brand-new threads or fresh installs before any real turn / resumed-session turn has returned `configOptions`
+- Symptom:
+  - `GET /v1/agents/{agentId}/models` can return an empty list for an agent that has never reported config metadata into sqlite.
+  - `GET /v1/threads/{threadId}/config-options` returns an empty `configOptions` list for a fresh thread until a real `session/new` or `session/load` runs during a turn.
+  - the Web UI therefore hides model/reasoning controls until after that first real session snapshot arrives.
+  - once a specific session has already been learned, switching back to that same session now restores its cached model/reasoning snapshot immediately.
+  - switching directly onto an unseen existing session can also reveal controls immediately if that user-triggered `session/load` returns config metadata.
+  - only sessions whose real `session/new` / `session/load` have never yielded config metadata remain empty.
+- Workaround:
+  - send one real turn on the thread, or switch to an existing session and let ngent load it once so the session's config snapshot can be learned.
+- Follow-up plan:
+  - if upstream CLIs eventually expose model/config catalogs without creating sessions, consider adopting those non-session surfaces so ngent can prefill metadata without reintroducing empty probe sessions.
+
+- ID: KI-037
+- Title: BLACKBOX ACP currently lacks session resume and catalog discovery surfaces
+- Status: Open
+- Severity: Medium
+- Affects: `blackbox` threads, `/session-history`, session sidebar browsing, and model picker/catalog endpoints for BLACKBOX
+- Symptom:
+  - local probing on 2026-03-22 against `blackbox 1.2.47` showed `initialize` advertising `agentCapabilities.loadSession=false`.
+  - real `session/load` currently returns `-32601 method not found`.
+  - `session/new` currently returns only `sessionId`, without `models.availableModels` or `configOptions`.
+  - BLACKBOX can also emit stdout noise unrelated to ACP frames; ngent now tolerates that noise during transport, but the missing ACP resume/catalog surfaces still limit UX.
+- Workaround:
+  - use BLACKBOX through normal ngent thread turns; ngent-local `/history` still preserves turns created through ngent itself.
+  - if a specific model must be forced, set `agentOptions.modelId` directly via API/advanced thread options even though no picker/catalog is currently available.
+- Follow-up plan:
+  - keep validating newer BLACKBOX CLI releases for `session/list` / `session/load` / model-catalog support.
+  - wire those surfaces into ngent immediately once upstream ACP exposes them consistently.
 
 ## Recently Closed
 

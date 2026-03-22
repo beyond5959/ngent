@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 )
 
 const defaultPermissionTimeout = 15 * time.Second
+const methodSessionSetModel = "session/set_model"
 
 var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(defaultPermissionTimeout)
 
@@ -37,12 +39,13 @@ var _ agents.SlashCommandsProvider = (*Client)(nil)
 func New(cfg Config) (*Client, error) {
 	base, err := acpcli.New(agents.AgentIDOpencode, cfg, acpcli.Hooks{
 		OpenConn:                openConn(cfg.Dir),
-		SessionNewParams:        sessionNewParams(cfg.Dir),
-		SessionLoadParams:       sessionLoadParams(cfg.Dir),
-		SessionListParams:       sessionListParams(cfg.Dir),
+		SessionNewParams:        acpcli.SessionNewParams(cfg.Dir),
+		SessionLoadParams:       acpcli.SessionLoadParams(cfg.Dir),
+		SessionListParams:       acpcli.SessionListParams(cfg.Dir),
 		PromptParams:            promptParams,
-		DiscoverModelsParams:    discoverModelsParams(cfg.Dir),
+		DiscoverModelsParams:    acpcli.DiscoverModelsParams(cfg.Dir),
 		PrepareConfigSession:    prepareConfigSession,
+		SelectSessionModel:      selectSessionModel,
 		HandlePermissionRequest: handlePermissionRequest,
 		Cancel:                  cancelWithCall,
 	})
@@ -63,9 +66,6 @@ func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstd
 		req acpcli.OpenConnRequest,
 	) (*acpstdio.Conn, func(), json.RawMessage, error) {
 		args := []string{"acp", "--cwd", strings.TrimSpace(dir)}
-		if modelID := strings.TrimSpace(req.ModelID); modelID != "" {
-			args = append([]string{"-m", modelID}, args...)
-		}
 		conn, cleanup, initResult, err := acpcli.OpenProcess(ctx, acpcli.ProcessConfig{
 			Command: agents.AgentIDOpencode,
 			Args:    args,
@@ -93,52 +93,6 @@ func initializeParams() map[string]any {
 	}
 }
 
-func sessionNewParams(dir string) func(string) map[string]any {
-	return func(modelID string) map[string]any {
-		params := map[string]any{
-			"cwd":        strings.TrimSpace(dir),
-			"mcpServers": []any{},
-		}
-		if modelID = strings.TrimSpace(modelID); modelID != "" {
-			params["model"] = modelID
-			params["modelId"] = modelID
-		}
-		return params
-	}
-}
-
-func discoverModelsParams(dir string) func(string) map[string]any {
-	return func(string) map[string]any {
-		return map[string]any{
-			"cwd":        strings.TrimSpace(dir),
-			"mcpServers": []any{},
-		}
-	}
-}
-
-func sessionLoadParams(dir string) func(string) map[string]any {
-	return func(sessionID string) map[string]any {
-		return map[string]any{
-			"sessionId":  strings.TrimSpace(sessionID),
-			"cwd":        strings.TrimSpace(dir),
-			"mcpServers": []any{},
-		}
-	}
-}
-
-func sessionListParams(dir string) func(string, string) map[string]any {
-	return func(cwd, cursor string) map[string]any {
-		params := map[string]any{
-			"cwd":        sessionCWD(dir, cwd),
-			"mcpServers": []any{},
-		}
-		if cursor = strings.TrimSpace(cursor); cursor != "" {
-			params["cursor"] = cursor
-		}
-		return params
-	}
-}
-
 func promptParams(sessionID, input, modelID string) map[string]any {
 	params := map[string]any{
 		"sessionId": strings.TrimSpace(sessionID),
@@ -148,6 +102,34 @@ func promptParams(sessionID, input, modelID string) map[string]any {
 		params["modelId"] = modelID
 	}
 	return params
+}
+
+func selectSessionModel(
+	ctx context.Context,
+	conn *acpstdio.Conn,
+	sessionID, modelID string,
+	options []agents.ConfigOption,
+) ([]agents.ConfigOption, error) {
+	if conn == nil {
+		return options, nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	modelID = strings.TrimSpace(modelID)
+	if sessionID == "" || modelID == "" {
+		return options, nil
+	}
+
+	_, err := conn.Call(ctx, methodSessionSetModel, map[string]any{
+		"sessionId": sessionID,
+		"modelId":   modelID,
+	})
+	if err != nil {
+		if isMethodNotFoundError(err) {
+			return configOptionsWithSelection(options, "model", modelID), nil
+		}
+		return nil, fmt.Errorf("%s: %s: %w", agents.AgentIDOpencode, methodSessionSetModel, err)
+	}
+	return configOptionsWithSelection(options, "model", modelID), nil
 }
 
 func prepareConfigSession(
@@ -204,14 +186,6 @@ func cancelWithCall(conn *acpstdio.Conn, sessionID string) {
 	})
 }
 
-func sessionCWD(dir, cwd string) string {
-	cwd = strings.TrimSpace(cwd)
-	if cwd != "" {
-		return cwd
-	}
-	return strings.TrimSpace(dir)
-}
-
 func configOptionsWithSelection(options []agents.ConfigOption, configID, value string) []agents.ConfigOption {
 	configID = strings.TrimSpace(configID)
 	value = strings.TrimSpace(value)
@@ -246,6 +220,14 @@ func configOptionsWithSelection(options []agents.ConfigOption, configID, value s
 		return options
 	}
 	return acpmodel.NormalizeConfigOptions(cloned)
+}
+
+func isMethodNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "(-32601)") && strings.Contains(text, "method not found")
 }
 
 // Name returns the provider identifier.

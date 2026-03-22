@@ -51,11 +51,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 7: Permission forwarding and fail-closed
 
 - Operation: trigger permission-required flow; test approved, timeout, and disconnect cases.
-- Expected: `permission_required` emitted; timeout/disconnect fails closed.
+- Expected: `permission_required` emitted; when the provider advertises permission `options[]`, the SSE payload preserves them and `/v1/permissions/{permissionId}` can submit an exact `optionId`; timeout/disconnect still fail closed.
   - embedded codex command-approval flow should not fail with adapter-side `-32601 method not found` when using updated app-server request methods.
 - Verification command:
   - `go test ./internal/httpapi -run TestTurnPermissionRequiredSSEEvent -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionApprovedContinuesAndCompletes -count=1`
+  - `go test ./internal/httpapi -run TestTurnPermissionSelectedOptionFlowsThroughExactAgentChoice -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionTimeoutFailClosed -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionSSEDisconnectFailClosed -count=1`
 
@@ -162,15 +163,34 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - thread creation accepts `agent=kimi`.
   - turn streaming emits `message_delta` and finishes with `turn_completed` (or explicit upstream error envelope).
   - provider tolerates current upstream ACP startup variants `kimi acp` and `kimi --acp`.
-  - thread config/model discovery avoids creating extra empty Kimi sessions when local Kimi config is available.
+  - Kimi model/config discovery is sourced from ACP `session/new`, matching the other direct ACP CLI providers.
 - Verification commands:
   - `go test ./internal/agents/kimi -count=1`
-  - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2EDoesNotCreateSession -v -timeout 120s`
+  - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2E -v -timeout 120s`
   - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiE2ESmoke -v -timeout 120s`
   - `go test ./cmd/ngent ./internal/httpapi -count=1`
 - Additional validation (executed 2026-03-13):
-  - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2EDoesNotCreateSession -count=1 -v -timeout 240s` (pass)
+  - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2E -count=1 -v -timeout 240s` (pass)
   - `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiE2ESmoke -count=1 -v -timeout 180s` (pass)
+
+## Requirement 16B: BLACKBOX AI Agent
+
+- Operation: verify blackbox provider is listed and can complete a turn over ACP.
+- Expected:
+  - `GET /v1/agents` includes `{"id":"blackbox","name":"BLACKBOX AI","status":"available"}` when `blackbox` is in PATH, and omits `blackbox` entirely when the binary is unavailable.
+  - thread creation accepts `agent=blackbox`.
+  - turn streaming emits `message_delta` and finishes with `turn_completed` (or explicit upstream error envelope).
+  - current upstream BLACKBOX ACP capability limits are reflected accurately: no `session/load` / session sidebar replay and no ACP model catalog until upstream exposes those surfaces.
+- Verification commands:
+  - `blackbox --version`
+  - `go test ./internal/agents/blackbox -count=1`
+  - `E2E_BLACKBOX=1 go test ./internal/agents/blackbox -run TestBlackboxE2ESmoke -v -timeout 120s`
+  - `go test ./cmd/ngent ./internal/httpapi -count=1`
+- Latest observed validation (2026-03-22):
+  - local CLI probe: `blackbox --version` returned `1.2.47`
+  - local ACP probe: `initialize` and `session/new` passed; `session/load` returned `-32601 method not found`
+  - fake-process/unit path: pending this change set's validation run
+  - real smoke: not run in the restricted sandbox environment used for this implementation pass
 
 ## Requirement 17: Thread Delete Lifecycle
 
@@ -431,5 +451,62 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/agents -run 'TestParseACPUpdateToolCall|TestParseACPUpdateToolCallUpdateKeepsExplicitClears' -count=1`
   - `go test ./internal/agents -run 'TestNewACPNotificationHandlerRoutesToolCallsToToolCallHandler' -count=1`
   - `go test ./internal/httpapi -run 'TestTurnsSSEIncludesToolCallUpdatesAndPersistsHistory' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`
+
+## Requirement 26: Session-Driven Model and Reasoning Discovery
+
+- Operation:
+  - create a fresh thread for a config-capable agent.
+  - call `GET /v1/threads/{threadId}/config-options` before any turn.
+  - run one real turn on that thread, or switch the thread to an existing session so a user-triggered `session/load` executes.
+  - call `GET /v1/threads/{threadId}/config-options`, `GET /v1/threads/{threadId}`, and optionally `GET /v1/agents/{agentId}/models` after the turn.
+  - switch the same thread onto a different existing session and observe the config UI before and after the next turn.
+- Expected:
+  - before any real session lifecycle call, `GET /v1/threads/{threadId}/config-options` returns an empty `configOptions` list instead of probing upstream.
+  - ngent does not need startup refresh or read-only config/model endpoints to create provider sessions just to discover metadata.
+  - once a real `session/new` or `session/load` returns `configOptions`, sqlite is updated immediately:
+    - the thread row reflects the actual current `modelId` / `configOverrides`
+    - the agent config catalog stores the snapshot under the actual current model id
+    - the session-scoped snapshot is stored under the actual `sessionId` when one is known
+  - after that real turn, `GET /v1/threads/{threadId}/config-options` returns the stored snapshot and `POST /v1/threads/{threadId}/config-options` can update selections without opening a probe session.
+  - switching to an existing session clears stale thread-local model/reasoning selections until the next `session/load` reports the destination session's real config.
+  - switching back to a previously learned session restores its stored model/reasoning snapshot immediately, without requiring another turn.
+  - switching directly onto an existing session can also reveal model/reasoning controls immediately when that session's user-triggered `session/load` returns config metadata, even if the thread itself has not sent a new turn yet.
+  - the Web UI hides model/reasoning controls before metadata exists and reveals them only after a real session snapshot has been learned.
+  - `/v1/agents/{agentId}/models` returns only sqlite-backed learned models and may legitimately be empty on a brand-new agent.
+- Verification commands (executed 2026-03-22):
+  - `go test ./internal/httpapi -run 'Test(V1AgentModels|V1AgentModelsUsesStoredCatalog|V1AgentModelsEmptyWhenNoStoredCatalog|ThreadConfigOptionsGetAndSetModel|ThreadConfigOptionsGetUsesStoredCatalog|ThreadConfigOptionsPersistConfigOverrides|ThreadConfigOptionsRestoreFromSessionCacheAfterSessionSwitch|ThreadSessionHistoryEndpointPersistsConfigOptionsForSelectedSession|ThreadSessionHistoryEndpointReloadsLiveWhenTranscriptCachedButConfigMissing|ThreadConfigOptionsUnsupportedManager)$' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`
+  - real Kimi Web UI validation:
+    - run `go run ./cmd/ngent -db-path /tmp/ngent-session-config.db -port 8687 --debug`
+    - send one real message to create a fresh session and learn model metadata
+    - switch to an older session and confirm the model button hides when that session has no cached snapshot
+    - switch back to the fresh learned session and confirm the model button reappears immediately without sending another turn
+  - real Codex Web UI validation:
+    - run `go run ./cmd/ngent -db-path /tmp/ngent-session-load-config.db -port 8687 --debug`
+    - without sending any turn, click an existing Codex session from the sidebar
+    - confirm `Model` and `Reasoning` buttons appear immediately after the user-triggered session switch
+
+## Requirement 27: ACP Assistant Image and Embedded Resource Content
+
+- Operation:
+  - run a turn against an ACP-backed agent that emits visible assistant text interleaved with non-text `agent_message_chunk` payloads such as image content and embedded resource content.
+  - observe the SSE stream from `POST /v1/threads/{threadId}/turns`.
+  - query `GET /v1/threads/{threadId}/history?includeEvents=true`.
+  - open the same thread in the Web UI during streaming and again after reload/history fetch.
+- Expected:
+  - shared ACP parsing preserves non-text assistant `content` blocks instead of dropping them when they are not plain `{type:"text",text:...}` chunks.
+  - SSE emits `message_content` events with `turnId` and the raw structured ACP `content` payload.
+  - turn history persists those same `message_content` events unchanged.
+  - ordinary visible assistant text still arrives as `message_delta`, and `responseText` remains the visible-text aggregate only.
+  - the Web UI timeline keeps text segments and `message_content` segments in the original emission order.
+  - image content renders as an inline preview card rather than raw JSON.
+  - embedded resource content renders as a resource card with URI and/or text preview when the payload provides them, and unknown shapes still fall back to JSON.
+  - the same structured assistant content remains visible after a full page reload/history reconstruction for hub-created turns.
+- Verification commands (executed 2026-03-22):
+  - `go test ./internal/agents -run 'TestParseACPUpdateAgentMessageChunkKeepsNonTextContent|TestNewACPNotificationHandlerRoutesStructuredMessageContent' -count=1`
+  - `go test ./internal/httpapi -run 'TestTurnsSSEIncludesStructuredMessageContentAndPersistsHistory' -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`

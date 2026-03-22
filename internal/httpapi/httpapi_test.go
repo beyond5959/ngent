@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -200,16 +201,30 @@ func TestV1AgentModels(t *testing.T) {
 		agentList: []AgentInfo{
 			{ID: "codex", Name: "Codex", Status: "available"},
 		},
-		agentModelsFactory: func(ctx context.Context, agentID string) ([]agents.ModelOption, error) {
-			if agentID != "codex" {
-				return nil, errors.New("unexpected agent")
-			}
-			return []agents.ModelOption{
-				{ID: "gpt-5", Name: "GPT-5"},
-				{ID: "gpt-5-mini", Name: "GPT-5 Mini"},
-			}, nil
-		},
 	})
+
+	storeImpl, ok := h.store.(*storage.Store)
+	if !ok {
+		t.Fatalf("server store type = %T, want *storage.Store", h.store)
+	}
+	if err := storeImpl.UpsertAgentConfigCatalog(context.Background(), storage.UpsertAgentConfigCatalogParams{
+		AgentID: "codex",
+		ModelID: "gpt-5",
+		ConfigOptionsJSON: `[
+			{
+				"id":"model",
+				"category":"model",
+				"type":"select",
+				"currentValue":"gpt-5",
+				"options":[
+					{"value":"gpt-5","name":"GPT-5"},
+					{"value":"gpt-5-mini","name":"GPT-5 Mini"}
+				]
+			}
+		]`,
+	}); err != nil {
+		t.Fatalf("UpsertAgentConfigCatalog(): %v", err)
+	}
 
 	rr := performJSONRequest(t, h, http.MethodGet, "/v1/agents/codex/models", nil, map[string]string{
 		"X-Client-ID": "client-a",
@@ -305,24 +320,30 @@ func TestV1AgentModelsNotFound(t *testing.T) {
 	assertErrorCode(t, rr.Body.Bytes(), "NOT_FOUND")
 }
 
-func TestV1AgentModelsUpstreamUnavailable(t *testing.T) {
+func TestV1AgentModelsEmptyWhenNoStoredCatalog(t *testing.T) {
 	h := newTestServer(t, testServerOptions{
 		allowedAgentIDs: []string{"codex"},
 		agentList: []AgentInfo{
 			{ID: "codex", Name: "Codex", Status: "available"},
-		},
-		agentModelsFactory: func(ctx context.Context, agentID string) ([]agents.ModelOption, error) {
-			return nil, errors.New("boom")
 		},
 	})
 
 	rr := performJSONRequest(t, h, http.MethodGet, "/v1/agents/codex/models", nil, map[string]string{
 		"X-Client-ID": "client-a",
 	})
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusOK)
 	}
-	assertErrorCode(t, rr.Body.Bytes(), "UPSTREAM_UNAVAILABLE")
+
+	var body struct {
+		Models []agents.ModelOption `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got := len(body.Models); got != 0 {
+		t.Fatalf("len(models) = %d, want 0", got)
+	}
 }
 
 func TestV1RequiresClientID(t *testing.T) {
@@ -811,6 +832,99 @@ func TestUpdateThreadConflictWhenActiveTurn(t *testing.T) {
 	_ = <-streamResultCh
 }
 
+func TestUpdateThreadSessionSwitchAllowedWhenActiveTurnHasConfigSnapshot(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	streamer := newConfigOptionStreamer("gpt-5", []agents.ConfigOptionValue{
+		{Value: "gpt-5", Name: "GPT-5"},
+	})
+	streamer.sessionID = "ses-live"
+	streamer.block = true
+	streamer.release = release
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	storeImpl, ok := h.store.(*storage.Store)
+	if !ok {
+		t.Fatalf("server store type = %T, want *storage.Store", h.store)
+	}
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+
+	streamResultCh := make(chan httpTurnStreamResult, 1)
+	go func() {
+		streamResultCh <- runTurnStreamRequest(t, ts.URL, "client-a", threadID, "stream-with-config")
+	}()
+
+	turnID := waitForTurnID(t, ts.URL, "client-a", threadID, 4*time.Second)
+	if turnID == "" {
+		t.Fatalf("failed to observe running turn before timeout")
+	}
+
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		thread, err := storeImpl.GetThread(context.Background(), threadID)
+		if err == nil {
+			modelID, _ := threadConfigSelections(thread.AgentOptionsJSON)
+			if threadSessionID(thread.AgentOptionsJSON) == "ses-live" && modelID == "gpt-5" {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			thread, err := storeImpl.GetThread(context.Background(), threadID)
+			if err != nil {
+				t.Fatalf("GetThread() before switch: %v", err)
+			}
+			t.Fatalf("thread agent options were not updated with live session config before timeout: %s", thread.AgentOptionsJSON)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	switchStatus, switchBody := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"sessionId": "ses-other"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if switchStatus != http.StatusOK {
+		t.Fatalf("switch session status = %d, want %d, body=%s", switchStatus, http.StatusOK, switchBody)
+	}
+
+	thread, err := storeImpl.GetThread(context.Background(), threadID)
+	if err != nil {
+		t.Fatalf("GetThread() after switch: %v", err)
+	}
+	if got := threadSessionID(thread.AgentOptionsJSON); got != "ses-other" {
+		t.Fatalf("thread session after switch = %q, want %q", got, "ses-other")
+	}
+	if got, _ := threadConfigSelections(thread.AgentOptionsJSON); got != "" {
+		t.Fatalf("thread model after switch = %q, want cleared model selection", got)
+	}
+
+	cancelStatus, cancelBody := postCancel(t, ts.URL, "client-a", turnID)
+	if cancelStatus != http.StatusOK {
+		t.Fatalf("cancel status = %d, want %d, body=%s", cancelStatus, http.StatusOK, cancelBody)
+	}
+
+	select {
+	case streamResult := <-streamResultCh:
+		if streamResult.StatusCode != http.StatusOK {
+			t.Fatalf("stream status = %d, want %d, body=%s", streamResult.StatusCode, http.StatusOK, streamResult.Body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("active turn did not stop after cancel")
+	}
+}
+
 func TestUpdateThreadClosesCachedAgent(t *testing.T) {
 	root := t.TempDir()
 	streamer := &countingClosableStreamer{}
@@ -961,6 +1075,103 @@ func TestThreadSessionHistoryEndpoint(t *testing.T) {
 	}
 }
 
+func TestThreadSessionHistoryEndpointPersistsConfigOptionsForSelectedSession(t *testing.T) {
+	root := t.TempDir()
+	streamer := &sessionTranscriptStreamer{
+		result: agents.SessionTranscriptResult{
+			Messages: []agents.SessionTranscriptMessage{
+				{Role: "assistant", Content: "hello", Timestamp: "2026-03-22T11:00:00Z"},
+			},
+			ConfigOptions: []agents.ConfigOption{
+				{
+					ID:           "model",
+					Category:     "model",
+					Type:         "select",
+					CurrentValue: "gpt-5.3-codex",
+					Options: []agents.ConfigOptionValue{
+						{Value: "gpt-5.3-codex", Name: "GPT-5.3 Codex"},
+						{Value: "gpt-5.2-codex", Name: "GPT-5.2 Codex"},
+					},
+				},
+				{
+					ID:           "thought_level",
+					Category:     "reasoning",
+					Type:         "select",
+					CurrentValue: "high",
+					Options: []agents.ConfigOptionValue{
+						{Value: "medium", Name: "Medium"},
+						{Value: "high", Name: "High"},
+					},
+				},
+			},
+		},
+	}
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+	updateRR := performJSONRequest(t, h, http.MethodPatch, "/v1/threads/"+threadID, map[string]any{
+		"agentOptions": map[string]any{"sessionId": "session-2"},
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if updateRR.Code != http.StatusOK {
+		t.Fatalf("update thread status = %d, want %d, body=%s", updateRR.Code, http.StatusOK, updateRR.Body.String())
+	}
+
+	rr := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID+"/session-history?sessionId=session-2", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("session-history status code = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := streamer.LoadCalls(); got != 1 {
+		t.Fatalf("load calls = %d, want 1", got)
+	}
+
+	configRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID+"/config-options", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if configRR.Code != http.StatusOK {
+		t.Fatalf("config-options status code = %d, want %d, body=%s", configRR.Code, http.StatusOK, configRR.Body.String())
+	}
+
+	var configBody struct {
+		ConfigOptions []agents.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal(configRR.Body.Bytes(), &configBody); err != nil {
+		t.Fatalf("unmarshal config-options response: %v", err)
+	}
+	if got := acpmodel.CurrentValueForConfig(configBody.ConfigOptions, "model"); got != "gpt-5.3-codex" {
+		t.Fatalf("restored model = %q, want %q", got, "gpt-5.3-codex")
+	}
+	if got := acpmodel.CurrentValueForConfig(configBody.ConfigOptions, "thought_level"); got != "high" {
+		t.Fatalf("restored thought_level = %q, want %q", got, "high")
+	}
+
+	threadRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID, nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if threadRR.Code != http.StatusOK {
+		t.Fatalf("get thread status = %d, want %d, body=%s", threadRR.Code, http.StatusOK, threadRR.Body.String())
+	}
+	var threadBody struct {
+		Thread struct {
+			AgentOptions map[string]any `json:"agentOptions"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(threadRR.Body.Bytes(), &threadBody); err != nil {
+		t.Fatalf("unmarshal thread response: %v", err)
+	}
+	if got := fmt.Sprintf("%v", threadBody.Thread.AgentOptions["modelId"]); got != "gpt-5.3-codex" {
+		t.Fatalf("thread modelId = %q, want %q", got, "gpt-5.3-codex")
+	}
+}
+
 func TestThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(t.TempDir(), "session-cache.db")
@@ -971,6 +1182,15 @@ func TestThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart(t *testing.T) 
 				{Role: "user", Content: "cached hello", Timestamp: "2026-03-13T03:00:00Z"},
 				{Role: "assistant", Content: "cached world", Timestamp: "2026-03-13T03:00:01Z"},
 			},
+			ConfigOptions: []agents.ConfigOption{{
+				ID:           "model",
+				Category:     "model",
+				Type:         "select",
+				CurrentValue: "gpt-5.3-codex",
+				Options: []agents.ConfigOptionValue{
+					{Value: "gpt-5.3-codex", Name: "GPT-5.3 Codex"},
+				},
+			}},
 		},
 	}
 	serverOne, closeOne := newTestServerWithDBPath(t, dbPath, testServerOptions{
@@ -1030,6 +1250,94 @@ func TestThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart(t *testing.T) 
 	}
 	if got := body.Messages[1].Content; got != "cached world" {
 		t.Fatalf("messages[1].content = %q, want %q", got, "cached world")
+	}
+}
+
+func TestThreadSessionHistoryEndpointReloadsLiveWhenTranscriptCachedButConfigMissing(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "session-config-cache.db")
+
+	streamerOne := &sessionTranscriptStreamer{
+		result: agents.SessionTranscriptResult{
+			Messages: []agents.SessionTranscriptMessage{
+				{Role: "assistant", Content: "cached world", Timestamp: "2026-03-22T11:10:00Z"},
+			},
+		},
+	}
+	serverOne, closeOne := newTestServerWithDBPath(t, dbPath, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamerOne, nil
+		},
+	})
+	threadID := createThreadForClient(t, serverOne, "client-a", root)
+	updateRR := performJSONRequest(t, serverOne, http.MethodPatch, "/v1/threads/"+threadID, map[string]any{
+		"agentOptions": map[string]any{"sessionId": "session-2"},
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if updateRR.Code != http.StatusOK {
+		t.Fatalf("server one update thread status = %d, want %d, body=%s", updateRR.Code, http.StatusOK, updateRR.Body.String())
+	}
+	first := performJSONRequest(t, serverOne, http.MethodGet, "/v1/threads/"+threadID+"/session-history?sessionId=session-2", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first session-history status code = %d, want %d", first.Code, http.StatusOK)
+	}
+	if got := streamerOne.LoadCalls(); got != 1 {
+		t.Fatalf("first server load calls = %d, want 1", got)
+	}
+	closeOne()
+
+	streamerTwo := &sessionTranscriptStreamer{
+		result: agents.SessionTranscriptResult{
+			Messages: []agents.SessionTranscriptMessage{
+				{Role: "assistant", Content: "cached world", Timestamp: "2026-03-22T11:10:00Z"},
+			},
+			ConfigOptions: []agents.ConfigOption{{
+				ID:           "model",
+				Category:     "model",
+				Type:         "select",
+				CurrentValue: "kimi-for-coding",
+				Options: []agents.ConfigOptionValue{
+					{Value: "kimi-for-coding", Name: "Kimi for Coding"},
+				},
+			}},
+		},
+	}
+	serverTwo, closeTwo := newTestServerWithDBPath(t, dbPath, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamerTwo, nil
+		},
+	})
+	defer closeTwo()
+
+	second := performJSONRequest(t, serverTwo, http.MethodGet, "/v1/threads/"+threadID+"/session-history?sessionId=session-2", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if second.Code != http.StatusOK {
+		t.Fatalf("second session-history status code = %d, want %d, body=%s", second.Code, http.StatusOK, second.Body.String())
+	}
+	if got := streamerTwo.LoadCalls(); got != 1 {
+		t.Fatalf("second server load calls = %d, want 1", got)
+	}
+
+	configRR := performJSONRequest(t, serverTwo, http.MethodGet, "/v1/threads/"+threadID+"/config-options", nil, map[string]string{
+		"X-Client-ID": "client-a",
+	})
+	if configRR.Code != http.StatusOK {
+		t.Fatalf("config-options status code = %d, want %d, body=%s", configRR.Code, http.StatusOK, configRR.Body.String())
+	}
+	var configBody struct {
+		ConfigOptions []agents.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal(configRR.Body.Bytes(), &configBody); err != nil {
+		t.Fatalf("unmarshal config-options response: %v", err)
+	}
+	if got := acpmodel.CurrentValueForConfig(configBody.ConfigOptions, "model"); got != "kimi-for-coding" {
+		t.Fatalf("restored cached-transcript model = %q, want %q", got, "kimi-for-coding")
 	}
 }
 
@@ -1495,8 +1803,39 @@ func TestThreadConfigOptionsGetAndSetModel(t *testing.T) {
 	if getResp.ThreadID != threadID {
 		t.Fatalf("threadId = %q, want %q", getResp.ThreadID, threadID)
 	}
+	if got := len(getResp.ConfigOptions); got != 0 {
+		t.Fatalf("len(configOptions) before first turn = %d, want 0", got)
+	}
+
+	turnStatus, _ := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/turns",
+		map[string]any{
+			"input":  "hello before model switch",
+			"stream": true,
+		},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if turnStatus != http.StatusOK {
+		t.Fatalf("initial turn status = %d, want %d", turnStatus, http.StatusOK)
+	}
+
+	getStatus, getBody = doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID+"/config-options",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if getStatus != http.StatusOK {
+		t.Fatalf("get config options after first turn status = %d, want %d, body=%s", getStatus, http.StatusOK, getBody)
+	}
+	if err := json.Unmarshal([]byte(getBody), &getResp); err != nil {
+		t.Fatalf("unmarshal get config options response after first turn: %v", err)
+	}
 	if got := acpmodel.CurrentValueForConfig(getResp.ConfigOptions, "model"); got != "gpt-5.3-codex" {
-		t.Fatalf("model currentValue = %q, want %q", got, "gpt-5.3-codex")
+		t.Fatalf("model currentValue after first turn = %q, want %q", got, "gpt-5.3-codex")
 	}
 
 	setStatus, setBody := doJSON(
@@ -1551,7 +1890,7 @@ func TestThreadConfigOptionsGetAndSetModel(t *testing.T) {
 		t.Fatalf("persisted modelId = %q, want %q", got, "gpt-5.2-codex")
 	}
 
-	turnStatus, _ := doJSON(
+	turnStatus, _ = doJSON(
 		t,
 		http.MethodPost,
 		ts.URL+"/v1/threads/"+threadID+"/turns",
@@ -1592,7 +1931,7 @@ func TestThreadConfigOptionsGetUsesStoredCatalog(t *testing.T) {
 	}
 	if err := storeImpl.UpsertAgentConfigCatalog(context.Background(), storage.UpsertAgentConfigCatalogParams{
 		AgentID: "codex",
-		ModelID: storage.DefaultAgentConfigCatalogModelID,
+		ModelID: "gpt-5.3-codex",
 		ConfigOptionsJSON: `[
 			{
 				"id":"model",
@@ -1617,6 +1956,12 @@ func TestThreadConfigOptionsGetUsesStoredCatalog(t *testing.T) {
 		]`,
 	}); err != nil {
 		t.Fatalf("UpsertAgentConfigCatalog(): %v", err)
+	}
+	if err := storeImpl.UpdateThreadAgentOptions(context.Background(), threadID, `{
+		"modelId":"gpt-5.3-codex",
+		"configOverrides":{"thought_level":"medium"}
+	}`); err != nil {
+		t.Fatalf("UpdateThreadAgentOptions(): %v", err)
 	}
 
 	getStatus, getBody := doJSON(
@@ -1674,6 +2019,20 @@ func TestThreadConfigOptionsPersistConfigOverrides(t *testing.T) {
 
 	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
 
+	turnStatus, _ := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/turns",
+		map[string]any{
+			"input":  "hello before reasoning switch",
+			"stream": true,
+		},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if turnStatus != http.StatusOK {
+		t.Fatalf("initial turn status = %d, want %d", turnStatus, http.StatusOK)
+	}
+
 	setStatus, setBody := doJSON(
 		t,
 		http.MethodPost,
@@ -1730,7 +2089,7 @@ func TestThreadConfigOptionsPersistConfigOverrides(t *testing.T) {
 		t.Fatalf("set config call count after POST = %d, want %d", got, 0)
 	}
 
-	turnStatus, _ := doJSON(
+	turnStatus, _ = doJSON(
 		t,
 		http.MethodPost,
 		ts.URL+"/v1/threads/"+threadID+"/turns",
@@ -1748,6 +2107,101 @@ func TestThreadConfigOptionsPersistConfigOverrides(t *testing.T) {
 	}
 	if got := streamer.LastStreamConfigOverrides()["thought_level"]; got != "high" {
 		t.Fatalf("stream saw thought_level = %q, want %q", got, "high")
+	}
+}
+
+func TestThreadConfigOptionsRestoreFromSessionCacheAfterSessionSwitch(t *testing.T) {
+	root := t.TempDir()
+	streamer := newConfigOptionStreamer("kimi-k2", []agents.ConfigOptionValue{
+		{Value: "kimi-k2", Name: "Kimi K2"},
+		{Value: "kimi-k1.5", Name: "Kimi K1.5"},
+	})
+	streamer.sessionID = "ses_kimi_restore_1"
+	streamer.options = append(streamer.options, agents.ConfigOption{
+		ID:           "thought_level",
+		Category:     "reasoning",
+		Name:         "Thought level",
+		Type:         "select",
+		CurrentValue: "medium",
+		Options: []agents.ConfigOptionValue{
+			{Value: "medium", Name: "Medium"},
+			{Value: "high", Name: "High"},
+		},
+	})
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+
+	first := runTurnStreamRequest(t, ts.URL, "client-a", threadID, "hello kimi")
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first turn status = %d, want %d, body=%s", first.StatusCode, http.StatusOK, first.Body)
+	}
+
+	storeImpl, ok := h.store.(*storage.Store)
+	if !ok {
+		t.Fatalf("server store type = %T, want *storage.Store", h.store)
+	}
+	sessionCache, err := storeImpl.GetSessionConfigCache(context.Background(), "codex", root, "ses_kimi_restore_1")
+	if err != nil {
+		t.Fatalf("GetSessionConfigCache(): %v", err)
+	}
+	if got := acpmodel.CurrentValueForConfig(mustDecodeStoredConfigOptions(t, sessionCache.ConfigOptionsJSON), "model"); got != "kimi-k2" {
+		t.Fatalf("cached session model = %q, want %q", got, "kimi-k2")
+	}
+
+	switchStatus, switchBody := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"sessionId": "ses_other"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if switchStatus != http.StatusOK {
+		t.Fatalf("switch away status = %d, want %d, body=%s", switchStatus, http.StatusOK, switchBody)
+	}
+
+	switchBackStatus, switchBackBody := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"sessionId": "ses_kimi_restore_1"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if switchBackStatus != http.StatusOK {
+		t.Fatalf("switch back status = %d, want %d, body=%s", switchBackStatus, http.StatusOK, switchBackBody)
+	}
+
+	getStatus, getBody := doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID+"/config-options",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if getStatus != http.StatusOK {
+		t.Fatalf("get config options after switch-back status = %d, want %d, body=%s", getStatus, http.StatusOK, getBody)
+	}
+
+	var getResp struct {
+		ConfigOptions []agents.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal([]byte(getBody), &getResp); err != nil {
+		t.Fatalf("unmarshal get config options response: %v", err)
+	}
+	if got := acpmodel.CurrentValueForConfig(getResp.ConfigOptions, "model"); got != "kimi-k2" {
+		t.Fatalf("restored session model = %q, want %q", got, "kimi-k2")
+	}
+	if got := acpmodel.CurrentValueForConfig(getResp.ConfigOptions, "thought_level"); got != "medium" {
+		t.Fatalf("restored session thought_level = %q, want %q", got, "medium")
 	}
 }
 
@@ -1798,10 +2252,19 @@ func TestThreadConfigOptionsUnsupportedManager(t *testing.T) {
 		nil,
 		map[string]string{"X-Client-ID": "client-a"},
 	)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
-	assertErrorCode(t, rr.Body.Bytes(), "UPSTREAM_UNAVAILABLE")
+
+	var body struct {
+		ConfigOptions []agents.ConfigOption `json:"configOptions"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got := len(body.ConfigOptions); got != 0 {
+		t.Fatalf("len(configOptions) = %d, want 0", got)
+	}
 }
 
 func TestTurnsSSEAndHistory(t *testing.T) {
@@ -2150,6 +2613,92 @@ func TestTurnsSSEIncludesToolCallUpdatesAndPersistsHistory(t *testing.T) {
 	}
 	if !historyToolCallUpdate {
 		t.Fatal("missing persisted tool_call_update event")
+	}
+}
+
+func TestTurnsSSEIncludesStructuredMessageContentAndPersistsHistory(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		agent:        &messageContentStreamer{},
+	})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+
+	turnRR := performJSONRequest(t, h, http.MethodPost, "/v1/threads/"+threadID+"/turns", map[string]any{
+		"input":  "show content",
+		"stream": true,
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if turnRR.Code != http.StatusOK {
+		t.Fatalf("turn status code = %d, want %d", turnRR.Code, http.StatusOK)
+	}
+
+	events := parseSSEEvents(t, turnRR.Body.String())
+	var seenContent int
+	for _, ev := range events {
+		if ev.Event != eventTypeMessageContent {
+			continue
+		}
+		seenContent += 1
+		content, ok := ev.Data["content"].(map[string]any)
+		if !ok {
+			t.Fatalf("message_content.content type = %T, want map[string]any", ev.Data["content"])
+		}
+		if seenContent == 1 {
+			if got := stringField(content, "type"); got != "image" {
+				t.Fatalf("first message_content.type = %q, want %q", got, "image")
+			}
+		}
+		if seenContent == 2 {
+			if got := stringField(content, "type"); got != "resource" {
+				t.Fatalf("second message_content.type = %q, want %q", got, "resource")
+			}
+			resource, ok := content["resource"].(map[string]any)
+			if !ok {
+				t.Fatalf("message_content.resource type = %T, want map[string]any", content["resource"])
+			}
+			if got := stringField(resource, "uri"); got != "file:///tmp/demo.txt" {
+				t.Fatalf("message_content.resource.uri = %q, want %q", got, "file:///tmp/demo.txt")
+			}
+		}
+	}
+	if seenContent != 2 {
+		t.Fatalf("seen %d message_content events, want 2", seenContent)
+	}
+
+	historyRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID+"/history?includeEvents=true", nil, map[string]string{"X-Client-ID": "client-a"})
+	if historyRR.Code != http.StatusOK {
+		t.Fatalf("history status code = %d, want %d", historyRR.Code, http.StatusOK)
+	}
+
+	var history struct {
+		Turns []struct {
+			ResponseText string `json:"responseText"`
+			Events       []struct {
+				Type string         `json:"type"`
+				Data map[string]any `json:"data"`
+			} `json:"events"`
+		} `json:"turns"`
+	}
+	if err := json.Unmarshal(historyRR.Body.Bytes(), &history); err != nil {
+		t.Fatalf("unmarshal history: %v", err)
+	}
+	if got, want := len(history.Turns), 1; got != want {
+		t.Fatalf("len(history.turns) = %d, want %d", got, want)
+	}
+	if got := history.Turns[0].ResponseText; got != "preview:\n\ndone" {
+		t.Fatalf("history responseText = %q, want %q", got, "preview:\n\ndone")
+	}
+
+	var historyContent int
+	for _, event := range history.Turns[0].Events {
+		if event.Type != eventTypeMessageContent {
+			continue
+		}
+		historyContent += 1
+	}
+	if historyContent != 2 {
+		t.Fatalf("history message_content events = %d, want 2", historyContent)
 	}
 }
 
@@ -2669,6 +3218,113 @@ func TestTurnPermissionApprovedContinuesAndCompletes(t *testing.T) {
 	}
 	if !strings.Contains(lastTurn.ResponseText, "after-permission") {
 		t.Fatalf("history responseText = %q, want substring %q", lastTurn.ResponseText, "after-permission")
+	}
+}
+
+func TestTurnPermissionSelectedOptionFlowsThroughExactAgentChoice(t *testing.T) {
+	root := t.TempDir()
+	streamer := &permissionOptionStreamer{
+		request: agents.PermissionRequest{
+			RequestID: "provider-request-42",
+			Approval:  "command",
+			Command:   "Run shell command",
+			Options: []agents.PermissionOption{
+				{OptionID: "allow_once_opt", Name: "Allow once", Kind: "allow_once"},
+				{OptionID: "allow_always_opt", Name: "Allow always", Kind: "allow_always"},
+				{OptionID: "reject_once_opt", Name: "Reject once", Kind: "reject_once"},
+				{OptionID: "reject_always_opt", Name: "Reject always", Kind: "reject_always"},
+			},
+		},
+	}
+	h := newTestServer(t, testServerOptions{
+		allowedRoots:      []string{root},
+		agent:             streamer,
+		permissionTimeout: 2 * time.Second,
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+
+	streamResultCh := make(chan httpTurnStreamResult, 1)
+	go func() {
+		streamResultCh <- runTurnStreamRequest(t, ts.URL, "client-a", threadID, "need exact option")
+	}()
+
+	var permissionData map[string]any
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		history := getHistoryWithEventsHTTP(t, ts.URL, "client-a", threadID)
+		if len(history.Turns) == 0 {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		lastTurn := history.Turns[len(history.Turns)-1]
+		for _, event := range lastTurn.Events {
+			if event.Type != "permission_required" {
+				continue
+			}
+			permissionData = event.Data
+			break
+		}
+		if permissionData != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if permissionData == nil {
+		t.Fatalf("failed to observe permission_required before timeout")
+	}
+
+	if got := stringField(permissionData, "permissionId"); got == "" {
+		t.Fatalf("permission_required.permissionId is empty")
+	}
+	rawOptions, ok := permissionData["options"].([]any)
+	if !ok {
+		t.Fatalf("permission_required.options type = %T, want []any", permissionData["options"])
+	}
+	if len(rawOptions) != 4 {
+		t.Fatalf("len(permission_required.options) = %d, want %d", len(rawOptions), 4)
+	}
+	secondOption, ok := rawOptions[1].(map[string]any)
+	if !ok {
+		t.Fatalf("permission_required.options[1] type = %T, want map[string]any", rawOptions[1])
+	}
+	if got := stringField(secondOption, "optionId"); got != "allow_always_opt" {
+		t.Fatalf("permission_required.options[1].optionId = %q, want %q", got, "allow_always_opt")
+	}
+	if got := stringField(secondOption, "name"); got != "Allow always" {
+		t.Fatalf("permission_required.options[1].name = %q, want %q", got, "Allow always")
+	}
+
+	permissionID := stringField(permissionData, "permissionId")
+	permissionStatus, permissionBody := postPermissionSelection(t, ts.URL, "client-a", permissionID, "allow_always_opt")
+	if permissionStatus != http.StatusOK {
+		t.Fatalf("permission selection status = %d, want %d, body=%s", permissionStatus, http.StatusOK, permissionBody)
+	}
+
+	streamResult := <-streamResultCh
+	if streamResult.StatusCode != http.StatusOK {
+		t.Fatalf("turn stream status = %d, want %d", streamResult.StatusCode, http.StatusOK)
+	}
+
+	response := streamer.Response()
+	if response.SelectedOptionID != "allow_always_opt" {
+		t.Fatalf("permission response optionId = %q, want %q", response.SelectedOptionID, "allow_always_opt")
+	}
+	if response.Outcome != agents.PermissionOutcomeApproved {
+		t.Fatalf("permission response outcome = %q, want %q", response.Outcome, agents.PermissionOutcomeApproved)
+	}
+
+	events := parseSSEEvents(t, streamResult.Body)
+	lastStopReason := ""
+	for _, event := range events {
+		if event.Event == "turn_completed" {
+			lastStopReason = stringField(event.Data, "stopReason")
+		}
+	}
+	if lastStopReason != "end_turn" {
+		t.Fatalf("turn_completed.stopReason = %q, want %q", lastStopReason, "end_turn")
 	}
 }
 
@@ -3238,6 +3894,52 @@ func (s *reasoningStreamer) Stream(ctx context.Context, input string, onDelta fu
 	return agents.StopReasonEndTurn, nil
 }
 
+type permissionOptionStreamer struct {
+	request agents.PermissionRequest
+
+	mu       sync.Mutex
+	response agents.PermissionResponse
+}
+
+func (s *permissionOptionStreamer) Name() string {
+	return "permission-option-streamer"
+}
+
+func (s *permissionOptionStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = input
+	if err := onDelta("before-permission "); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+
+	handler, ok := agents.PermissionHandlerFromContext(ctx)
+	if !ok {
+		return agents.StopReasonCancelled, errors.New("permission handler missing")
+	}
+
+	response, err := handler(ctx, s.request)
+	if err != nil {
+		return agents.StopReasonCancelled, err
+	}
+
+	s.mu.Lock()
+	s.response = response
+	s.mu.Unlock()
+
+	if err := onDelta("selected:" + response.SelectedOptionID); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if response.Outcome == agents.PermissionOutcomeApproved {
+		return agents.StopReasonEndTurn, nil
+	}
+	return agents.StopReasonCancelled, nil
+}
+
+func (s *permissionOptionStreamer) Response() agents.PermissionResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.response
+}
+
 type toolCallStreamer struct{}
 
 func (s *toolCallStreamer) Name() string {
@@ -3275,6 +3977,46 @@ func (s *toolCallStreamer) Stream(ctx context.Context, input string, onDelta fun
 		return agents.StopReasonEndTurn, err
 	}
 	if err := onDelta("tool done"); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+type messageContentStreamer struct{}
+
+func (s *messageContentStreamer) Name() string {
+	return "message-content-streamer"
+}
+
+func (s *messageContentStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = input
+	if err := onDelta("preview:\n"); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := agents.NotifyMessageContent(ctx, agents.ACPMessageContent{
+		Content: json.RawMessage(`{
+			"type":"image",
+			"mimeType":"image/png",
+			"data":"aGVsbG8="
+		}`),
+		HasContent: true,
+	}); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := agents.NotifyMessageContent(ctx, agents.ACPMessageContent{
+		Content: json.RawMessage(`{
+			"type":"resource",
+			"resource":{
+				"uri":"file:///tmp/demo.txt",
+				"mimeType":"text/plain",
+				"text":"embedded text"
+			}
+		}`),
+		HasContent: true,
+	}); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := onDelta("\ndone"); err != nil {
 		return agents.StopReasonEndTurn, err
 	}
 	return agents.StopReasonEndTurn, nil
@@ -3375,6 +4117,9 @@ func (s *errorStreamer) Stream(ctx context.Context, input string, onDelta func(d
 type configOptionStreamer struct {
 	options            []agents.ConfigOption
 	slashCommands      []agents.SlashCommand
+	sessionID          string
+	release            <-chan struct{}
+	block              bool
 	setConfigCalls     atomic.Int32
 	slashCommandsCalls atomic.Int32
 	closeCalls         atomic.Int32
@@ -3401,7 +4146,14 @@ func (s *configOptionStreamer) Name() string {
 }
 
 func (s *configOptionStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
-	_ = ctx
+	if err := agents.NotifyConfigOptions(ctx, acpmodel.CloneConfigOptions(s.options)); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if sessionID := strings.TrimSpace(s.sessionID); sessionID != "" {
+		if err := agents.NotifySessionBound(ctx, sessionID); err != nil {
+			return agents.StopReasonEndTurn, err
+		}
+	}
 	s.lastStreamModel.Store(s.CurrentModelID())
 	overrides := s.CurrentConfigOverrides()
 	if overrides == nil {
@@ -3411,6 +4163,13 @@ func (s *configOptionStreamer) Stream(ctx context.Context, input string, onDelta
 	if onDelta != nil {
 		if err := onDelta(input); err != nil {
 			return agents.StopReasonEndTurn, err
+		}
+	}
+	if s.block {
+		select {
+		case <-ctx.Done():
+			return agents.StopReasonCancelled, ctx.Err()
+		case <-s.release:
 		}
 	}
 	return agents.StopReasonEndTurn, nil
@@ -3499,6 +4258,15 @@ func (s *configOptionStreamer) LastStreamConfigOverrides() map[string]string {
 		cloned[configID] = currentValue
 	}
 	return cloned
+}
+
+func mustDecodeStoredConfigOptions(t *testing.T, raw string) []agents.ConfigOption {
+	t.Helper()
+	options, err := decodeStoredConfigOptions(raw)
+	if err != nil {
+		t.Fatalf("decodeStoredConfigOptions(): %v", err)
+	}
+	return options
 }
 
 type sessionListStreamer struct {
@@ -3755,6 +4523,17 @@ func postPermissionDecision(t *testing.T, baseURL, clientID, permissionID, outco
 		http.MethodPost,
 		baseURL+"/v1/permissions/"+permissionID,
 		map[string]any{"outcome": outcome},
+		map[string]string{"X-Client-ID": clientID},
+	)
+}
+
+func postPermissionSelection(t *testing.T, baseURL, clientID, permissionID, optionID string) (int, string) {
+	t.Helper()
+	return doJSON(
+		t,
+		http.MethodPost,
+		baseURL+"/v1/permissions/"+permissionID,
+		map[string]any{"optionId": optionID},
 		map[string]string{"X-Client-ID": clientID},
 	)
 }

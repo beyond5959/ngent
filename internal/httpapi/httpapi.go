@@ -30,16 +30,10 @@ import (
 
 // AgentInfo describes one supported agent entry returned by /v1/agents.
 type AgentInfo struct {
-	ID          string       `json:"id"`
-	Name        string       `json:"name"`
-	Status      string       `json:"status"`
-	AdapterInfo *AdapterInfo `json:"adapterInfo,omitempty"`
-}
-
-// AdapterInfo carries adapter name and version from the ACP initialize handshake.
-type AdapterInfo struct {
-	Name    string `json:"name,omitempty"`
-	Version string `json:"version,omitempty"`
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	Status      string              `json:"status"`
+	AdapterInfo *agents.AdapterInfo `json:"adapterInfo,omitempty"`
 }
 
 // AgentProfile is one named runtime profile preset.

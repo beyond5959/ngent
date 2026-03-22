@@ -465,29 +465,7 @@ func (c *Client) streamOnce(
 			"sessionId": sessionID,
 			"prompt":    input,
 		}
-		if content := agents.TurnContentFromContext(ctx); len(content) > 0 {
-			params["content"] = content
-		}
-		if resources := agents.TurnResourcesFromContext(ctx); len(resources) > 0 {
-			params["resources"] = resources
-		}
-		if cfg, ok := agents.TurnPromptConfigFromContext(ctx); ok {
-			if cfg.Profile != "" {
-				params["profile"] = cfg.Profile
-			}
-			if cfg.ApprovalPolicy != "" {
-				params["approvalPolicy"] = cfg.ApprovalPolicy
-			}
-			if cfg.Sandbox != "" {
-				params["sandbox"] = cfg.Sandbox
-			}
-			if cfg.Personality != "" {
-				params["personality"] = cfg.Personality
-			}
-			if cfg.SystemInstructions != "" {
-				params["systemInstructions"] = cfg.SystemInstructions
-			}
-		}
+		agents.ApplyTurnParamsFromContext(ctx, params)
 		resp, reqErr := c.clientRequest(promptCtx, runtime, methodSessionPrompt, params)
 		promptDone <- promptResult{response: resp, err: reqErr}
 	}()

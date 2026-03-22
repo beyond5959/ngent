@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/agentutil"
 	"github.com/beyond5959/ngent/internal/observability"
 )
 
@@ -201,29 +202,7 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		"sessionId": sessionID,
 		"input":     input,
 	}
-	if content := agents.TurnContentFromContext(ctx); len(content) > 0 {
-		promptParams["content"] = content
-	}
-	if resources := agents.TurnResourcesFromContext(ctx); len(resources) > 0 {
-		promptParams["resources"] = resources
-	}
-	if cfg, ok := agents.TurnPromptConfigFromContext(ctx); ok {
-		if cfg.Profile != "" {
-			promptParams["profile"] = cfg.Profile
-		}
-		if cfg.ApprovalPolicy != "" {
-			promptParams["approvalPolicy"] = cfg.ApprovalPolicy
-		}
-		if cfg.Sandbox != "" {
-			promptParams["sandbox"] = cfg.Sandbox
-		}
-		if cfg.Personality != "" {
-			promptParams["personality"] = cfg.Personality
-		}
-		if cfg.SystemInstructions != "" {
-			promptParams["systemInstructions"] = cfg.SystemInstructions
-		}
-	}
+	agents.ApplyTurnParamsFromContext(ctx, promptParams)
 	promptResult, err := conn.Call(ctx, "session/prompt", promptParams)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -250,15 +229,15 @@ func (c *Client) handlePermissionRequest(ctx context.Context, conn *rpcConn, msg
 
 	req := agents.PermissionRequest{
 		RequestID: idToString(msg.ID),
-		Approval:  stringValue(rawParams, "approval"),
-		Command:   stringValue(rawParams, "command"),
-		Files:     stringSliceValue(rawParams, "files"),
-		Host:      stringValue(rawParams, "host"),
-		Protocol:  stringValue(rawParams, "protocol"),
-		Port:      intValue(rawParams, "port"),
-		MCPServer: stringValue(rawParams, "mcpServer"),
-		MCPTool:   stringValue(rawParams, "mcpTool"),
-		Message:   stringValue(rawParams, "message"),
+		Approval:  agentutil.MapString(rawParams, "approval"),
+		Command:   agentutil.MapString(rawParams, "command"),
+		Files:     agentutil.MapStringSlice(rawParams, "files"),
+		Host:      agentutil.MapString(rawParams, "host"),
+		Protocol:  agentutil.MapString(rawParams, "protocol"),
+		Port:      agentutil.MapInt(rawParams, "port"),
+		MCPServer: agentutil.MapString(rawParams, "mcpServer"),
+		MCPTool:   agentutil.MapString(rawParams, "mcpTool"),
+		Message:   agentutil.MapString(rawParams, "message"),
 		RawParams: rawParams,
 	}
 
@@ -606,54 +585,6 @@ func parseStopReason(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(payload.StopReason)
-}
-
-func stringValue(data map[string]any, key string) string {
-	if data == nil {
-		return ""
-	}
-	v, _ := data[key]
-	text, _ := v.(string)
-	return strings.TrimSpace(text)
-}
-
-func stringSliceValue(data map[string]any, key string) []string {
-	if data == nil {
-		return nil
-	}
-	v, ok := data[key]
-	if !ok {
-		return nil
-	}
-	if raw, ok := v.([]any); ok {
-		out := make([]string, 0, len(raw))
-		for _, item := range raw {
-			if s, ok := item.(string); ok && s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-func intValue(data map[string]any, key string) int {
-	if data == nil {
-		return 0
-	}
-	v, ok := data[key]
-	if !ok {
-		return 0
-	}
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case int:
-		return n
-	case int64:
-		return int(n)
-	}
-	return 0
 }
 
 func idToString(id json.RawMessage) string {

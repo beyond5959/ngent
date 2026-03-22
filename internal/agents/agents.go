@@ -92,6 +92,38 @@ func TurnPromptConfigFromContext(ctx context.Context) (TurnPromptConfig, bool) {
 	return cfg, ok
 }
 
+// ApplyTurnParamsFromContext merges any content blocks, resources, and
+// per-turn prompt config from ctx into params. It is a no-op for keys that
+// have no value in ctx so callers can call it unconditionally.
+func ApplyTurnParamsFromContext(ctx context.Context, params map[string]any) {
+	if ctx == nil || params == nil {
+		return
+	}
+	if content := TurnContentFromContext(ctx); len(content) > 0 {
+		params["content"] = content
+	}
+	if resources := TurnResourcesFromContext(ctx); len(resources) > 0 {
+		params["resources"] = resources
+	}
+	if cfg, ok := TurnPromptConfigFromContext(ctx); ok {
+		if cfg.Profile != "" {
+			params["profile"] = cfg.Profile
+		}
+		if cfg.ApprovalPolicy != "" {
+			params["approvalPolicy"] = cfg.ApprovalPolicy
+		}
+		if cfg.Sandbox != "" {
+			params["sandbox"] = cfg.Sandbox
+		}
+		if cfg.Personality != "" {
+			params["personality"] = cfg.Personality
+		}
+		if cfg.SystemInstructions != "" {
+			params["systemInstructions"] = cfg.SystemInstructions
+		}
+	}
+}
+
 // StopReason represents why a streamed turn stopped.
 type StopReason string
 

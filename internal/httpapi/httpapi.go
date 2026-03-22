@@ -998,7 +998,7 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 				"reason", err.Error(),
 			)
 		}
-		return emit("available_commands", map[string]any{
+		return emit(agents.ACPUpdateTypeAvailableCommands, map[string]any{
 			"turnId":   turnID,
 			"commands": commands,
 		})

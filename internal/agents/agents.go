@@ -34,6 +34,8 @@ type PromptResource struct {
 // TurnPromptConfig carries per-turn runtime overrides for the agent.
 type TurnPromptConfig struct {
 	Profile            string `json:"profile,omitempty"`
+	Model              string `json:"model,omitempty"`
+	ThoughtLevel       string `json:"thoughtLevel,omitempty"`
 	ApprovalPolicy     string `json:"approvalPolicy,omitempty"`
 	Sandbox            string `json:"sandbox,omitempty"`
 	Personality        string `json:"personality,omitempty"`

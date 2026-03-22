@@ -487,6 +487,12 @@ func (c *Client) streamOnce(
 			if cfg.Profile != "" {
 				params["profile"] = cfg.Profile
 			}
+			if cfg.Model != "" {
+				params["model"] = cfg.Model
+			}
+			if cfg.ThoughtLevel != "" {
+				params["thoughtLevel"] = cfg.ThoughtLevel
+			}
 			if cfg.ApprovalPolicy != "" {
 				params["approvalPolicy"] = cfg.ApprovalPolicy
 			}

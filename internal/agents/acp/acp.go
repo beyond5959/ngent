@@ -211,6 +211,12 @@ func (c *Client) Stream(ctx context.Context, input string, onDelta func(delta st
 		if cfg.Profile != "" {
 			promptParams["profile"] = cfg.Profile
 		}
+		if cfg.Model != "" {
+			promptParams["model"] = cfg.Model
+		}
+		if cfg.ThoughtLevel != "" {
+			promptParams["thoughtLevel"] = cfg.ThoughtLevel
+		}
 		if cfg.ApprovalPolicy != "" {
 			promptParams["approvalPolicy"] = cfg.ApprovalPolicy
 		}

@@ -2,7 +2,7 @@
 
 ## 1. Goal
 
-Build a local-first Code Agent Hub Server that:
+Build a local-first Ngent Server that:
 
 - serves HTTP/JSON APIs.
 - streams turn events via SSE (`text/event-stream`).

@@ -491,7 +491,7 @@
 
 - Status: Accepted
 - Date: 2026-02-28
-- Context: users need a visual client to interact with the Agent Hub without writing curl commands or building a separate frontend project.
+- Context: users need a visual client to interact with the Ngent without writing curl commands or building a separate frontend project.
 - Decision:
   - add a Vite + TypeScript (no framework) frontend under `web/src/`.
   - build output lands in `web/dist/`, embedded via `//go:embed web/dist` in `internal/webui/webui.go`.

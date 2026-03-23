@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Code Agent Hub Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
+Ngent Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
 The system targets ACP-compatible agent providers, lazily starts per-thread agents, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
 Current built-in providers are `codex`, `claude`, `cursor`, `opencode`, `gemini`, `kimi`, `qwen`, and `blackbox`.
 This file is the source of milestone progress, validation commands, and next actions.

@@ -3525,17 +3525,17 @@ func sortedAgentIDs(allowed map[string]struct{}) []string {
 func newThreadID() string {
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("th_%d", time.Now().UTC().UnixNano())
+		return fmt.Sprintf("th_%d", time.Now().UTC().UnixMicro())
 	}
-	return fmt.Sprintf("th_%d_%s", time.Now().UTC().UnixNano(), hex.EncodeToString(buf))
+	return fmt.Sprintf("th_%d_%s", time.Now().UTC().UnixMicro(), hex.EncodeToString(buf))
 }
 
 func newTurnID() string {
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("tu_%d", time.Now().UTC().UnixNano())
+		return fmt.Sprintf("tu_%d", time.Now().UTC().UnixMicro())
 	}
-	return fmt.Sprintf("tu_%d_%s", time.Now().UTC().UnixNano(), hex.EncodeToString(buf))
+	return fmt.Sprintf("tu_%d_%s", time.Now().UTC().UnixMicro(), hex.EncodeToString(buf))
 }
 
 func parseBoolQuery(r *http.Request, key string) bool {

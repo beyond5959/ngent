@@ -988,6 +988,16 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
 
+- 2026-03-23: added Web UI attachment upload support that flows through ACP `resource_link` prompt content.
+  - introduced a shared structured prompt model in the agent layer so HTTP turns can carry text plus ACP `resource_link` items instead of being limited to one plain string.
+  - `POST /v1/threads/{threadId}/turns` now accepts `multipart/form-data`; uploaded files are persisted into the local temp directory, converted into `file://` resource links, and preserved in history via a new `user_prompt` turn event.
+  - ACP CLI and embedded providers now send structured `session/prompt` content arrays, while non-ACP/fallback streamers still receive a readable plain-text representation.
+  - updated the Web UI composer to support attachment picking/removal, attachment-only sends, text+attachment sends, left-footer ordering `Attachment -> Model -> Reasoning`, and user-message attachment cards reconstructed from history.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./internal/httpapi ./internal/agents/...`
+    - pass: `go test ./...`
+
 - 2026-03-22: fixed the composer model/reasoning dropdowns so they remain clickable after session-history refresh updates them in place.
   - root cause: `bindThreadConfigSwitches()` can run more than once on the same composer DOM after a session switch; repeated `addEventListener('click', ...)` bindings caused one listener to open the menu and the next listener to close it immediately in the same click.
   - made config-switch binding idempotent per `.thread-model-switch` node, while still allowing later refresh passes to update labels, menu contents, and hidden/disabled state.

@@ -145,11 +145,8 @@ func sessionNewParams(dir string) func(string) map[string]any {
 	}
 }
 
-func promptParams(sessionID, input, _ string) map[string]any {
-	return map[string]any{
-		"sessionId": strings.TrimSpace(sessionID),
-		"prompt":    []map[string]any{{"type": "text", "text": input}},
-	}
+func promptParams(sessionID string, prompt agents.Prompt, _ string) map[string]any {
+	return acpcli.ACPPromptParams(sessionID, prompt)
 }
 
 func prepareConfigSession(

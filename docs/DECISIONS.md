@@ -1477,3 +1477,25 @@ Use this template for new decisions.
 - Alternatives considered:
   - keep the UI binary and continue mapping approvals to the first allow/reject option (rejected: loses provider semantics and hides real choices from the user).
   - expose provider options in SSE but keep the HTTP endpoint outcome-only (rejected: UI would still be unable to return the exact selected option).
+
+## ADR-057: Persist Web UI uploads as local temp files and forward them as ACP resource links
+
+- Status: Accepted
+- Date: 2026-03-23
+- Context:
+  - ACP `session/prompt` supports structured prompt content, including `resource_link`, so users can send text together with local files/images.
+  - ngent's turn pipeline previously accepted only one plain `input` string from HTTP through to the agent layer, which meant Web UI uploads had no transport path.
+  - base64-inlining uploaded files into prompt text would bloat requests, lose MIME/name metadata, and diverge from ACP's native content model.
+- Decision:
+  - introduce a shared structured prompt model in the agent layer with `text` and `resource_link` items plus a plain-text fallback renderer for non-ACP paths.
+  - extend `POST /v1/threads/{threadId}/turns` to accept `multipart/form-data`; persist uploaded files into the local temp directory and convert them into `file://` ACP resource links with `name`, `mimeType`, and `size`.
+  - keep `requestText` as a readable fallback summary that mentions attached resources, and persist the original structured user prompt separately as a `user_prompt` turn event so history/UI can reconstruct attachments without polluting the visible user text.
+  - teach ACP CLI and embedded providers to send structured `session/prompt.prompt[]` arrays instead of forcing plain strings.
+- Consequences:
+  - Web UI users can now send attachment-only turns and text+attachment turns without leaving ACP semantics.
+  - hub-created history preserves enough information to re-render user attachment cards after reload.
+  - temp files remain local-only and provider-facing through `file://` URIs; ngent does not need to expose a new download endpoint.
+- Alternatives considered:
+  - upload files to a new ngent HTTP asset endpoint and send remote URLs (rejected: unnecessary extra surface and weaker local-first story).
+  - embed file contents directly into prompt text (rejected: loses ACP structure, MIME metadata, and scales poorly for binary files).
+  - add a separate pre-upload API that returns opaque ids (rejected: more round trips and more state than needed for the current Web UI flow).

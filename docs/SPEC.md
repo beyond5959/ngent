@@ -725,3 +725,32 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - after a turn completes (or fails/disconnects after session init), the UI reloads stored config options and reveals the controls if metadata is now known.
   - switching to a different session clears the thread-local config cache so stale controls do not linger before the destination session cache or next user-triggered `session/load` repopulates the controls.
   - after session-history replay finishes for the selected session, the UI refreshes stored config options again so controls can appear immediately if that replay taught sqlite a new session snapshot.
+
+### 18.5 Web UI Uploads and ACP `resource_link`
+
+- The turn pipeline now accepts structured user prompt content:
+  - text blocks
+  - ACP `resource_link` blocks with local `file://` URIs
+- HTTP request handling:
+  - `POST /v1/threads/{threadId}/turns` continues to accept JSON `{input,stream}` for text-only callers.
+  - the same endpoint also accepts `multipart/form-data` with:
+    - `input`: optional text
+    - `stream=true`
+    - one or more `attachments` file parts
+  - each uploaded file is persisted into the local temp directory and converted into one normalized prompt item:
+    - `type=resource_link`
+    - `uri=file:///...`
+    - `name=<original base filename>`
+    - `mimeType=<parsed/sniffed MIME>`
+    - `size=<bytes copied>`
+- Prompt assembly:
+  - the agent layer now uses a shared structured prompt model instead of forcing every turn through one string.
+  - when ngent injects summary/recent-turn context, it rewrites only the text portion of the prompt and preserves resource links as separate items.
+  - non-ACP/fallback streamers still receive a plain-text representation that includes an `[Attached Resources]` section.
+- Persistence:
+  - `turns.request_text` stores the plain-text fallback representation so context-compaction and non-ACP flows still retain attachment references.
+  - turns with uploaded resources also persist a `user_prompt` event containing the original structured prompt array for history/UI reconstruction.
+- Web UI:
+  - the composer footer order is `Attachment -> Model -> Reasoning` on the left, mirrored by `Send` on the right.
+  - attachments are held in thread-local in-memory draft state until send, with image previews when possible.
+  - the transcript renders sent user attachments as cards and rebuilds them from `user_prompt` history events after reload.

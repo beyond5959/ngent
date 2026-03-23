@@ -524,3 +524,23 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/httpapi -run 'TestTurnsSSEIncludesStructuredMessageContentAndPersistsHistory' -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
+
+## Requirement 28: Web UI Attachment Uploads Flow Through ACP Resource Links
+
+- Operation:
+  - open the Web UI composer on a thread for an ACP-backed agent.
+  - attach one file or image from the new attachment button in the lower-left composer footer; optionally also enter text.
+  - send the turn and observe the live SSE stream plus persisted turn history.
+  - reload the page or refetch `GET /v1/threads/{threadId}/history?includeEvents=true`.
+- Expected:
+  - the composer footer order is `Attachment`, `Model`, `Reasoning` on the left and `Send` on the right.
+  - the Web UI allows attachment-only sends as well as text+attachment sends, shows removable attachment chips/previews before send, and accepts clipboard file/image paste (`Cmd+V` on macOS) into the current composer.
+  - `POST /v1/threads/{threadId}/turns` accepts `multipart/form-data` and persists uploaded files into the local temp directory before dispatching the turn.
+  - ACP-backed agents receive `session/prompt.prompt[]` with ordinary text items plus `resource_link` items containing `uri`, `name`, `mimeType`, and `size`.
+  - ngent persists a readable `requestText` summary plus a structured `user_prompt` history event so attachment cards can be reconstructed after reload.
+  - the Web UI renders uploaded user attachments as cards in the transcript both immediately after send and after history reload.
+- Verification commands (executed 2026-03-23):
+  - `go test ./internal/httpapi -run 'Test(MultipartTurnUploadsAttachmentsAsResourceLinks|BuildInjectedPromptKeepsResourceLinksWhenInjectingContext)' -count=1`
+  - `go test ./internal/agents/opencode -run 'TestStreamPromptSendsResourceLinks' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`

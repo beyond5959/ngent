@@ -101,6 +101,50 @@ const iconTool = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ar
   <path d="M18 6a2 2 0 0 0-2-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
 </svg>`
 
+// Tool call icons (matching Kimi web style)
+// Attachment 1: Find files - folder with search icon
+const iconFindFiles = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m18 16-2-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="14.5" cy="11.5" r="2.5" stroke="currentColor" stroke-width="1.8"/>
+</svg>`
+
+// Attachment 2: Web search - globe icon
+const iconWebSearch = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+  <ellipse cx="12" cy="12" rx="4" ry="9" stroke="currentColor" stroke-width="1.8"/>
+  <path d="M3 12h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M5 7h14M5 17h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+</svg>`
+
+// Attachment 3: Read file - document icon
+const iconReadFile = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+</svg>`
+
+// Read media file - image/media icon
+const iconReadMedia = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor"/>
+  <path d="m21 15-4-4-4 4-4-5-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
+// Attachment 4: Write file - edit/document icon
+const iconWriteFile = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m18.5 2.5 3 3L12 15l-4 1 1-4z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
+// Attachment 5: Shell - terminal icon
+const iconShell = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m6 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="12" y1="16" x2="18" y2="16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+</svg>`
+
 const iconChevronRight = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
   <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
@@ -2931,6 +2975,52 @@ function toolCallContentID(segmentID: string): string {
   return `tool-call-content-${segmentID}`
 }
 
+function getToolCallIcon(toolCall: ToolCall): string {
+  const kind = (toolCall.kind ?? '').toLowerCase().trim()
+  const title = (toolCall.title ?? '').toLowerCase().trim()
+
+  // Find files related
+  if (kind.includes('find') || kind.includes('search') || kind.includes('glob') ||
+      title.includes('find files') || title.includes('查找文件')) {
+    return iconFindFiles
+  }
+
+  // Web search related
+  if (kind.includes('web') || kind.includes('browser') || kind.includes('internet') ||
+      title.includes('web search') || title.includes('网络搜索') || title.includes('搜索')) {
+    return iconWebSearch
+  }
+
+  // Read media file related
+  if (kind.includes('media') || kind.includes('image') || kind.includes('audio') || kind.includes('video') ||
+      title.includes('media') || title.includes('image') || title.includes('音频') || title.includes('视频') || title.includes('图片')) {
+    return iconReadMedia
+  }
+
+  // Read file related
+  if ((kind.includes('read') && !kind.includes('write')) || kind.includes('view') ||
+      title.includes('read') || title.includes('读取')) {
+    return iconReadFile
+  }
+
+  // Write/edit file related
+  if (kind.includes('write') || kind.includes('edit') || kind.includes('apply') ||
+      kind.includes('replace') || kind.includes('insert') ||
+      title.includes('write') || title.includes('edit') || title.includes('编辑') || title.includes('写入')) {
+    return iconWriteFile
+  }
+
+  // Execute shell related
+  if (kind.includes('shell') || kind.includes('command') || kind.includes('exec') || kind.includes('bash') ||
+      kind.includes('terminal') || kind.includes('cmd') ||
+      title.includes('shell') || title.includes('command') || title.includes('执行')) {
+    return iconShell
+  }
+
+  // Default icon
+  return iconTool
+}
+
 function renderToolCallPanelHTML(
   segmentID: string,
   toolCall: ToolCall,
@@ -2942,6 +3032,7 @@ function renderToolCallPanelHTML(
   const title = toolCallDisplayTitle(toolCall)
   const kind = formatToolCallLabel(toolCall.kind)
   const status = formatToolCallLabel(toolCall.status)
+  const icon = getToolCallIcon(toolCall)
   return `
     <div
       class="message-tool-call${streaming ? ' message-tool-call--streaming' : ''}"
@@ -2957,7 +3048,7 @@ function renderToolCallPanelHTML(
         aria-controls="${escHtml(contentID)}"
       >
         <span class="message-tool-call__toggle-main">
-          <span class="message-tool-call__toggle-icon" aria-hidden="true">${iconTool}</span>
+          <span class="message-tool-call__toggle-icon" aria-hidden="true">${icon}</span>
           <span class="message-tool-call__toggle-title" title="${escHtml(title)}">${escHtml(title)}</span>
         </span>
         <span class="message-tool-call__toggle-meta">

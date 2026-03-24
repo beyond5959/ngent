@@ -376,6 +376,21 @@ func TestCreateThreadValidationCWDAllowedRoots(t *testing.T) {
 	assertErrorCode(t, rr.Body.Bytes(), "FORBIDDEN")
 }
 
+func TestCreateThreadValidationCWDExists(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+
+	// Test with a non-existent directory path
+	nonExistentPath := filepath.Join(root, "non-existent-directory")
+	body := map[string]any{"agent": "codex", "cwd": nonExistentPath}
+	rr := performJSONRequest(t, h, http.MethodPost, "/v1/threads", body, map[string]string{"X-Client-ID": "client-a"})
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	assertErrorCode(t, rr.Body.Bytes(), "INVALID_ARGUMENT")
+}
+
 func TestCreateThreadValidationAgentAllowlist(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
@@ -441,9 +456,14 @@ func TestThreadsCreateListGetHappyPath(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
 
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("failed to create workspace: %v", err)
+	}
+
 	body := map[string]any{
 		"agent":        "codex",
-		"cwd":          filepath.Join(root, "workspace"),
+		"cwd":          workspace,
 		"title":        "demo",
 		"agentOptions": map[string]any{"mode": "safe"},
 	}

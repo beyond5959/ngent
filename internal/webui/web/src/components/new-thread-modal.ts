@@ -48,6 +48,7 @@ interface ModalState {
   advancedOpen: boolean
   submitting: boolean
   error: string
+  cwdError: string
   pathSearchQuery: string
   pathSearchResults: string[]
   pathSearchLoading: boolean
@@ -108,7 +109,7 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
             <div class="path-search-container">
               <input
                 id="cwd-input"
-                class="settings-input ${cwdInvalid ? 'settings-input--error' : ''}"
+                class="settings-input ${cwdInvalid || s.cwdError ? 'settings-input--error' : ''}"
                 type="text"
                 placeholder="Type to search directories in home folder..."
                 value="${escHtml(s.cwd)}"
@@ -136,9 +137,11 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
               ` : ''}
               ${s.pathSearchLoading ? '<div class="path-search-loading">Searching...</div>' : ''}
             </div>
-            ${cwdInvalid
-              ? `<p class="form-hint form-hint--error" id="cwd-hint">Path must be absolute (start with /)</p>`
-              : `<p class="form-hint" id="cwd-hint">Absolute path to the project directory.</p>`}
+            ${s.cwdError
+              ? `<p class="form-hint form-hint--error" id="cwd-hint">${escHtml(s.cwdError)}</p>`
+              : cwdInvalid
+                ? `<p class="form-hint form-hint--error" id="cwd-hint">Path must be absolute (start with /)</p>`
+                : `<p class="form-hint" id="cwd-hint">Absolute path to the project directory.</p>`}
           </div>
 
           <div class="form-group">
@@ -205,6 +208,7 @@ let modalState: ModalState = {
   advancedOpen: false,
   submitting: false,
   error: '',
+  cwdError: '',
   pathSearchQuery: '',
   pathSearchResults: [],
   pathSearchLoading: false,
@@ -243,6 +247,7 @@ function mount(cb: (threadId: string) => void): void {
     advancedOpen: false,
     submitting: false,
     error: '',
+    cwdError: '',
     pathSearchQuery: '',
     pathSearchResults: [],
     pathSearchLoading: false,
@@ -303,7 +308,7 @@ function bindEvents(): void {
 
   container.querySelector<HTMLInputElement>('#cwd-input')?.addEventListener('input', e => {
     const value = (e.target as HTMLInputElement).value.trim()
-    modalState = { ...modalState, cwd: value, error: '', pathSearchQuery: value, pathSearchSelectedIndex: -1, showRecentDirectories: false }
+    modalState = { ...modalState, cwd: value, error: '', cwdError: '', pathSearchQuery: value, pathSearchSelectedIndex: -1, showRecentDirectories: false }
     refreshCwdHint()
     refreshSubmitButton()
     // Clear results immediately if input is less than 3 chars
@@ -392,6 +397,16 @@ function refreshSubmitButton(): void {
   if (!btn) return
   const ok = !!modalState.selectedAgent && isAbsolutePath(modalState.cwd) && !modalState.submitting
   btn.disabled = !ok
+}
+
+function refreshSubmitButtonState(): void {
+  const btn = container?.querySelector<HTMLButtonElement>('#new-thread-submit')
+  if (!btn) return
+  const ok = !!modalState.selectedAgent && isAbsolutePath(modalState.cwd) && !modalState.submitting
+  btn.disabled = !ok
+  btn.innerHTML = modalState.submitting
+    ? '<span class="btn-spinner"></span> Creating…'
+    : 'Create Agent'
 }
 
 function refreshAgentSelection(): void {
@@ -536,6 +551,7 @@ function selectPathSearchResult(path: string): void {
   modalState = {
     ...modalState,
     cwd: path,
+    cwdError: '',
     pathSearchResults: [],
     pathSearchSelectedIndex: -1,
     pathSearchQuery: path,
@@ -569,8 +585,9 @@ async function submit(): Promise<void> {
     }
   }
 
-  modalState = { ...modalState, submitting: true, error: '' }
-  rerender()
+  // Only update submitting state, don't clear errors yet (to avoid flicker if request fails quickly)
+  modalState = { ...modalState, submitting: true }
+  refreshSubmitButtonState()
 
   try {
     const threadId = await api.createThread({
@@ -591,9 +608,73 @@ async function submit(): Promise<void> {
     unmount()
     onCreated?.(threadId)
   } catch (err) {
-    const msg = err instanceof ApiError ? err.message : String(err)
-    modalState = { ...modalState, submitting: false, error: msg }
-    rerender()
+    const apiErr = err instanceof ApiError ? err : null
+    const message = apiErr?.message ?? String(err)
+    const code = apiErr?.code ?? ''
+    const details = apiErr?.details
+
+    // Check if it's a cwd-related error (path not existing or other cwd validation errors)
+    const isCwdError = code === 'INVALID_ARGUMENT' && (
+      message.toLowerCase().includes('cwd') ||
+      message.toLowerCase().includes('path') ||
+      message.toLowerCase().includes('exist') ||
+      (details && typeof details === 'object' && details.field === 'cwd')
+    )
+
+    if (isCwdError) {
+      modalState = { ...modalState, submitting: false, error: '', cwdError: message }
+      // Update error UI without full rerender to avoid flicker
+      refreshCwdErrorUI()
+      refreshSubmitButtonState()
+      // Focus the cwd input to help user correct the error
+      const cwdInput = container?.querySelector<HTMLInputElement>('#cwd-input')
+      cwdInput?.focus()
+    } else {
+      modalState = { ...modalState, submitting: false, error: message, cwdError: '' }
+      // Update error UI without full rerender
+      refreshErrorBanner()
+      refreshSubmitButtonState()
+    }
+  }
+}
+
+function refreshCwdErrorUI(): void {
+  if (!container) return
+  const input = container.querySelector<HTMLInputElement>('#cwd-input')
+  const hint = container.querySelector<HTMLElement>('#cwd-hint')
+  if (!input || !hint) return
+
+  const hasError = !!modalState.cwdError
+  input.classList.toggle('settings-input--error', hasError)
+
+  if (modalState.cwdError) {
+    hint.className = 'form-hint form-hint--error'
+    hint.textContent = modalState.cwdError
+  } else {
+    const invalid = input.value.length > 0 && !isAbsolutePath(input.value.trim())
+    hint.className = `form-hint${invalid ? ' form-hint--error' : ''}`
+    hint.textContent = invalid
+      ? 'Path must be absolute (start with /)'
+      : 'Absolute path to the project directory.'
+  }
+}
+
+function refreshErrorBanner(): void {
+  if (!container) return
+  let banner = container.querySelector<HTMLElement>('#modal-error')
+  if (modalState.error) {
+    if (!banner) {
+      banner = document.createElement('div')
+      banner.id = 'modal-error'
+      banner.className = 'form-error-banner'
+      const modalBody = container.querySelector('.modal-body')
+      if (modalBody) {
+        modalBody.insertBefore(banner, modalBody.firstChild)
+      }
+    }
+    banner.textContent = modalState.error
+  } else if (banner) {
+    banner.remove()
   }
 }
 

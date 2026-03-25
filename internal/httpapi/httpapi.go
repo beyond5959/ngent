@@ -133,6 +133,7 @@ const (
 	eventTypeUserPrompt              = "user_prompt"
 	eventTypeMessageContent          = "message_content"
 	eventTypeReasoningDelta          = "reasoning_delta"
+	eventTypeSessionInfoUpdate       = "session_info_update"
 	eventTypeToolCall                = "tool_call"
 	eventTypeToolCallUpdate          = "tool_call_update"
 )
@@ -503,6 +504,21 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request, clie
 			"field":         "cwd",
 			"cwd":           cwd,
 			"allowed_roots": s.allowedRoots,
+		})
+		return
+	}
+
+	if _, err := os.Stat(cwd); err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusBadRequest, codeInvalidArgument, "cwd does not exist", map[string]any{
+				"field": "cwd",
+				"cwd":   cwd,
+			})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to check cwd", map[string]any{
+			"field":  "cwd",
+			"reason": err.Error(),
 		})
 		return
 	}
@@ -898,6 +914,14 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 		return emit(eventTypeReasoningDelta, map[string]any{
 			"turnId": turnID,
 			"delta":  delta,
+		})
+	})
+	turnCtx = agents.WithSessionInfoHandler(turnCtx, func(sessionInfoCtx context.Context, update agents.SessionInfoUpdate) error {
+		_ = sessionInfoCtx
+		return emit(eventTypeSessionInfoUpdate, map[string]any{
+			"turnId":    turnID,
+			"sessionId": update.SessionID,
+			"title":     update.Title,
 		})
 	})
 	turnCtx = agents.WithMessageContentHandler(turnCtx, func(messageCtx context.Context, event agents.ACPMessageContent) error {
@@ -4055,7 +4079,10 @@ func (s *Server) handlePathSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // searchDirectories searches for directories matching the query.
-// Priority: first level, then second level, then third level.
+// Searches all levels and returns up to maxPathSearchResults matches.
+// Skips hidden directories (those starting with a dot).
+const maxPathSearchResults = 5
+
 func (s *Server) searchDirectories(homeDir, query string) []string {
 	queryLower := strings.ToLower(query)
 	var results []string
@@ -4072,22 +4099,29 @@ func (s *Server) searchDirectories(homeDir, query string) []string {
 			continue
 		}
 		name := entry.Name()
+		// Skip hidden directories
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
 		if strings.Contains(strings.ToLower(name), queryLower) {
 			results = append(results, filepath.Join(homeDir, name))
+			if len(results) >= maxPathSearchResults {
+				return results
+			}
 		}
 	}
 
-	// If found matches at first level, return immediately
-	if len(results) > 0 {
-		return results
-	}
-
-	// Second pass: search second-level directories
+	// Second pass: search second-level directories (continue even if first level found matches)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		firstLevelPath := filepath.Join(homeDir, entry.Name())
+		name := entry.Name()
+		// Skip hidden directories
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		firstLevelPath := filepath.Join(homeDir, name)
 
 		subEntries, err := os.ReadDir(firstLevelPath)
 		if err != nil {
@@ -4099,23 +4133,30 @@ func (s *Server) searchDirectories(homeDir, query string) []string {
 				continue
 			}
 			subName := subEntry.Name()
+			// Skip hidden directories
+			if strings.HasPrefix(subName, ".") {
+				continue
+			}
 			if strings.Contains(strings.ToLower(subName), queryLower) {
 				results = append(results, filepath.Join(firstLevelPath, subName))
+				if len(results) >= maxPathSearchResults {
+					return results
+				}
 			}
 		}
 	}
 
-	// If found matches at second level, return immediately
-	if len(results) > 0 {
-		return results
-	}
-
-	// Third pass: search third-level directories
+	// Third pass: search third-level directories (continue even if second level found matches)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		firstLevelPath := filepath.Join(homeDir, entry.Name())
+		name := entry.Name()
+		// Skip hidden directories
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		firstLevelPath := filepath.Join(homeDir, name)
 
 		subEntries, err := os.ReadDir(firstLevelPath)
 		if err != nil {
@@ -4126,7 +4167,12 @@ func (s *Server) searchDirectories(homeDir, query string) []string {
 			if !subEntry.IsDir() {
 				continue
 			}
-			secondLevelPath := filepath.Join(firstLevelPath, subEntry.Name())
+			subName := subEntry.Name()
+			// Skip hidden directories
+			if strings.HasPrefix(subName, ".") {
+				continue
+			}
+			secondLevelPath := filepath.Join(firstLevelPath, subName)
 
 			thirdEntries, err := os.ReadDir(secondLevelPath)
 			if err != nil {
@@ -4138,8 +4184,15 @@ func (s *Server) searchDirectories(homeDir, query string) []string {
 					continue
 				}
 				thirdName := thirdEntry.Name()
+				// Skip hidden directories
+				if strings.HasPrefix(thirdName, ".") {
+					continue
+				}
 				if strings.Contains(strings.ToLower(thirdName), queryLower) {
 					results = append(results, filepath.Join(secondLevelPath, thirdName))
+					if len(results) >= maxPathSearchResults {
+						return results
+					}
 				}
 			}
 		}

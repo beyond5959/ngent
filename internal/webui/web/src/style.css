@@ -3225,26 +3225,38 @@ button:disabled, .btn:disabled {
   padding: 10px 14px;
 }
 
+.message-prompt--md,
 .message-answer--md {
   white-space: normal;
 }
 
+.message-prompt--md {
+  font-weight: 400;
+}
+
+.message-prompt--md > :first-child,
 .message-answer--md > :first-child {
   margin-top: 0;
 }
 
+.message-prompt--md > :last-child,
 .message-answer--md > :last-child {
   margin-bottom: 0;
 }
 
+.message-prompt--md p,
 .message-answer--md p,
 .message-bubble--md p,
 .message-reasoning__content--md p { margin-bottom: 8px; }
 
+.message-prompt--md p:last-child,
 .message-answer--md p:last-child,
 .message-bubble--md p:last-child,
 .message-reasoning__content--md p:last-child { margin-bottom: 0; }
 
+.message-prompt--md h1,
+.message-prompt--md h2,
+.message-prompt--md h3,
 .message-answer--md h1,
 .message-answer--md h2,
 .message-answer--md h3,
@@ -3260,17 +3272,22 @@ button:disabled, .btn:disabled {
 }
 
 .message-bubble--md h1,
+.message-prompt--md h1,
 .message-answer--md h1,
 .message-reasoning__content--md h1 { font-size: 22px; }
 
 .message-bubble--md h2,
+.message-prompt--md h2,
 .message-answer--md h2,
 .message-reasoning__content--md h2 { font-size: 18px; }
 
 .message-bubble--md h3,
+.message-prompt--md h3,
 .message-answer--md h3,
 .message-reasoning__content--md h3 { font-size: 16px; }
 
+.message-prompt--md ul,
+.message-prompt--md ol,
 .message-answer--md ul,
 .message-answer--md ol,
 .message-bubble--md ul,
@@ -3281,10 +3298,12 @@ button:disabled, .btn:disabled {
   margin-bottom: 8px;
 }
 
+.message-prompt--md li,
 .message-answer--md li,
 .message-bubble--md li,
 .message-reasoning__content--md li { margin-bottom: 2px; }
 
+.message-prompt--md blockquote,
 .message-answer--md blockquote,
 .message-bubble--md blockquote,
 .message-reasoning__content--md blockquote {
@@ -3294,6 +3313,7 @@ button:disabled, .btn:disabled {
   color: var(--text-2);
 }
 
+.message-prompt--md .md-table-wrap,
 .message-answer--md .md-table-wrap,
 .message-bubble--md .md-table-wrap,
 .message-reasoning__content--md .md-table-wrap {
@@ -3308,6 +3328,7 @@ button:disabled, .btn:disabled {
   overflow: hidden;
 }
 
+.message-prompt--md table,
 .message-answer--md table,
 .message-bubble--md table,
 .message-reasoning__content--md table {
@@ -3318,6 +3339,8 @@ button:disabled, .btn:disabled {
   border-spacing: 0;
 }
 
+.message-prompt--md th,
+.message-prompt--md td,
 .message-answer--md th,
 .message-answer--md td,
 .message-bubble--md th,
@@ -3331,6 +3354,7 @@ button:disabled, .btn:disabled {
   vertical-align: top;
 }
 
+.message-prompt--md th,
 .message-answer--md th,
 .message-bubble--md th,
 .message-reasoning__content--md th {
@@ -3339,24 +3363,28 @@ button:disabled, .btn:disabled {
   background: var(--bg-3);
 }
 
+.message-prompt--md tbody tr:nth-child(even) td,
 .message-answer--md tbody tr:nth-child(even) td,
 .message-bubble--md tbody tr:nth-child(even) td,
 .message-reasoning__content--md tbody tr:nth-child(even) td {
   background: var(--bg-2);
 }
 
+.message-prompt--md tr > :last-child,
 .message-answer--md tr > :last-child,
 .message-bubble--md tr > :last-child,
 .message-reasoning__content--md tr > :last-child {
   border-right: 0;
 }
 
+.message-prompt--md tbody tr:last-child td,
 .message-answer--md tbody tr:last-child td,
 .message-bubble--md tbody tr:last-child td,
 .message-reasoning__content--md tbody tr:last-child td {
   border-bottom: 0;
 }
 
+.message-prompt--md code:not(.hljs),
 .message-answer--md code:not(.hljs),
 .message-bubble--md code:not(.hljs),
 .message-reasoning__content--md code:not(.hljs) {
@@ -3367,12 +3395,14 @@ button:disabled, .btn:disabled {
   border-radius: var(--r-sm);
 }
 
+[data-theme="dark"] .message-prompt--md code:not(.hljs),
 [data-theme="dark"] .message-answer--md code:not(.hljs),
 [data-theme="dark"] .message-bubble--md code:not(.hljs),
 [data-theme="dark"] .message-reasoning__content--md code:not(.hljs) {
   background: rgba(255, 255, 255, .1);
 }
 
+.message-prompt--md a,
 .message-answer--md a,
 .message-bubble--md a,
 .message-reasoning__content--md a {

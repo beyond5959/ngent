@@ -28,6 +28,7 @@ import type {
   PlanUpdatePayload,
   ReasoningDeltaPayload,
   SessionBoundPayload,
+  SessionInfoUpdatePayload,
   ToolCallPayload,
 } from './sse.ts'
 import { copyText, escHtml, formatBytes, formatRelativeTime, formatTimestamp, generateUUID } from './utils.ts'
@@ -101,6 +102,50 @@ const iconTool = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ar
   <path d="M18 6a2 2 0 0 0-2-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
 </svg>`
 
+// Tool call icons (matching Kimi web style)
+// Attachment 1: Find files - folder with search icon
+const iconFindFiles = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m18 16-2-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="14.5" cy="11.5" r="2.5" stroke="currentColor" stroke-width="1.8"/>
+</svg>`
+
+// Attachment 2: Web search - globe icon
+const iconWebSearch = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+  <ellipse cx="12" cy="12" rx="4" ry="9" stroke="currentColor" stroke-width="1.8"/>
+  <path d="M3 12h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M5 7h14M5 17h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+</svg>`
+
+// Attachment 3: Read file - document icon
+const iconReadFile = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="14 2 14 8 20 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="16" y1="13" x2="8" y2="13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="16" y1="17" x2="8" y2="17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+</svg>`
+
+// Read media file - image/media icon
+const iconReadMedia = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor"/>
+  <path d="m21 15-4-4-4 4-4-5-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
+// Attachment 4: Write file - edit/document icon
+const iconWriteFile = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m18.5 2.5 3 3L12 15l-4 1 1-4z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
+// Attachment 5: Shell - terminal icon
+const iconShell = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m6 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="12" y1="16" x2="18" y2="16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+</svg>`
+
 const iconChevronRight = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
   <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
@@ -148,6 +193,7 @@ interface ComposerAttachmentDraft {
 const sessionPanelStateByThread = new Map<string, SessionPanelState>()
 const sessionPanelRequestSeqByThread = new Map<string, number>()
 const sessionPanelScrollTopByThread = new Map<string, number>()
+const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 let sessionPanelRequestSeq = 0
 
@@ -1537,12 +1583,26 @@ function sessionPanelState(threadId: string): SessionPanelState {
 }
 
 function setSessionPanelState(threadId: string, next: SessionPanelState): void {
+  const overrides = sessionTitleOverridesByThread.get(threadId)
+  const sessions = dedupeSessionItems(next.sessions).map(item => {
+    const titleOverride = overrides?.get(item.sessionId)
+    if (titleOverride === undefined) return item
+    return {
+      ...item,
+      title: titleOverride || undefined,
+    }
+  })
   sessionPanelStateByThread.set(threadId, {
     ...next,
-    sessions: dedupeSessionItems(next.sessions),
+    sessions,
     nextCursor: next.nextCursor.trim(),
     error: next.error.trim(),
   })
+  // Update chat header title if this thread is currently active
+  const { activeThreadId } = store.get()
+  if (activeThreadId === threadId) {
+    updateChatHeaderTitle()
+  }
 }
 
 function dedupeSessionItems(items: SessionInfo[]): SessionInfo[] {
@@ -1574,6 +1634,44 @@ function updateThreadSessionID(threadId: string, sessionID: string): void {
     }
   })
   store.set({ threads: nextThreads })
+}
+
+function applySessionTitleUpdate(threadId: string, sessionID: string, title: string): void {
+  const normalizedThreadID = threadId.trim()
+  const normalizedSessionID = sessionID.trim()
+  if (!normalizedThreadID || !normalizedSessionID) return
+
+  let overrides = sessionTitleOverridesByThread.get(normalizedThreadID)
+  if (!overrides) {
+    overrides = new Map<string, string>()
+    sessionTitleOverridesByThread.set(normalizedThreadID, overrides)
+  }
+  overrides.set(normalizedSessionID, title.trim())
+
+  const state = sessionPanelState(normalizedThreadID)
+  let found = false
+  const nextSessions = state.sessions.map(item => {
+    if (item.sessionId !== normalizedSessionID) return item
+    found = true
+    return {
+      ...item,
+      title: title.trim() || undefined,
+    }
+  })
+  if (!found) {
+    nextSessions.unshift({
+      sessionId: normalizedSessionID,
+      title: title.trim() || undefined,
+    })
+  }
+  setSessionPanelState(normalizedThreadID, {
+    ...state,
+    sessions: nextSessions,
+  })
+
+  if (store.get().activeThreadId === normalizedThreadID) {
+    updateSessionPanel()
+  }
 }
 
 async function loadThreadSessions(threadId: string, append = false): Promise<void> {
@@ -2460,6 +2558,7 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   sessionPanelStateByThread.delete(threadId)
   sessionPanelRequestSeqByThread.delete(threadId)
   sessionPanelScrollTopByThread.delete(threadId)
+  sessionTitleOverridesByThread.delete(threadId)
   sessionSwitchingThreads.delete(threadId)
   freshSessionNonceByThread.delete(threadId)
   clearThreadComposerAttachments(threadId)
@@ -2931,6 +3030,52 @@ function toolCallContentID(segmentID: string): string {
   return `tool-call-content-${segmentID}`
 }
 
+function getToolCallIcon(toolCall: ToolCall): string {
+  const kind = (toolCall.kind ?? '').toLowerCase().trim()
+  const title = (toolCall.title ?? '').toLowerCase().trim()
+
+  // Find files related
+  if (kind.includes('find') || kind.includes('search') || kind.includes('glob') ||
+      title.includes('find files') || title.includes('查找文件')) {
+    return iconFindFiles
+  }
+
+  // Web search related
+  if (kind.includes('web') || kind.includes('browser') || kind.includes('internet') ||
+      title.includes('web search') || title.includes('网络搜索') || title.includes('搜索')) {
+    return iconWebSearch
+  }
+
+  // Read media file related
+  if (kind.includes('media') || kind.includes('image') || kind.includes('audio') || kind.includes('video') ||
+      title.includes('media') || title.includes('image') || title.includes('音频') || title.includes('视频') || title.includes('图片')) {
+    return iconReadMedia
+  }
+
+  // Read file related
+  if ((kind.includes('read') && !kind.includes('write')) || kind.includes('view') ||
+      title.includes('read') || title.includes('读取')) {
+    return iconReadFile
+  }
+
+  // Write/edit file related
+  if (kind.includes('write') || kind.includes('edit') || kind.includes('apply') ||
+      kind.includes('replace') || kind.includes('insert') ||
+      title.includes('write') || title.includes('edit') || title.includes('编辑') || title.includes('写入')) {
+    return iconWriteFile
+  }
+
+  // Execute shell related
+  if (kind.includes('shell') || kind.includes('command') || kind.includes('exec') || kind.includes('bash') ||
+      kind.includes('terminal') || kind.includes('cmd') ||
+      title.includes('shell') || title.includes('command') || title.includes('执行')) {
+    return iconShell
+  }
+
+  // Default icon
+  return iconTool
+}
+
 function renderToolCallPanelHTML(
   segmentID: string,
   toolCall: ToolCall,
@@ -2942,6 +3087,7 @@ function renderToolCallPanelHTML(
   const title = toolCallDisplayTitle(toolCall)
   const kind = formatToolCallLabel(toolCall.kind)
   const status = formatToolCallLabel(toolCall.status)
+  const icon = getToolCallIcon(toolCall)
   return `
     <div
       class="message-tool-call${streaming ? ' message-tool-call--streaming' : ''}"
@@ -2957,7 +3103,7 @@ function renderToolCallPanelHTML(
         aria-controls="${escHtml(contentID)}"
       >
         <span class="message-tool-call__toggle-main">
-          <span class="message-tool-call__toggle-icon" aria-hidden="true">${iconTool}</span>
+          <span class="message-tool-call__toggle-icon" aria-hidden="true">${icon}</span>
           <span class="message-tool-call__toggle-title" title="${escHtml(title)}">${escHtml(title)}</span>
         </span>
         <span class="message-tool-call__toggle-meta">
@@ -3376,7 +3522,7 @@ function renderMessage(msg: Message): string {
     return `
       <div class="message message--user" data-msg-id="${escHtml(msg.id)}">
         <div class="message-group">
-          ${msg.content ? `<div class="message-prompt">${escHtml(msg.content)}</div>` : ''}
+          ${msg.content ? `<div class="message-prompt message-prompt--md">${renderMarkdown(msg.content)}</div>` : ''}
           ${attachmentsHTML}
           <div class="message-meta">
             <span class="message-time">${formatTimestamp(msg.timestamp)}</span>
@@ -3593,12 +3739,14 @@ function updateInputState(): void {
   const hasThreadStreaming = hasThreadStream(activeThreadId)
   const attachments = activeThreadId ? threadComposerAttachments(activeThreadId) : []
   const hasComposerContent = !!inputEl?.value.trim() || attachments.length > 0
+  const disableComposerActions = isStreaming || isSwitchingConfig || isSwitchingSession
+  const disableComposerInput = isSwitchingConfig || isSwitchingSession
 
-  if (sendBtn)  sendBtn.disabled  = isStreaming || isSwitchingConfig || isSwitchingSession || !hasComposerContent
-  if (inputEl)  inputEl.disabled  = isStreaming || isSwitchingConfig || isSwitchingSession
-  if (attachmentBtn) attachmentBtn.disabled = isStreaming || isSwitchingConfig || isSwitchingSession
+  if (sendBtn)  sendBtn.disabled  = disableComposerActions || !hasComposerContent
+  if (inputEl)  inputEl.disabled  = disableComposerInput
+  if (attachmentBtn) attachmentBtn.disabled = disableComposerActions
   document.querySelectorAll<HTMLButtonElement>('.composer-attachment__remove').forEach(button => {
-    button.disabled = isStreaming || isSwitchingConfig || isSwitchingSession
+    button.disabled = disableComposerActions
   })
   document.querySelectorAll<HTMLButtonElement>('.thread-model-trigger').forEach(triggerEl => {
     const pickerState = triggerEl.dataset.state ?? 'empty'
@@ -3830,8 +3978,35 @@ function renderSlashCommandMenuItem(command: SlashCommand, active: boolean): str
     </button>`
 }
 
+const MAX_SESSION_TITLE_LEN = 32
+
+function truncateSessionTitle(title: string): string {
+  if (title.length <= MAX_SESSION_TITLE_LEN) return title
+  return title.slice(0, MAX_SESSION_TITLE_LEN) + '…'
+}
+
+function getCurrentSessionTitle(t: Thread): string {
+  const sessionID = threadSessionID(t)
+  if (!sessionID) {
+    return 'New Session'
+  }
+  const state = sessionPanelState(t.threadId)
+  const session = state.sessions.find(s => s.sessionId === sessionID)
+  const title = session?.title?.trim()
+  if (title) {
+    return truncateSessionTitle(title)
+  }
+  // Check for runtime title override
+  const overrides = sessionTitleOverridesByThread.get(t.threadId)
+  const overrideTitle = overrides?.get(sessionID)?.trim()
+  if (overrideTitle) {
+    return truncateSessionTitle(overrideTitle)
+  }
+  return 'New Session'
+}
+
 function renderChatThread(t: Thread): string {
-  const titleLabel   = threadTitle(t)
+  const sessionTitleLabel = getCurrentSessionTitle(t)
   const createdLabel = t.createdAt ? `Created ${formatTimestamp(t.createdAt)}` : ''
   const attachmentCount = threadComposerAttachments(t.threadId).length
   const selectedModelID = fallbackThreadModelID(t)
@@ -3863,8 +4038,7 @@ function renderChatThread(t: Thread): string {
         <button class="btn btn-icon mobile-menu-btn" aria-label="Open menu">${iconMenu}</button>
         <div class="chat-header-main">
           <div class="chat-header-title-row">
-            <h2 class="chat-title" title="${escHtml(titleLabel)}">${escHtml(titleLabel)}</h2>
-            <span class="badge badge--agent">${escHtml(t.agent ?? '')}</span>
+            <h2 class="chat-title" title="${escHtml(sessionTitleLabel)}">${escHtml(sessionTitleLabel)}</h2>
           </div>
         </div>
       </div>
@@ -3947,6 +4121,17 @@ function renderComposerAttachmentsHTML(threadId: string): string {
         >×</button>
       </div>`
   }).join('')
+}
+
+function updateChatHeaderTitle(): void {
+  const { threads, activeThreadId } = store.get()
+  const thread = activeThreadId ? threads.find(t => t.threadId === activeThreadId) : null
+  if (!thread) return
+  const titleEl = document.querySelector('.chat-title') as HTMLElement | null
+  if (!titleEl) return
+  const newTitle = getCurrentSessionTitle(thread)
+  titleEl.textContent = newTitle
+  titleEl.title = newTitle
 }
 
 function updateChatArea(): void {
@@ -4328,6 +4513,8 @@ function bindInputResize(): void {
 
     const { activeThreadId } = store.get()
     if (!activeThreadId) return
+    const attachmentBtn = document.getElementById('attachment-btn') as HTMLButtonElement | null
+    if (attachmentBtn?.disabled) return
 
     e.preventDefault()
     addComposerAttachments(activeThreadId, files)
@@ -4704,6 +4891,10 @@ function handleSend(): void {
       capturedScopeKey = threadSessionScopeKey(capturedThreadID, capturedSessionID)
       rebindScopeRuntime(previousScopeKey, capturedScopeKey, capturedSessionID)
       updateThreadSessionID(capturedThreadID, sessionId)
+    },
+
+    onSessionInfoUpdate({ sessionId, title }: SessionInfoUpdatePayload) {
+      applySessionTitleUpdate(capturedThreadID, sessionId, title)
     },
 
     onPermissionRequired(event) {

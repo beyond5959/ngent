@@ -3739,12 +3739,14 @@ function updateInputState(): void {
   const hasThreadStreaming = hasThreadStream(activeThreadId)
   const attachments = activeThreadId ? threadComposerAttachments(activeThreadId) : []
   const hasComposerContent = !!inputEl?.value.trim() || attachments.length > 0
+  const disableComposerActions = isStreaming || isSwitchingConfig || isSwitchingSession
+  const disableComposerInput = isSwitchingConfig || isSwitchingSession
 
-  if (sendBtn)  sendBtn.disabled  = isStreaming || isSwitchingConfig || isSwitchingSession || !hasComposerContent
-  if (inputEl)  inputEl.disabled  = isStreaming || isSwitchingConfig || isSwitchingSession
-  if (attachmentBtn) attachmentBtn.disabled = isStreaming || isSwitchingConfig || isSwitchingSession
+  if (sendBtn)  sendBtn.disabled  = disableComposerActions || !hasComposerContent
+  if (inputEl)  inputEl.disabled  = disableComposerInput
+  if (attachmentBtn) attachmentBtn.disabled = disableComposerActions
   document.querySelectorAll<HTMLButtonElement>('.composer-attachment__remove').forEach(button => {
-    button.disabled = isStreaming || isSwitchingConfig || isSwitchingSession
+    button.disabled = disableComposerActions
   })
   document.querySelectorAll<HTMLButtonElement>('.thread-model-trigger').forEach(triggerEl => {
     const pickerState = triggerEl.dataset.state ?? 'empty'
@@ -4511,6 +4513,8 @@ function bindInputResize(): void {
 
     const { activeThreadId } = store.get()
     if (!activeThreadId) return
+    const attachmentBtn = document.getElementById('attachment-btn') as HTMLButtonElement | null
+    if (attachmentBtn?.disabled) return
 
     e.preventDefault()
     addComposerAttachments(activeThreadId, files)

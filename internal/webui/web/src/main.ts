@@ -3522,7 +3522,7 @@ function renderMessage(msg: Message): string {
     return `
       <div class="message message--user" data-msg-id="${escHtml(msg.id)}">
         <div class="message-group">
-          ${msg.content ? `<div class="message-prompt">${escHtml(msg.content)}</div>` : ''}
+          ${msg.content ? `<div class="message-prompt message-prompt--md">${renderMarkdown(msg.content)}</div>` : ''}
           ${attachmentsHTML}
           <div class="message-meta">
             <span class="message-time">${formatTimestamp(msg.timestamp)}</span>

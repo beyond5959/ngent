@@ -1758,6 +1758,17 @@ body {
   word-break: break-all;
 }
 
+.message-content-card__link {
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.message-content-card__link:hover {
+  text-decoration: underline;
+}
+
 .message-content-card__image {
   display: block;
   max-width: min(100%, 560px);

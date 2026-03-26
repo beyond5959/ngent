@@ -1552,3 +1552,26 @@ Use this template for new decisions.
   - require upstream senders to convert these images into structured attachments first (rejected: existing message streams already contain the placeholder form).
   - render every `data:` URL found in user text as an image (rejected: too permissive and unsafe).
   - leave the placeholder as raw text and rely on copy/paste elsewhere (rejected: poor UX for image-bearing prompts).
+
+## ADR-059: Store uploaded attachments under the configurable data directory and serve them back through a stable attachment route
+
+- Status: Accepted
+- Date: 2026-03-26
+- Context:
+  - ADR-057 deliberately used local `file://` uploads so ACP providers could read user attachments without introducing a remote object store.
+  - that first implementation stored uploads in the OS temp directory and only persisted the raw `file://` resource link into history.
+  - temp-directory storage was too fragile for long-running local-first usage because the OS can clean it at any time, and browsers cannot reliably keep rendering persisted `file://` image/resource links after the live in-memory `blob:` preview disappears.
+- Decision:
+  - replace the CLI `--db-path` flag with `--data-path`, with default root `$HOME/.ngent/`.
+  - derive sqlite as `data-path/ngent.db` and store uploaded files under `data-path/attachments/<category>/`, where category is chosen from MIME/extension families such as `images`, `documents`, `text`, `audio`, `video`, `archives`, and `files`.
+  - persist uploaded attachment metadata in sqlite as `turn_attachments(attachment_id, turn_id, name, mime_type, size, file_path, created_at)`.
+  - include a stable `attachmentId` in persisted `user_prompt` events and serve persisted files back to the Web UI through `GET /attachments/{attachmentId}` with client ownership checks and optional query-token auth for image tags.
+- Consequences:
+  - uploaded attachments now survive service restarts and OS temp cleanup.
+  - Web UI attachment cards continue to render after stream completion and after history reload because they no longer depend on ephemeral `blob:` URLs.
+  - the CLI data model is clearer: one configurable data root now owns both sqlite state and uploaded-file state.
+  - ngent still needs a later janitor policy for old attachment files inside the data directory.
+- Alternatives considered:
+  - keep `--db-path` and add a second unrelated attachment-root flag (rejected: splits one local state root across two flags and makes defaults harder to reason about).
+  - keep storing uploads in temp and only persist extra preview metadata (rejected: does not solve OS cleanup and still leaves the attachment file itself non-durable).
+  - expose raw absolute file paths directly to the browser (rejected: browsers cannot reliably use persisted `file://` paths from the HTTP Web UI, and a routed attachment fetch keeps ownership/auth checks server-side).

@@ -741,12 +741,13 @@ The integration follows the official ACP startup form `blackbox --experimental-a
     - `input`: optional text
     - `stream=true`
     - one or more `attachments` file parts
-  - each uploaded file is persisted into the local temp directory and converted into one normalized prompt item:
+  - each uploaded file is persisted into the configured `data-path` under `attachments/<category>/` (`images`, `documents`, `text`, `audio`, `video`, `archives`, or `files`) and converted into one normalized prompt item:
     - `type=resource_link`
     - `uri=file:///...`
     - `name=<original base filename>`
     - `mimeType=<parsed/sniffed MIME>`
     - `size=<bytes copied>`
+    - `attachmentId=<stable persisted upload id>`
 - Prompt assembly:
   - the agent layer now uses a shared structured prompt model instead of forcing every turn through one string.
   - when ngent injects summary/recent-turn context, it rewrites only the text portion of the prompt and preserves resource links as separate items.
@@ -754,10 +755,12 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 - Persistence:
   - `turns.request_text` stores the plain-text fallback representation so context-compaction and non-ACP flows still retain attachment references.
   - turns with uploaded resources also persist a `user_prompt` event containing the original structured prompt array for history/UI reconstruction.
+  - sqlite also persists `turn_attachments(attachment_id, turn_id, name, mime_type, size, file_path, created_at)` so uploaded files survive restarts and can be served back to the Web UI.
 - Web UI:
   - the composer footer order is `Attachment -> Model -> Reasoning` on the left, mirrored by `Send` on the right.
   - attachments are held in thread-local in-memory draft state until send, with image previews when possible.
   - the transcript renders sent user attachments as cards and rebuilds them from `user_prompt` history events after reload.
+  - persisted attachments are served back through `GET /attachments/{attachmentId}?client_id=...&access_token=...` so image/file cards remain visible after stream completion and service restart without exposing raw `file://` paths to the browser.
 
 ### 18.6 Web UI Inline Base64 User Images
 

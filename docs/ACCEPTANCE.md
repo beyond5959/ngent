@@ -381,7 +381,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Additional verification commands (executed 2026-03-16 after fresh-session scope reset fix):
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
-  - `go run ./cmd/ngent --port 8798 --db-path /tmp/ngent-session-bug.db --debug`
+  - `go run ./cmd/ngent --port 8798 --data-path /tmp/ngent-session-bug --debug`
   - reload the page, reopen the same thread, and confirm the empty cancelled placeholder still does not reappear
 
 ## Requirement 24: ACP Slash Commands Cache and Composer Picker
@@ -406,23 +406,23 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
 - Additional verification commands (executed 2026-03-13):
-  - `go run ./cmd/ngent --port 8787 --db-path /tmp/ngent-kimi-real-3.db --debug`
+  - `go run ./cmd/ngent --port 8787 --data-path /tmp/ngent-kimi-real-3 --debug`
 - Additional verification commands (executed 2026-03-13 after Kimi timing fix):
   - `go test ./internal/agents/kimi -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
-  - `go run ./cmd/ngent --port 8788 --db-path /tmp/ngent-kimi-acp-trace.db --debug`
+  - `go run ./cmd/ngent --port 8788 --data-path /tmp/ngent-kimi-acp-trace --debug`
   - real local Kimi thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned the 8 persisted Kimi commands after the first turn
 - Additional verification commands (executed 2026-03-13 after slash-entry refresh fix):
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
-  - `go run ./cmd/ngent --port 8789 --db-path /tmp/ngent-slash-refresh.db --debug`
+  - `go run ./cmd/ngent --port 8789 --data-path /tmp/ngent-slash-refresh --debug`
 - Additional verification commands (executed 2026-03-13 after codex embedded timing fix):
   - `go test ./internal/agents/codex -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|ReplaysCachedSlashCommandsAfterConfigOptionsInit)$' -count=1`
-  - `go run ./cmd/ngent --port 8793 --db-path /tmp/ngent-codex-fix.db --debug`
+  - `go run ./cmd/ngent --port 8793 --data-path /tmp/ngent-codex-fix --debug`
   - real local codex thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned the 7-command codex snapshot after the first turn
   - sqlite check: `select agent_id, json_array_length(commands_json) from agent_slash_commands where agent_id = 'codex';` returned `codex|7`
 - Additional verification commands (executed 2026-03-13 after Qwen/OpenCode stdio timing fix):
   - `go test ./internal/agents/qwen ./internal/agents/opencode -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)?$' -count=1`
-  - `go run ./cmd/ngent --port 8794 --db-path /tmp/ngent-qwen-opencode-fix.db --debug`
+  - `go run ./cmd/ngent --port 8794 --data-path /tmp/ngent-qwen-opencode-fix --debug`
   - real local Qwen thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned `/bug`, `/compress`, `/init`, `/summary`
   - real local OpenCode thread: confirmed `GET /v1/threads/{threadId}/slash-commands` returned `/init`, `/review`, `/go-style-core`, `/remotion-best-practices`, `/find-skills`, `/compact`
 - Additional verification commands (executed 2026-03-13 after stdio notification helper refactor):
@@ -430,12 +430,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./...`
 - Additional verification commands (executed 2026-03-13 after Gemini ACP notification fix):
   - `go test ./internal/agents/gemini -run 'TestStream(CapturesSlashCommandsEmittedBeforePrompt|WithFakeProcess|WithFakeProcessModelID)$' -count=1`
-  - `go run ./cmd/ngent --port 8795 --db-path /tmp/ngent-gemini-fix.db --debug`
+  - `go run ./cmd/ngent --port 8795 --data-path /tmp/ngent-gemini-fix --debug`
   - real local Gemini thread: confirmed `GET /v1/threads/{threadId}/slash-commands` still returned `[]`, indicating no provider `available_commands_update` was observed in that run
 - Additional verification commands (executed 2026-03-13 after Codex config-init slash-command backfill):
   - `go test ./internal/agents/codex -run 'Test(StreamCapturesSlashCommandsEmittedBeforePrompt|StreamReplaysCachedSlashCommandsAfterConfigOptionsInit|SlashCommandsAfterConfigOptionsInit)$' -count=1`
   - `go test ./internal/httpapi -run 'Test(ThreadSlashCommandsPersistAndLoad|ThreadSlashCommandsPersistAcrossRestart|ThreadConfigOptionsBackfillsSlashCommandsWhenCatalogAlreadyStored)$' -count=1`
-  - `go run ./cmd/ngent --port 8796 --db-path /tmp/ngent-codex-slash-fix.db --debug`
+  - `go run ./cmd/ngent --port 8796 --data-path /tmp/ngent-codex-slash-fix --debug`
   - real local Codex thread: confirmed `GET /v1/threads/{threadId}/config-options` initialized the embedded provider and `GET /v1/threads/{threadId}/slash-commands` then returned the 7-command snapshot before any turn was sent
   - sqlite check: `select agent_id, commands_json from agent_slash_commands where agent_id = 'codex';` returned the persisted codex command list
 - Additional verification commands (executed 2026-03-13 after Qwen slash-command probe fallback):
@@ -502,7 +502,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
   - real Codex Web UI validation:
-    - run `go run ./cmd/ngent -db-path /tmp/ngent-session-load-config.db -port 8687 --debug`
+    - run `go run ./cmd/ngent --data-path /tmp/ngent-session-load-config -port 8687 --debug`
     - without sending any turn, click an existing Codex session from the sidebar
     - confirm `Model` and `Reasoning` buttons appear immediately after the user-triggered session switch
 
@@ -538,12 +538,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the composer footer order is `Attachment`, `Model`, `Reasoning` on the left and `Send` on the right.
   - the Web UI allows attachment-only sends as well as text+attachment sends, shows removable attachment chips/previews before send, and accepts clipboard file/image paste (`Cmd+V` on macOS) into the current composer.
-  - `POST /v1/threads/{threadId}/turns` accepts `multipart/form-data` and persists uploaded files into the local temp directory before dispatching the turn.
+  - `POST /v1/threads/{threadId}/turns` accepts `multipart/form-data` and persists uploaded files into the configured `data-path` under typed subdirectories such as `attachments/images/`, `attachments/documents/`, or `attachments/files/` before dispatching the turn.
   - ACP-backed agents receive `session/prompt.prompt[]` with ordinary text items plus `resource_link` items containing `uri`, `name`, `mimeType`, and `size`.
-  - ngent persists a readable `requestText` summary plus a structured `user_prompt` history event so attachment cards can be reconstructed after reload.
-  - the Web UI renders uploaded user attachments as cards in the transcript both immediately after send and after history reload.
-- Verification commands (executed 2026-03-23):
-  - `go test ./internal/httpapi -run 'Test(MultipartTurnUploadsAttachmentsAsResourceLinks|BuildInjectedPromptKeepsResourceLinksWhenInjectingContext)' -count=1`
+  - ngent persists a readable `requestText` summary plus a structured `user_prompt` history event carrying stable attachment ids so attachment cards can be reconstructed after reload.
+  - the Web UI renders uploaded user attachments as cards in the transcript both immediately after send and after history reload, and persisted image attachments continue to preview through the backend attachment route instead of disappearing after the stream finishes.
+- Verification commands (executed 2026-03-26):
+  - `go test ./internal/httpapi -run 'Test(MultipartTurnUploadsAttachmentsAsResourceLinks|AttachmentEndpointSupportsQueryTokenAndClientOwnership|BuildInjectedPromptKeepsResourceLinksWhenInjectingContext)' -count=1`
   - `go test ./internal/agents/opencode -run 'TestStreamPromptSendsResourceLinks' -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`

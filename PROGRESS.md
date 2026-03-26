@@ -1065,3 +1065,15 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./internal/agents/kimi -run 'TestHandlePermissionRequest(ParsesRichToolCallPayload|HonorsSelectedOptionID)' -count=1`
     - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./internal/httpapi -run 'TestTurnPermission(RequiredSSEEvent|ApprovedContinuesAndCompletes|SelectedOptionFlowsThroughExactAgentChoice|TimeoutFailClosed|SSEDisconnectFailClosed)' -count=1`
     - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
+
+- 2026-03-26: moved uploaded Web UI attachments into the configurable data directory and made persisted attachment cards survive reload.
+  - replaced the CLI storage root flag with `--data-path` (default `$HOME/.ngent/`), deriving sqlite as `data-path/ngent.db` instead of accepting a standalone `--db-path` file.
+  - `POST /v1/threads/{threadId}/turns` now persists uploads under `data-path/attachments/<category>/` rather than `/tmp`, using MIME/extension-aware categories such as `images`, `documents`, `text`, `audio`, `video`, `archives`, and `files`.
+  - added sqlite-backed `turn_attachments(attachment_id, turn_id, name, mime_type, size, file_path, created_at)` and persist stable `attachmentId` values into `user_prompt` turn events.
+  - added `GET /attachments/{attachmentId}` with client ownership checks and optional query-token auth so the Web UI can keep rendering persisted image/file cards after stream completion and history reload.
+  - updated the Web UI history attachment reconstruction to build stable attachment URLs from `attachmentId`, show persisted previews/links after reload, and keep using in-memory `blob:` previews only for unsent/live local drafts.
+  - updated README plus acceptance/decision/spec/known-issues docs to describe `--data-path`, durable attachment storage, and the remaining lack of an automatic attachment janitor.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./cmd/ngent ./internal/httpapi ./internal/storage ./internal/observability`
+    - pass: `go test ./...`

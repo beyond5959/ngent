@@ -372,7 +372,9 @@ function cloneMessageAttachments(
   for (const attachment of attachments) {
     const name = attachment.name?.trim() ?? ''
     if (!name) continue
+    const attachmentId = attachment.attachmentId?.trim() || undefined
     cloned.push({
+      attachmentId,
       name,
       uri: attachment.uri?.trim() || undefined,
       mimeType: attachment.mimeType?.trim() || undefined,
@@ -380,6 +382,7 @@ function cloneMessageAttachments(
         ? Math.max(0, attachment.size)
         : undefined,
       previewUrl: attachment.previewUrl?.trim() || undefined,
+      downloadUrl: attachment.downloadUrl?.trim() || undefined,
     })
   }
   return cloned.length ? cloned : undefined
@@ -392,6 +395,16 @@ function threadComposerAttachments(threadId: string): ComposerAttachmentDraft[] 
 function attachmentPreviewURL(file: File): string | undefined {
   if (!file.type.startsWith('image/')) return undefined
   return URL.createObjectURL(file)
+}
+
+function attachmentResourceURL(attachmentId: string | null | undefined): string | undefined {
+  const normalized = attachmentId?.trim() ?? ''
+  if (!normalized) return undefined
+
+  const { serverUrl, clientId, authToken } = store.get()
+  const params = new URLSearchParams({ client_id: clientId })
+  if (authToken.trim()) params.set('access_token', authToken.trim())
+  return `${serverUrl}/attachments/${encodeURIComponent(normalized)}?${params.toString()}`
 }
 
 function revokeAttachmentPreview(attachment: { previewUrl?: string } | null | undefined): void {
@@ -720,11 +733,17 @@ function extractTurnUserPrompt(events: TurnEvent[] | undefined): {
       }
       if (type !== 'resource_link') return
       const sizeValue = record?.size
+      const attachmentId = recordString(record, 'attachmentId') || undefined
+      const persistentUrl = attachmentResourceURL(attachmentId)
+      const mimeType = recordString(record, 'mimeType') || undefined
       attachments.push({
+        attachmentId,
         name: recordString(record, 'name') || 'Attachment',
         uri: recordString(record, 'uri') || undefined,
-        mimeType: recordString(record, 'mimeType') || undefined,
+        mimeType,
         size: typeof sizeValue === 'number' && Number.isFinite(sizeValue) ? sizeValue : undefined,
+        previewUrl: mimeType?.startsWith('image/') ? persistentUrl : undefined,
+        downloadUrl: persistentUrl,
       })
     })
   }
@@ -3592,9 +3611,16 @@ function renderMessageAttachmentHTML(attachment: MessageAttachment): string {
   const title = attachment.name || 'Attachment'
   const meta = [attachment.mimeType, typeof attachment.size === 'number' ? formatBytes(attachment.size) : '']
     .filter((item): item is string => !!item)
+  const downloadUrl = attachment.downloadUrl || attachment.previewUrl || undefined
   const body = [
     attachment.previewUrl
       ? `<img class="message-content-card__image" src="${escHtml(attachment.previewUrl)}" alt="${escHtml(title)}" loading="lazy" />`
+      : '',
+    downloadUrl
+      ? `
+        <div class="message-content-card__section">
+          <a class="message-content-card__link" href="${escHtml(downloadUrl)}" target="_blank" rel="noreferrer">Open attachment</a>
+        </div>`
       : '',
     attachment.uri
       ? `

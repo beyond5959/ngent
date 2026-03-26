@@ -442,17 +442,17 @@
   - keep validating whether future Cursor CLI releases expose a more explicit non-interactive auth-health probe.
 
 - ID: KI-039
-- Title: Uploaded Web UI resource-link temp files currently rely on OS temp cleanup
+- Title: Persisted Web UI uploads currently have no automatic janitor
 - Status: Open
 - Severity: Low
 - Affects: long-running ngent instances that handle many uploaded Web UI attachments
 - Symptom:
-  - `POST /v1/threads/{threadId}/turns` now persists uploaded files into the local temp directory so ACP providers can read them through `file://` resource links.
-  - ngent currently leaves those temp files in place after the turn finishes and relies on normal OS temp cleanup / user cleanup instead of running its own retention sweeper.
+  - `POST /v1/threads/{threadId}/turns` now persists uploaded files under the configured `data-path/attachments/*` tree so ACP providers can read them through stable `file://` resource links and the Web UI can keep rendering them after reload.
+  - ngent currently keeps those persisted files indefinitely and does not yet run an age-based or reference-count-based cleanup sweep.
 - Workaround:
-  - periodically clear old `ngent-*` files from the system temp directory if disk usage matters in a long-lived environment.
+  - periodically clear stale files from the configured `data-path/attachments/` tree if disk usage matters in a long-lived environment.
 - Follow-up plan:
-  - add an age-based temp-upload janitor once real usage clarifies safe retention expectations for provider retries and history-driven debugging.
+  - add an age-based or thread-reference-aware attachment janitor once real usage clarifies safe retention expectations for provider retries and history-driven debugging.
 
 ## Recently Closed
 

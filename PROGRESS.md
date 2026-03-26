@@ -1123,3 +1123,12 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
+
+- 2026-03-26: unified the startup banner and Web UI sidebar around an ink-green ASCII `NGENT` brand mark.
+  - recolored the startup ASCII logo to the same ink-green used by the Web UI accent (`#0f766e`), but only when stderr is attached to a TTY so redirected output stays plain text without raw ANSI escapes.
+  - replaced the Web UI sidebar's old `N` monogram plus `Ngent` wordmark with the exact same multi-line block `NGENT` art used by the CLI banner, scaling it down with CSS and showing it directly in the sidebar header instead of inside a framed badge.
+  - refined the Web UI brand spacing by rendering `N/G/E/N/T` as separate block-art columns with flex `gap`, so only inter-letter spacing changes while each letter's internal ASCII strokes stay identical to the CLI glyphs.
+  - added CLI logo regression coverage for both ANSI-enabled rendering and non-TTY plain-text rendering.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`

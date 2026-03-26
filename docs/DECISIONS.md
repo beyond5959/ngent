@@ -1643,3 +1643,26 @@ Use this template for new decisions.
 - Alternatives considered:
   - keep the old behavior and surface the 409 as a user error (rejected: browsing another session is a read-only UI action and should not feel blocked by an unrelated active turn).
   - relax the server to accept session-changing `PATCH` during active turns (rejected: would violate the existing whole-thread conflict model and risks mutating active agent scope mid-turn).
+
+## ADR-063: Use one ink-green ASCII NGENT brand mark across CLI startup and the Web UI
+
+- Status: Accepted
+- Date: 2026-03-26
+- Context:
+  - ngent already printed a large ASCII `NGENT` mark during startup, but it appeared in plain terminal text and did not visually match the Web UI brand accent.
+  - the Web UI sidebar still used a separate `N` monogram plus `Ngent` wordmark, so the product identity changed noticeably between the service banner and the browser shell.
+  - the product request is to make those two entry points feel like one system by reusing the same ink-green, ASCII-flavored branding.
+- Decision:
+  - treat the Web UI accent ink (`#0f766e`) as the canonical brand color for the ASCII logo treatment.
+  - color only the startup ASCII `NGENT` logo, and only when the banner writer is a real TTY; redirected stderr stays plain text with no ANSI escape sequences.
+  - replace the sidebar monogram/wordmark cluster with the same six-line `NGENT` ASCII art used by the CLI startup banner, scaling it down in CSS rather than introducing a second variant.
+  - render that Web UI logo directly in the sidebar header instead of placing it inside an additional framed badge, so the mark reads like the product wordmark rather than like a separate card widget.
+  - keep the rest of the startup banner structure (`Server` box, agent list, QR section) unchanged so operational scanability does not regress.
+- Consequences:
+  - the first thing users see in the terminal and the first thing they see in the browser now share one recognizable product mark and one color family.
+  - copied or redirected startup logs remain clean plain text because ANSI color is fail-closed on non-TTY writers.
+  - the browser now renders the exact same glyphs as the terminal banner, so the remaining difference between the two surfaces is size rather than logo design.
+- Alternatives considered:
+  - recolor only the CLI banner and keep the Web UI monogram (rejected: still leaves two product marks).
+  - introduce a second compact ASCII variant for the sidebar (rejected: still creates a visible mismatch between terminal and browser branding).
+  - color the whole startup banner box rather than just the logo (rejected: the request was to unify the logo treatment, and extra color on operational details would reduce contrast for server metadata).

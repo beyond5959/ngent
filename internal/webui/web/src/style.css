@@ -283,51 +283,25 @@ body {
 
 .sidebar-brand {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-1);
+  justify-content: center;
+  align-items: flex-start;
+  gap: 5px;
+  width: 100%;
   min-width: 0;
   flex: 1;
-}
-
-.sidebar-brand-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.sidebar-brand-kicker {
-  font-size: var(--font-size-xs);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-
-.sidebar-brand-text {
-  font-size: 26px;
-  font-weight: 650;
-  line-height: 1.05;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-brand-icon {
-  width: 42px;
-  height: 42px;
-  background:
-    linear-gradient(140deg, color-mix(in srgb, var(--accent) 88%, white 12%) 0%, color-mix(in srgb, var(--accent) 60%, black 40%) 100%);
-  color: var(--accent-text);
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  font-weight: 800;
-  flex-shrink: 0;
   user-select: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 16px 30px rgba(15, 118, 110, 0.18);
+}
+
+.sidebar-brand-letter {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 5.9px;
+  line-height: 1.02;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--accent);
+  white-space: pre;
+  text-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .sidebar-section {
@@ -1200,7 +1174,7 @@ body {
 
 .chat-title {
   min-width: 0;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 680;
   letter-spacing: -0.03em;
   color: var(--text-1);
@@ -3212,7 +3186,7 @@ button:active:not(:disabled),
   }
 
   .chat-title {
-    font-size: 22px;
+    font-size: 20px;
   }
 
   .chat-header-subtitle {
@@ -3269,6 +3243,14 @@ button:active:not(:disabled),
 
   .modal {
     max-width: 100%;
+  }
+
+  .sidebar-brand {
+    gap: 4px;
+  }
+
+  .sidebar-brand-letter {
+    font-size: 5.25px;
   }
 }
 

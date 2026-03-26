@@ -611,3 +611,19 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Verification commands (executed 2026-03-26):
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
+
+## Requirement 33: Startup Banner And Web UI Share The Same ASCII NGENT Brand
+
+- Operation:
+  - start ngent from an interactive terminal and observe the startup banner on stderr.
+  - open the Web UI and inspect the top-left sidebar brand block.
+  - optionally redirect stderr to a file or buffer and inspect the captured startup output.
+- Expected:
+  - the startup banner begins with the existing ASCII `NGENT` logo rendered in the same ink-green family used by the Web UI accent.
+  - ANSI color is applied only for interactive TTY output; redirected/non-TTY startup output remains plain text without raw escape sequences.
+  - the Web UI sidebar no longer shows the separate `N` monogram plus `Ngent` label and instead renders the same multi-line block `NGENT` art used by the startup banner.
+  - the Web UI logo is rendered directly in the sidebar header, not inside an extra white/framed card.
+  - the browser and terminal marks use the same glyphs; the only intended difference is rendered size.
+- Verification commands (executed 2026-03-26):
+  - `cd internal/webui/web && npm run build`
+  - `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`

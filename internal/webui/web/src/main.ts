@@ -156,6 +156,49 @@ const iconDotsHorizontal = `<svg width="14" height="14" viewBox="0 0 14 14" fill
   <circle cx="11" cy="7" r="1.15" fill="currentColor"/>
 </svg>`
 
+const sidebarBrandLetters = [
+  [
+    '███╗   ██╗',
+    '████╗  ██║',
+    '██╔██╗ ██║',
+    '██║╚██╗██║',
+    '██║ ╚████║',
+    '╚═╝  ╚═══╝',
+  ].join('\n'),
+  [
+    ' ██████╗ ',
+    '██╔════╝ ',
+    '██║  ███╗',
+    '██║   ██║',
+    '╚██████╔╝',
+    ' ╚═════╝ ',
+  ].join('\n'),
+  [
+    '███████╗',
+    '██╔════╝',
+    '█████╗  ',
+    '██╔══╝  ',
+    '███████╗',
+    '╚══════╝',
+  ].join('\n'),
+  [
+    '███╗   ██╗',
+    '████╗  ██║',
+    '██╔██╗ ██║',
+    '██║╚██╗██║',
+    '██║ ╚████║',
+    '╚═╝  ╚═══╝',
+  ].join('\n'),
+  [
+    '████████╗',
+    '╚══██╔══╝',
+    '   ██║   ',
+    '   ██║   ',
+    '   ██║   ',
+    '   ╚═╝   ',
+  ].join('\n'),
+]
+
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -5547,11 +5590,8 @@ function renderShell(): void {
       <div class="layout">
         <aside class="sidebar" id="sidebar">
           <div class="sidebar-header">
-            <div class="sidebar-brand">
-              <div class="sidebar-brand-icon">N</div>
-              <div class="sidebar-brand-copy">
-                <span class="sidebar-brand-text">Ngent</span>
-              </div>
+            <div class="sidebar-brand" role="img" aria-label="Ngent">
+              ${sidebarBrandLetters.map(letter => `<pre class="sidebar-brand-letter" aria-hidden="true">${letter}</pre>`).join('')}
             </div>
           </div>
 

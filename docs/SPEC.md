@@ -814,3 +814,18 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - switching back to the active session is therefore a local view change rather than a conflict-producing backend write.
 - Unsaved "New session" views are tracked as frontend-only `@fresh:<nonce>` selections so the UI can keep a stable empty-session scope before ACP emits a concrete `session_bound`.
 - After the active turn completes, or just before the next user send if needed, the frontend synchronizes any pending selected session back into backend thread state.
+
+### 18.10 Unified ASCII Brand Mark Across CLI Startup And Web UI
+
+- ngent exposes one consistent product mark at the two primary entry points users see first:
+  - the CLI startup banner on stderr
+  - the Web UI sidebar header
+- CLI startup banner behavior:
+  - keep the existing large ASCII `NGENT` art at the top of the startup banner.
+  - when stderr is attached to an interactive terminal, render only that logo in ink-green ANSI truecolor matching the Web UI accent (`#0f766e`).
+  - when stderr is redirected or otherwise not a TTY, emit the same ASCII logo as plain text with no ANSI escapes.
+  - leave the surrounding `Server` box, agent status line, and optional QR block uncolored so operational metadata remains easy to scan.
+- Web UI sidebar behavior:
+  - replace the previous `N` monogram plus `Ngent` wordmark with the same six-line block ASCII `NGENT` art used by the CLI startup banner.
+  - style that mark with the shared accent color (`--accent`, light theme currently `#0f766e`) and render it directly in the sidebar header without an extra framed badge around it.
+  - scale the exact same glyph set down with CSS so the browser and terminal differ only in size, not in logo design.

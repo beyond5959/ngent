@@ -2648,7 +2648,7 @@ function renderThreadListEmptyState(): string {
     <div class="thread-list-empty">
       <div class="thread-list-empty__visual" aria-hidden="true">${iconPlus}</div>
       <div class="thread-list-empty__title">No agents yet</div>
-      <div class="thread-list-empty__desc">Create a workspace to start your first session.</div>
+      <div class="thread-list-empty__desc">Create an agent to start your first session.</div>
     </div>`
 }
 
@@ -4358,7 +4358,6 @@ function renderEmptyStateVisual(icon: string, variant: string): string {
     <div class="empty-state-visual empty-state-visual--${escHtml(variant)}" aria-hidden="true">
       <span class="empty-state-visual__halo"></span>
       <span class="empty-state-visual__orb"></span>
-      <span class="empty-state-visual__ring"></span>
       <span class="empty-state-visual__core">${icon}</span>
     </div>`
 }
@@ -4405,7 +4404,7 @@ function selectSlashCommand(commandName: string): void {
 function renderChatEmpty(): string {
   return renderEmptyState(
     'No agent selected',
-    'Pick an existing workspace from the left, or create a new one to start working.',
+    'Pick an existing agent from the left, or create a new one to start working.',
     'workspace',
     `
       <button class="btn btn-primary" id="new-thread-empty-btn">
@@ -5609,7 +5608,7 @@ function renderShell(): void {
           <div class="sidebar-primary-action">
             <button class="btn btn-primary sidebar-new-btn" id="new-thread-btn" title="New agent" aria-label="New agent">
               ${iconPlus}
-              <span class="btn-label">New agent</span>
+              <span class="btn-label">New Agent</span>
             </button>
           </div>
 

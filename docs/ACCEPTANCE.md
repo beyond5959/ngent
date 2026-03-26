@@ -103,12 +103,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 13: Embedded Web UI
 
 - Operation: start server; open browser at `http://127.0.0.1:8686/`.
-- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, and history is browsable.
+- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the refreshed premium workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, and its collapse/expand affordance is revealed from the chat panel's left edge.
 - Verification command:
   - `go test ./internal/webui -count=1` (checks `GET /` returns 200 with `text/html` content-type and SPA fallback)
   - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
   - `cd internal/webui/web && npm run build`
-  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, and the section collapses after the turn completes
+  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the refreshed glass-panel shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, and settings/new-agent overlays remain polished and usable
 
 ## Global Gate
 
@@ -351,7 +351,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - for providers that replay transcript over ACP `session/load`, the first `GET /v1/threads/{threadId}/session-history?sessionId=...` warms sqlite `session_transcript_cache`, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
   - the Web UI renders a left-side collapsible session panel beside a permanently expanded agent rail.
   - when no agent/thread is selected yet, the session panel stays hidden and does not reserve layout width.
-  - the expanded session panel shows the active agent/thread name, project path, and a `New session` entry above the session list.
+  - when collapsed, the session panel fully retracts and does not leave behind a visible strip.
+  - on desktop, the session panel collapse/expand affordance is exposed from a hover-revealed control on the chat panel's left edge instead of from the panel header.
+  - the expanded session panel shows the active thread title, provider badge, project path, and a `New session` entry above the session list.
   - the agent rail exposes the thread list plus a `New agent` button below it.
   - first-page session load happens when an active thread is selected and the session panel is expanded.
   - `Show more` pagination appears when `nextCursor` is present.

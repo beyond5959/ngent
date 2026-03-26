@@ -11,7 +11,18 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-03-23)
+## Latest Update (2026-03-26)
+
+- `Post-M8` Web UI premium visual refresh completed:
+  - kept the existing no-framework SPA data flow, SSE behavior, store semantics, and API contracts unchanged; the change set is UI-only.
+  - rebuilt the shell into a glass-panel workspace with a richer desktop feel: layered backdrop, elevated sidebars, stronger header hierarchy, cleaner empty states, and improved chat/composer surfaces.
+  - upgraded interaction polish across thread rows, session cards, slash-command popover, settings drawer, new-agent modal, permission cards, and attachment chips.
+  - refreshed the visual token system around a restrained teal accent, warmer neutral surfaces, deeper shadows, larger radii, and a more intentional system-font stack while keeping light/dark themes and responsive behavior.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-03-23)
 
 - `Post-M8` human-readable stderr logger rollout completed:
   - replaced the previous `slog` JSON logger with a repo-local leveled logger in `internal/observability`, keeping the existing `Debug/Info/Warn/Error` call shape while switching output to readable text lines on `stderr`.

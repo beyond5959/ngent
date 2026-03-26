@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-054: Refresh the embedded Web UI as a premium workbench without changing behavior. (Accepted)
 - ADR-053: Replace `slog` JSON output with a human-readable stderr logger and colored access logs. (Accepted)
 - ADR-001: HTTP/JSON API with SSE streaming transport. (Accepted)
 - ADR-002: Client identity via `X-Client-ID` header. (Accepted)
@@ -53,6 +54,32 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-054: Refresh The Embedded Web UI As A Premium Workbench Without Changing Behavior
+
+- Status: Accepted
+- Date: 2026-03-26
+- Context:
+  - the existing embedded Web UI was functionally complete, but the visual quality still read like an internal tool prototype.
+  - users explicitly asked for a more premium, higher-quality desktop feel while keeping the product local-first and operationally unchanged.
+  - the frontend milestone is already on a no-framework Vite + TypeScript SPA, so the refresh needed to stay within the existing DOM/store/SSE architecture.
+- Decision:
+  - keep all runtime logic, API usage, SSE semantics, and store behavior unchanged; the refresh is limited to markup hierarchy, styling tokens, and interaction polish.
+  - adopt a glass-panel workbench direction with:
+    - layered backdrop treatment.
+    - elevated sidebars and chat surface.
+    - stronger typographic hierarchy in headers and empty states.
+    - richer composer, modal, drawer, and permission-card presentation.
+  - use a restrained teal accent and warmer neutrals instead of the earlier default blue-on-flat-gray presentation.
+  - rely on a curated system-font stack instead of bundling a remote webfont, so the embedded UI remains self-contained and offline-friendly.
+- Consequences:
+  - the UI feels more intentional and mature without adding framework/runtime complexity.
+  - visual output remains stable at the interaction/API level because business logic did not move.
+  - exact typography can vary slightly by host OS because the stack prefers locally available premium system fonts.
+- Alternatives considered:
+  - keep the current structure and only tweak colors (rejected: insufficient improvement).
+  - introduce a JS component framework for richer visuals (rejected: conflicts with the repo's no-framework Web UI direction).
+  - bundle external webfonts/assets from a CDN (rejected: weakens the local-first/offline posture).
 
 ## ADR-053: Replace `slog` JSON Output With A Human-Readable Stderr Logger And Colored Access Logs
 
@@ -141,6 +168,7 @@
 
 - Status: Accepted
 - Date: 2026-03-19
+- Current-status note: the left rail decision in this ADR still stands, and the later 2026-03-26 Web UI polish kept the same single collapsible secondary panel model while refining the session-panel affordance into a chat-edge hover handle with a full-retract collapsed state.
 - Context:
   - ADR-049 introduced a collapsible compact agent rail to mimic OpenCode's left-most project strip more closely.
   - in follow-up product review, that compact state was judged less useful than expected because the ngent left column represents full agent/thread items rather than tiny project icons, and collapsing it hid search plus thread metadata too aggressively.
@@ -148,12 +176,13 @@
 - Decision:
   - keep the left agent rail permanently expanded on desktop and mobile overlay states.
   - remove the agent-rail collapse/expand trigger and compact monogram-only rendering path.
-  - retain the left-side session panel collapse/expand control as the only navigation-width toggle.
+  - retain the session panel as the only navigation-width toggle, but expose its desktop collapse/expand affordance from a hover-revealed button on the chat panel's left edge instead of from the panel header itself.
   - keep the session panel contextual to the current selection: if no thread is active yet, do not render a placeholder session column.
 - Consequences:
   - the main navigation always exposes thread metadata and thread actions without an extra click.
   - layout stays simpler because only one left-side panel now owns collapse state.
   - first-load navigation density improves because chat sits directly beside the agent rail until a thread is chosen.
+  - collapsing the session panel now fully retracts it instead of leaving behind a narrow visible strip.
   - the left rail no longer mirrors OpenCode's narrow icon strip exactly, but preserves the more useful ngent-specific thread browsing surface.
 - Alternatives considered:
   - keep both rails collapsible (rejected: too much state and weaker scanning ergonomics for ngent's denser thread rows).
@@ -163,6 +192,7 @@
 
 - Status: Accepted
 - Date: 2026-03-19
+- Current-status note: this ADR established the left-side two-column navigation model, but its compact agent-rail default was later superseded by ADR-050, and the original slim-strip session collapse affordance was later replaced by a full-collapse chat-edge hover control in the 2026-03-26 Web UI polish.
 - Context:
   - the Web UI had been using a wide left thread list plus a separate right session sidebar.
   - users wanted the navigation model to feel closer to OpenCode's web UI, where project/session browsing sits on the left side of the workspace and the first column can collapse into a compact rail.

@@ -15,6 +15,15 @@
 
 ## Open Issues
 
+- ID: KI-035
+- Title: Premium Web UI visuals vary slightly by host browser/font stack
+- Status: Open
+- Severity: Low
+- Affects: the embedded Web UI on different desktop/mobile browsers and operating systems
+- Symptom: typography, glass effects, and spacing can look slightly different depending on available local system fonts and browser support for `backdrop-filter` / compositing
+- Workaround: use a modern browser with backdrop-filter support for the intended presentation; functional behavior remains unchanged even when the visual treatment degrades
+- Follow-up plan: consider adding lightweight visual regression snapshots and/or optional bundled local fonts if exact cross-platform visual parity becomes a product requirement
+
 - ID: KI-034
 - Title: Human-readable stderr logs are less machine-friendly than JSON logs
 - Status: Open

@@ -24,6 +24,7 @@ Modules:
 - `internal/sse`: event formatting, stream fanout, resume helpers.
 - `internal/storage`: SQLite repository and migration management.
 - `internal/observability`: human-readable stderr logging, access-log formatting, ANSI-color helpers, and redaction helpers.
+- `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; premium visual refreshes must remain presentation-only and must not change API/runtime behavior.
 
 ## 3. Concurrency Model
 
@@ -524,7 +525,8 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - lives between the agent rail and the chat area instead of on the right edge.
   - stays hidden until an active thread is selected, so the initial empty state does not reserve session-panel width.
   - when expanded, shows the active thread title, provider badge, project path, and a full-width `New session` action before the session list.
-  - can collapse independently into a slim strip with an expand affordance.
+  - can collapse independently into a fully retracted state with no residual strip left in the layout.
+  - on desktop, collapse/expand is triggered from a hover-revealed button on the chat panel's left edge instead of from a persistent control inside the session panel header.
   - loads the first page automatically when a thread becomes active and the session panel is expanded.
   - shows `Show more` when `nextCursor` is present.
   - highlights the currently selected `sessionId`.

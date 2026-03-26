@@ -456,6 +456,18 @@
 
 ## Recently Closed
 
+- ID: KI-040
+- Title: Inline base64 image placeholders in user messages rendered as raw text
+- Status: Closed
+- Severity: Low
+- Affects: Web UI threads whose user messages include bracketed placeholders such as `[Image: data:image/png;base64,...]`
+- Symptom:
+  - the user bubble previously sent the entire message through plain markdown rendering, so bracketed base64 image placeholders showed up as long unreadable text blobs instead of visible image previews.
+- Workaround:
+  - none; fixed on 2026-03-26.
+- Follow-up plan:
+  - monitor whether any upstream source emits materially different placeholder shapes that should also be normalized into the same inline-image render path.
+
 - ID: KI-033
 - Title: Repeated `New session` reused stale anonymous Web UI scope after fast cancel
 - Status: Closed

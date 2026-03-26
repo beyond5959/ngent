@@ -18,9 +18,18 @@ This file is the source of milestone progress, validation commands, and next act
   - rebuilt the shell into a glass-panel workspace with a richer desktop feel: layered backdrop, elevated sidebars, stronger header hierarchy, cleaner empty states, and improved chat/composer surfaces.
   - upgraded interaction polish across thread rows, session cards, slash-command popover, settings drawer, new-agent modal, permission cards, and attachment chips.
   - refreshed the visual token system around a restrained teal accent, warmer neutral surfaces, deeper shadows, larger radii, and a more intentional system-font stack while keeping light/dark themes and responsive behavior.
+  - follow-up: reduced the chat-header session title size on both desktop and narrow/mobile breakpoints so long titles feel less heavy and consume less vertical attention.
   - validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
+
+- `Post-M8` Web UI user-message base64 image placeholder rendering completed:
+  - user prompt bubbles now detect inline placeholders that start with `[Image: data:image/...;base64,...]` and render them as immediate inline image previews instead of raw base64 text.
+  - the parser is fail-soft and image-only: it accepts only `data:image/*;base64,...` payloads, strips incidental whitespace inside the data URL, and falls back to ordinary markdown rendering for malformed or non-image placeholders.
+  - ordinary user markdown/text rendering remains unchanged around those placeholders, and the message copy action still preserves the original raw message text.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 go test ./...`
 
 ## Previous Update (2026-03-23)
 

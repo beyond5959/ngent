@@ -3187,6 +3187,62 @@ function safeContentURL(value: string, allowImageData = false): string | null {
   return null
 }
 
+const inlineUserImagePattern = /\[Image:\s*(data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+?)(?:\s*\]|$)/gi
+
+function inlineUserImageSource(value: string): { src: string, mimeType: string } | null {
+  const normalized = value.replace(/\s+/g, '').trim()
+  const match = normalized.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i)
+  if (!match) return null
+  const src = safeContentURL(normalized, true)
+  if (!src) return null
+  return {
+    src,
+    mimeType: match[1].toLowerCase(),
+  }
+}
+
+function renderUserMessageHTML(content: string): string {
+  inlineUserImagePattern.lastIndex = 0
+
+  const parts: string[] = []
+  let lastIndex = 0
+  let matchedImage = false
+  let match: RegExpExecArray | null
+
+  while ((match = inlineUserImagePattern.exec(content)) !== null) {
+    const image = inlineUserImageSource(match[1] ?? '')
+    if (!image) continue
+
+    matchedImage = true
+    if (match.index > lastIndex) {
+      const textChunk = content.slice(lastIndex, match.index)
+      if (textChunk) parts.push(renderMarkdown(textChunk))
+    }
+
+    parts.push(`
+      <figure class="message-inline-image">
+        <img
+          class="message-inline-image__img"
+          src="${escHtml(image.src)}"
+          alt="User image"
+          loading="lazy"
+        />
+        <figcaption class="message-inline-image__meta">${escHtml(image.mimeType)}</figcaption>
+      </figure>
+    `)
+    lastIndex = inlineUserImagePattern.lastIndex
+  }
+
+  if (!matchedImage) return renderMarkdown(content)
+
+  if (lastIndex < content.length) {
+    const textChunk = content.slice(lastIndex)
+    if (textChunk) parts.push(renderMarkdown(textChunk))
+  }
+
+  return parts.join('')
+}
+
 function contentImageSource(record: Record<string, unknown> | null): string | null {
   if (!record) return null
   const mimeType = recordString(record, 'mimeType')
@@ -3568,7 +3624,7 @@ function renderMessage(msg: Message): string {
     return `
       <div class="message message--user" data-msg-id="${escHtml(msg.id)}">
         <div class="message-group">
-          ${msg.content ? `<div class="message-prompt message-prompt--md">${renderMarkdown(msg.content)}</div>` : ''}
+          ${msg.content ? `<div class="message-prompt message-prompt--md">${renderUserMessageHTML(msg.content)}</div>` : ''}
           ${attachmentsHTML}
           <div class="message-meta">
             <span class="message-time">${formatTimestamp(msg.timestamp)}</span>

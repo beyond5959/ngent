@@ -1155,7 +1155,7 @@ body {
 
 .chat-title {
   min-width: 0;
-  font-size: 30px;
+  font-size: 26px;
   font-weight: 680;
   letter-spacing: -0.03em;
   color: var(--text-1);
@@ -1768,6 +1768,34 @@ body {
   border-radius: 12px;
   background: var(--bg-inset);
   object-fit: contain;
+}
+
+.message-inline-image {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.message-inline-image__img {
+  display: block;
+  max-width: min(100%, 560px);
+  max-height: 360px;
+  width: auto;
+  height: auto;
+  border: 1px solid color-mix(in srgb, var(--prompt-border) 84%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--prompt-bg) 92%, white 8%);
+  box-shadow: var(--shadow-sm);
+  object-fit: contain;
+}
+
+.message-inline-image__meta {
+  color: var(--text-3);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  line-height: 1.4;
+  word-break: break-all;
 }
 
 .message-plan {
@@ -3093,7 +3121,7 @@ button:active:not(:disabled),
   }
 
   .chat-title {
-    font-size: 24px;
+    font-size: 22px;
   }
 
   .chat-header-subtitle {

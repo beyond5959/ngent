@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-058: Render bracketed inline base64 user-image placeholders as safe Web UI previews. (Accepted)
 - ADR-054: Refresh the embedded Web UI as a premium workbench without changing behavior. (Accepted)
 - ADR-053: Replace `slog` JSON output with a human-readable stderr logger and colored access logs. (Accepted)
 - ADR-001: HTTP/JSON API with SSE streaming transport. (Accepted)
@@ -1529,3 +1530,25 @@ Use this template for new decisions.
   - upload files to a new ngent HTTP asset endpoint and send remote URLs (rejected: unnecessary extra surface and weaker local-first story).
   - embed file contents directly into prompt text (rejected: loses ACP structure, MIME metadata, and scales poorly for binary files).
   - add a separate pre-upload API that returns opaque ids (rejected: more round trips and more state than needed for the current Web UI flow).
+
+## ADR-058: Render bracketed inline base64 user-image placeholders as safe Web UI previews
+
+- Status: Accepted
+- Date: 2026-03-26
+- Context:
+  - some user messages now arrive with inline image payloads serialized directly into the visible text as placeholders beginning with `[Image: data:image/...;base64,...]`.
+  - the Web UI previously fed the entire user message through markdown rendering unchanged, so those placeholders appeared as long raw base64 blobs inside the chat bubble.
+  - attachment cards already cover structured uploads, but these placeholder-style images live inside ordinary `msg.content` text and therefore need a separate render path.
+- Decision:
+  - add a user-message-only renderer that scans for bracketed inline placeholders matching `data:image/*;base64,...`.
+  - accept only image data URLs, normalize incidental whitespace out of the base64 payload, and render each valid placeholder as an inline preview image inside the existing user bubble.
+  - keep all surrounding text on the existing markdown path and leave malformed or unsupported placeholders untouched as literal text.
+  - preserve the original raw message string for copy actions and stored history; the change is presentation-only.
+- Consequences:
+  - user messages containing inline base64 image placeholders become immediately readable in the Web UI without changing backend contracts.
+  - the renderer remains fail-closed against non-image `data:` payloads because only `data:image/*;base64,...` is promoted to an `<img>`.
+  - markdown behavior around ordinary text stays consistent, though placeholder parsing is intentionally targeted at the bracketed image form rather than arbitrary embedded binary text.
+- Alternatives considered:
+  - require upstream senders to convert these images into structured attachments first (rejected: existing message streams already contain the placeholder form).
+  - render every `data:` URL found in user text as an image (rejected: too permissive and unsafe).
+  - leave the placeholder as raw text and rely on copy/paste elsewhere (rejected: poor UX for image-bearing prompts).

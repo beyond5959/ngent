@@ -758,3 +758,16 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - the composer footer order is `Attachment -> Model -> Reasoning` on the left, mirrored by `Send` on the right.
   - attachments are held in thread-local in-memory draft state until send, with image previews when possible.
   - the transcript renders sent user attachments as cards and rebuilds them from `user_prompt` history events after reload.
+
+### 18.6 Web UI Inline Base64 User Images
+
+- Some upstream/user message sources can embed images directly into `msg.content` as bracketed placeholders such as `[Image: data:image/png;base64,...]`.
+- The Web UI user-message renderer now performs a presentation-only parse for that placeholder form:
+  - accept only `data:image/*;base64,...` payloads.
+  - strip incidental internal whitespace from the data URL before rendering.
+  - emit an inline `<img>` preview inside the existing user bubble for each valid placeholder.
+  - leave malformed or unsupported placeholders on the normal markdown/text path unchanged.
+- This path does not change backend persistence or message copy behavior:
+  - stored message text remains the original raw content.
+  - the UI copy button still copies the unmodified raw message text, including the original placeholder string.
+  - surrounding user text before/after each placeholder is still rendered through the existing markdown renderer.

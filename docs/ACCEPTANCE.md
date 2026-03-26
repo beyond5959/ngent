@@ -547,3 +547,17 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/agents/opencode -run 'TestStreamPromptSendsResourceLinks' -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
+
+## Requirement 29: Web UI Renders Inline Base64 Image Placeholders In User Messages
+
+- Operation:
+  - create or replay a user message whose text contains one or more bracketed placeholders in the form `[Image: data:image/png;base64,...]`, optionally mixed with ordinary markdown/text before or after the placeholder.
+  - open the thread in the Web UI and inspect the user message bubble.
+- Expected:
+  - each valid `data:image/*;base64,...` placeholder is rendered as an inline image preview inside the user bubble instead of raw base64 text.
+  - surrounding user text still renders through the normal markdown path.
+  - malformed or unsupported placeholder strings remain visible as literal text instead of being turned into broken image tags.
+  - the message copy button still copies the original raw message text rather than a transformed HTML representation.
+- Verification commands (executed 2026-03-26):
+  - `cd internal/webui/web && npm run build`
+  - `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 go test ./...`

@@ -156,12 +156,6 @@ const iconDotsHorizontal = `<svg width="14" height="14" viewBox="0 0 14 14" fill
   <circle cx="11" cy="7" r="1.15" fill="currentColor"/>
 </svg>`
 
-const codexIconURL = '/codex-icon.png'
-const geminiIconURL = '/gemini-icon.png'
-const claudeIconURL = '/claude-icon.png'
-const qwenIconURL = '/qwen-icon.png'
-const blackboxIconURL = '/blackbox.png'
-
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -2385,29 +2379,30 @@ const reasoningPickerLabels: ConfigPickerLabels = {
 function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): string {
   const normalized = (agentId || '').trim().toLowerCase()
   const cls = variant === 'thread' ? 'thread-item-avatar-icon' : 'message-avatar-icon'
+  const iconCls = `${cls} ${cls}--contain`
   if (normalized === 'codex') {
-    return `<img src="${codexIconURL}" alt="Codex" class="${cls}" loading="lazy" decoding="async">`
+    return `<span class="${iconCls} ${cls}--codex" role="img" aria-label="Codex"></span>`
   }
   if (normalized === 'gemini') {
-    return `<img src="${geminiIconURL}" alt="Gemini CLI" class="${cls}" loading="lazy" decoding="async">`
+    return `<span class="${iconCls} ${cls}--gemini" role="img" aria-label="Gemini CLI"></span>`
   }
   if (normalized === 'claude') {
-    return `<img src="${claudeIconURL}" alt="Claude Code" class="${cls}" loading="lazy" decoding="async">`
+    return `<span class="${iconCls} ${cls}--claude" role="img" aria-label="Claude Code"></span>`
   }
   if (normalized === 'cursor') {
-    return `<span class="${cls} ${cls}--contain ${cls}--cursor" role="img" aria-label="Cursor CLI"></span>`
+    return `<span class="${iconCls} ${cls}--cursor" role="img" aria-label="Cursor CLI"></span>`
   }
   if (normalized === 'kimi') {
-    return `<span class="${cls} ${cls}--contain ${cls}--kimi" role="img" aria-label="Kimi CLI"></span>`
+    return `<span class="${iconCls} ${cls}--kimi" role="img" aria-label="Kimi CLI"></span>`
   }
   if (normalized === 'opencode') {
-    return `<span class="${cls} ${cls}--contain ${cls}--opencode" role="img" aria-label="OpenCode"></span>`
+    return `<span class="${iconCls} ${cls}--opencode" role="img" aria-label="OpenCode"></span>`
   }
   if (normalized === 'qwen') {
-    return `<img src="${qwenIconURL}" alt="Qwen Code" class="${cls}" loading="lazy" decoding="async">`
+    return `<span class="${iconCls} ${cls}--qwen" role="img" aria-label="Qwen Code"></span>`
   }
   if (normalized === 'blackbox') {
-    return `<img src="${blackboxIconURL}" alt="BLACKBOX AI" class="${cls}" loading="lazy" decoding="async">`
+    return `<span class="${iconCls} ${cls}--blackbox" role="img" aria-label="BLACKBOX AI"></span>`
   }
   return escHtml((agentId || 'A').slice(0, 1).toUpperCase())
 }

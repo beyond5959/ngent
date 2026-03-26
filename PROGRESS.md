@@ -19,6 +19,7 @@ This file is the source of milestone progress, validation commands, and next act
   - upgraded interaction polish across thread rows, session cards, slash-command popover, settings drawer, new-agent modal, permission cards, and attachment chips.
   - refreshed the visual token system around a restrained teal accent, warmer neutral surfaces, deeper shadows, larger radii, and a more intentional system-font stack while keeping light/dark themes and responsive behavior.
   - follow-up: reduced the chat-header session title size on both desktop and narrow/mobile breakpoints so long titles feel less heavy and consume less vertical attention.
+  - follow-up: switched sidebar/chat provider avatars from inline `<img>` tags to CSS background-image icons so session switches and `New session` resets no longer trigger repeat icon fetches for Codex avatars.
   - validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`

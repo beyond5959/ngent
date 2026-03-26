@@ -52,6 +52,11 @@
 
   /* Scrollbar */
   --scrollbar-thumb: rgba(83, 96, 88, 0.32);
+  --codex-icon-image: url('/codex-icon.png');
+  --gemini-icon-image: url('/gemini-icon.png');
+  --claude-icon-image: url('/claude-icon.png');
+  --qwen-icon-image: url('/qwen-icon.png');
+  --blackbox-icon-image: url('/blackbox.png');
   --cursor-icon-image: url('/cursor-icon-light.png');
   --kimi-icon-image: url('/kimi-icon.png');
   --opencode-icon-image: url('/opencode-icon.png');
@@ -122,6 +127,11 @@
 
   --permission-border: #d97706;
   --scrollbar-thumb: rgba(169, 184, 174, 0.26);
+  --codex-icon-image: url('/codex-icon.png');
+  --gemini-icon-image: url('/gemini-icon.png');
+  --claude-icon-image: url('/claude-icon.png');
+  --qwen-icon-image: url('/qwen-icon.png');
+  --blackbox-icon-image: url('/blackbox.png');
   --shadow-sm: 0 12px 24px rgba(0, 0, 0, 0.24);
   --shadow-md: 0 28px 56px rgba(0, 0, 0, 0.34);
   --shadow-lg: 0 34px 90px rgba(0, 0, 0, 0.4);
@@ -474,6 +484,27 @@ body {
   object-fit: contain;
 }
 
+.thread-item-avatar-icon--codex {
+  background-image: var(--codex-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.thread-item-avatar-icon--gemini {
+  background-image: var(--gemini-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.thread-item-avatar-icon--claude {
+  background-image: var(--claude-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
 .thread-item-avatar-icon--kimi {
   background-image: var(--kimi-icon-image);
   background-position: center;
@@ -490,6 +521,20 @@ body {
 
 .thread-item-avatar-icon--opencode {
   background-image: var(--opencode-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.thread-item-avatar-icon--qwen {
+  background-image: var(--qwen-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.thread-item-avatar-icon--blackbox {
+  background-image: var(--blackbox-icon-image);
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
@@ -1549,6 +1594,27 @@ body {
   object-fit: contain;
 }
 
+.message-avatar-icon--codex {
+  background-image: var(--codex-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.message-avatar-icon--gemini {
+  background-image: var(--gemini-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.message-avatar-icon--claude {
+  background-image: var(--claude-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
 .message-avatar-icon--kimi {
   background-image: var(--kimi-icon-image);
   background-position: center;
@@ -1565,6 +1631,20 @@ body {
 
 .message-avatar-icon--opencode {
   background-image: var(--opencode-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.message-avatar-icon--qwen {
+  background-image: var(--qwen-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.message-avatar-icon--blackbox {
+  background-image: var(--blackbox-icon-image);
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;

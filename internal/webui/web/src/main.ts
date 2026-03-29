@@ -50,6 +50,10 @@ const iconSend = `<svg width="14" height="14" viewBox="0 0 15 15" fill="none" ar
   <path d="M1.5 7.5h12M8.5 2l5 5.5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
+const iconStop = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+  <rect x="3" y="3" width="8" height="8" rx="1.6" fill="currentColor"/>
+</svg>`
+
 const iconAttachment = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
   <path d="M9 12.5 14.7 6.8a3 3 0 1 1 4.24 4.24l-7.42 7.42a5 5 0 1 1-7.07-7.08l7.78-7.77" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
@@ -1911,12 +1915,19 @@ async function switchThreadSession(thread: Thread, nextSessionID: string): Promi
   await syncSelectedSessionSelection(thread.threadId)
 }
 
-async function syncSelectedSessionSelection(threadId: string): Promise<void> {
+async function syncSelectedSessionSelection(
+  threadId: string,
+  options?: { allowWhileThreadStreaming?: boolean },
+): Promise<void> {
   const thread = store.get().threads.find(item => item.threadId === threadId)
   if (!thread) return
 
   const override = selectedSessionOverride(threadId)
-  if (!override || hasThreadStream(threadId) || sessionSwitchingThreads.has(threadId)) {
+  const allowWhileThreadStreaming = !!options?.allowWhileThreadStreaming
+  if (!override || sessionSwitchingThreads.has(threadId)) {
+    return
+  }
+  if (!allowWhileThreadStreaming && hasThreadStream(threadId)) {
     return
   }
 
@@ -4210,9 +4221,9 @@ function updateInputState(): void {
   const streamState = getActiveChatStreamState()
   const isStreaming   = !!streamState
   const isCancelling  = streamState?.status === 'cancelling'
+  const canCancelTurn = isStreaming && !!streamState?.turnId && !isCancelling
 
   const sendBtn  = document.getElementById('send-btn')   as HTMLButtonElement   | null
-  const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement   | null
   const inputEl  = document.getElementById('message-input') as HTMLTextAreaElement | null
   const attachmentBtn = document.getElementById('attachment-btn') as HTMLButtonElement | null
   const isSwitchingConfig = !!activeThreadId && threadConfigSwitching.has(activeThreadId)
@@ -4223,7 +4234,15 @@ function updateInputState(): void {
   const disableComposerActions = isStreaming || isSwitchingConfig || isSwitchingSession
   const disableComposerInput = isSwitchingConfig || isSwitchingSession
 
-  if (sendBtn)  sendBtn.disabled  = disableComposerActions || !hasComposerContent
+  if (sendBtn) {
+    sendBtn.disabled = isStreaming ? !canCancelTurn : disableComposerActions || !hasComposerContent
+    sendBtn.classList.toggle('btn-send--cancel', isStreaming)
+    sendBtn.innerHTML = isStreaming ? iconStop : iconSend
+    sendBtn.setAttribute('aria-label', isStreaming ? 'Cancel turn' : 'Send message')
+    sendBtn.title = isStreaming
+      ? (isCancelling ? 'Cancelling…' : 'Cancel turn')
+      : 'Send message'
+  }
   if (inputEl)  inputEl.disabled  = disableComposerInput
   if (attachmentBtn) attachmentBtn.disabled = disableComposerActions
   document.querySelectorAll<HTMLButtonElement>('.composer-attachment__remove').forEach(button => {
@@ -4241,11 +4260,6 @@ function updateInputState(): void {
       menu?.setAttribute('hidden', 'true')
     }
   })
-  if (cancelBtn) {
-    cancelBtn.style.display = isStreaming ? '' : 'none'
-    cancelBtn.disabled      = isCancelling
-    cancelBtn.textContent   = isCancelling ? 'Cancelling…' : 'Cancel'
-  }
   updateSlashCommandMenu()
 }
 
@@ -4558,7 +4572,6 @@ function renderChatThread(t: Thread): string {
         </div>
       </div>
       <div class="chat-header-right">
-        <button class="btn btn-sm btn-danger" id="cancel-btn" style="display:none" aria-label="Cancel turn">Cancel</button>
         ${createdLabel ? `<span class="chat-header-meta">${escHtml(createdLabel)}</span>` : ''}
         ${renderSessionInfoPopover(t)}
       </div>
@@ -4599,12 +4612,12 @@ function renderChatThread(t: Thread): string {
               ${renderComposerConfigSwitch('reasoning', 'Reasoning', reasoningPickerData, reasoningPickerLabels, isSwitching, showReasoningSwitch)}
             </div>
           </div>
-          <button class="btn btn-primary btn-send" id="send-btn" aria-label="Send message">
+          <button class="btn btn-primary btn-send" id="send-btn" aria-label="Send message" title="Send message">
             ${iconSend}
           </button>
         </div>
       </div>
-      <div class="input-hint"><span class="input-hint-label">Shortcuts</span> Press <kbd>⌘ Enter</kbd> to send · <kbd>⌘ V</kbd> to paste image/file · <kbd>Esc</kbd> to cancel · Type <kbd>/</kbd> for slash commands</div>
+      <div class="input-hint"><span class="input-hint-label">Shortcuts</span> Press <kbd>⌘ Enter</kbd> to send · Type <kbd>/</kbd> for slash commands</div>
     </div>`
 }
 
@@ -4703,7 +4716,6 @@ function updateChatArea(): void {
   bindInputResize()
   bindComposerAttachments(thread)
   bindSendHandler()
-  bindCancelHandler()
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
 
@@ -5025,6 +5037,7 @@ function bindInputResize(): void {
       }
     }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      if (getActiveChatStreamState()) return
       e.preventDefault()
       document.getElementById('send-btn')?.click()
     }
@@ -5156,7 +5169,13 @@ function bindComposerAttachments(thread: Thread): void {
 // ── Send ──────────────────────────────────────────────────────────────────
 
 function bindSendHandler(): void {
-  document.getElementById('send-btn')?.addEventListener('click', handleSend)
+  document.getElementById('send-btn')?.addEventListener('click', () => {
+    if (getActiveChatStreamState()) {
+      void handleCancel()
+      return
+    }
+    void handleSend()
+  })
 }
 
 async function handleSend(): Promise<void> {
@@ -5172,7 +5191,7 @@ async function handleSend(): Promise<void> {
 
   const thread = threads.find(t => t.threadId === activeThreadId)
   if (!thread || sessionSwitchingThreads.has(thread.threadId)) return
-  await syncSelectedSessionSelection(thread.threadId)
+  await syncSelectedSessionSelection(thread.threadId, { allowWhileThreadStreaming: true })
   if (sessionSwitchingThreads.has(thread.threadId)) return
 
   const refreshedThread = store.get().threads.find(t => t.threadId === activeThreadId)
@@ -5549,10 +5568,6 @@ async function handleSend(): Promise<void> {
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────
-
-function bindCancelHandler(): void {
-  document.getElementById('cancel-btn')?.addEventListener('click', () => void handleCancel())
-}
 
 async function handleCancel(): Promise<void> {
   const scopeKey = activeChatScopeKey()

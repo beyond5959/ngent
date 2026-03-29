@@ -237,6 +237,7 @@ const sessionPanelRequestSeqByThread = new Map<string, number>()
 const sessionPanelScrollTopByThread = new Map<string, number>()
 const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
+const composerDraftByScope = new Map<string, string>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 
@@ -433,6 +434,37 @@ function cloneMessageAttachments(
 
 function threadComposerAttachments(threadId: string): ComposerAttachmentDraft[] {
   return composerAttachmentsByThread.get(threadId) ?? []
+}
+
+function composerDraft(scopeKey: string): string {
+  return composerDraftByScope.get(scopeKey) ?? ''
+}
+
+function setComposerDraft(scopeKey: string, value: string): void {
+  scopeKey = scopeKey.trim()
+  if (!scopeKey) return
+  if (value.length) {
+    composerDraftByScope.set(scopeKey, value)
+  } else {
+    composerDraftByScope.delete(scopeKey)
+  }
+}
+
+function setActiveComposerDraft(value: string): void {
+  const scopeKey = activeChatScopeKey()
+  if (!scopeKey) return
+  setComposerDraft(scopeKey, value)
+}
+
+function moveComposerDraft(oldScopeKey: string, nextScopeKey: string): void {
+  oldScopeKey = oldScopeKey.trim()
+  nextScopeKey = nextScopeKey.trim()
+  if (!oldScopeKey || !nextScopeKey || oldScopeKey === nextScopeKey) return
+
+  const draft = composerDraftByScope.get(oldScopeKey)
+  composerDraftByScope.delete(oldScopeKey)
+  if (draft === undefined || composerDraftByScope.has(nextScopeKey)) return
+  composerDraftByScope.set(nextScopeKey, draft)
 }
 
 function attachmentPreviewURL(file: File): string | undefined {
@@ -1612,6 +1644,7 @@ function rebindScopeRuntime(oldScopeKey: string, nextScopeKey: string, nextSessi
     loadedHistoryScopeKeys.delete(oldScopeKey)
     loadedHistoryScopeKeys.add(nextScopeKey)
   }
+  moveComposerDraft(oldScopeKey, nextScopeKey)
   if (activeStreamScopeKey === oldScopeKey) {
     activeStreamScopeKey = nextScopeKey
   }
@@ -2800,6 +2833,11 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   Array.from(reboundFreshSessionScopeKeys).forEach(scopeKey => {
     if (scopeKey.startsWith(threadScopePrefix)) {
       reboundFreshSessionScopeKeys.delete(scopeKey)
+    }
+  })
+  Array.from(composerDraftByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      composerDraftByScope.delete(scopeKey)
     }
   })
   sessionPanelStateByThread.delete(threadId)
@@ -4436,10 +4474,10 @@ function selectSlashCommand(commandName: string): void {
   if (!command) return
 
   inputEl.value = `/${command.name}${command.inputHint ? ' ' : ''}`
+  setActiveComposerDraft(inputEl.value)
   inputEl.focus()
   inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length)
-  inputEl.style.height = 'auto'
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 220) + 'px'
+  syncComposerInputHeight(inputEl)
   resetSlashCommandLookup()
   closeSlashCommandMenu()
 }
@@ -4553,6 +4591,8 @@ function getCurrentSessionTitle(t: Thread): string {
 
 function renderChatThread(t: Thread): string {
   const sessionTitleLabel = getCurrentSessionTitle(t)
+  const scopeKey = threadChatScopeKey(t)
+  const draft = composerDraft(scopeKey)
   const createdLabel = t.createdAt ? `Created ${formatTimestamp(t.createdAt)}` : ''
   const attachmentCount = threadComposerAttachments(t.threadId).length
   const selectedModelID = fallbackThreadModelID(t)
@@ -4621,7 +4661,7 @@ function renderChatThread(t: Thread): string {
           placeholder="Ask for changes, inspect code, or attach files"
           rows="1"
           aria-label="Message input"
-        ></textarea>
+        >${escHtml(draft)}</textarea>
         <div class="input-compose-bar">
           <div class="input-compose-left">
             <input id="attachment-input" class="attachment-input" type="file" multiple hidden />
@@ -5036,10 +5076,10 @@ function bindInputResize(): void {
   const input = document.getElementById('message-input') as HTMLTextAreaElement | null
   const menuEl = document.getElementById('slash-command-menu') as HTMLDivElement | null
   if (!input) return
-  const maxHeight = 220
+
   input.addEventListener('input', () => {
-    input.style.height = 'auto'
-    input.style.height = Math.min(input.scrollHeight, maxHeight) + 'px'
+    setActiveComposerDraft(input.value)
+    syncComposerInputHeight(input)
     updateInputState()
     updateSlashCommandMenu()
   })
@@ -5110,6 +5150,14 @@ function bindInputResize(): void {
     slashCommandSelectedIndex = index
     updateSlashCommandMenu()
   })
+
+  syncComposerInputHeight(input)
+}
+
+function syncComposerInputHeight(input: HTMLTextAreaElement): void {
+  const maxHeight = 220
+  input.style.height = 'auto'
+  input.style.height = Math.min(input.scrollHeight, maxHeight) + 'px'
 }
 
 function renderComposerAttachments(threadId: string): void {
@@ -5240,6 +5288,7 @@ async function handleSend(): Promise<void> {
 
   // Clear input immediately
   inputEl.value = ''
+  setComposerDraft(capturedScopeKey, '')
   inputEl.style.height = 'auto'
   clearThreadComposerAttachments(capturedThreadID)
   renderComposerAttachments(capturedThreadID)

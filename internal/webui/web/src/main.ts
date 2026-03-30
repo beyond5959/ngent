@@ -174,6 +174,10 @@ const iconGitBranch = `<svg width="13" height="13" viewBox="0 0 16 16" fill="non
   <path d="M4 6.15v1.05A1.8 1.8 0 0 0 5.8 9h4.85" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
+const iconFolder = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -2136,7 +2140,7 @@ function renderSessionPanel(): string {
             <span class="session-panel-agent">${escHtml(agentDisplayName(thread.agent ?? ''))}</span>
           </div>
           <div class="session-panel-subtitle" title="${escHtml(thread.cwd)}">
-            <span class="session-panel-subtitle__text">${escHtml(thread.cwd)}</span>
+            ${renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')}
           </div>
         </div>
         <div class="session-panel-actions">
@@ -4733,12 +4737,27 @@ function renderChatEmpty(): string {
     </div>`
 }
 
-function renderSessionInfoField(label: string, value: string, copyLabel: string): string {
+function renderProjectPathLabel(value: string, rootClass: string, labelClass = ''): string {
+  const labelClassName = labelClass ? ` ${labelClass}` : ''
+  return `
+    <span class="project-path ${rootClass}">
+      <span class="project-path__icon" aria-hidden="true">${iconFolder}</span>
+      <span class="project-path__label${labelClassName}">${escHtml(value)}</span>
+    </span>`
+}
+
+function renderSessionInfoField(label: string, value: string, copyLabel: string, renderAsProjectPath = false): string {
+  const valueHTML = renderAsProjectPath
+    ? `<div class="session-info-value session-info-value--path" title="${escHtml(value)}">
+        ${renderProjectPathLabel(value, 'session-info-value__content', 'session-info-value__label')}
+      </div>`
+    : `<div class="session-info-value" title="${escHtml(value)}">${escHtml(value)}</div>`
+
   return `
     <div class="session-info-field">
       <div class="session-info-label">${label}</div>
       <div class="session-info-row">
-        <div class="session-info-value" title="${escHtml(value)}">${escHtml(value)}</div>
+        ${valueHTML}
         <button
           class="btn btn-icon session-info-copy-btn"
           type="button"
@@ -4772,7 +4791,7 @@ function renderSessionInfoPopover(thread: Thread): string {
       <div class="session-info-popover" id="session-info-panel" role="dialog" aria-label="Session Info" hidden>
         <div class="session-info-heading">Session Info</div>
         ${renderSessionInfoField('Session ID', sessionID, 'Copy session ID')}
-        ${renderSessionInfoField('Working Directory', thread.cwd, 'Copy working directory')}
+        ${renderSessionInfoField('Working Directory', thread.cwd, 'Copy working directory', true)}
       </div>
     </div>`
 }
@@ -4931,7 +4950,7 @@ function renderChatThread(t: Thread): string {
             <h2 class="chat-title" title="${escHtml(sessionTitleLabel)}">${escHtml(sessionTitleLabel)}</h2>
           </div>
           <div class="chat-header-subtitle" title="${escHtml(t.cwd)}">
-            <span class="chat-header-path">${escHtml(t.cwd)}</span>
+            ${renderProjectPathLabel(t.cwd, 'chat-header-path', 'chat-header-path__label')}
           </div>
         </div>
       </div>

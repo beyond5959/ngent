@@ -2531,7 +2531,7 @@ body {
   color: var(--text-1);
   line-height: 1.7;
   max-height: 220px;
-  min-height: 82px;
+  min-height: 72px;
   overflow-y: auto;
   padding: 4px 4px 2px;
 }
@@ -4263,7 +4263,7 @@ button:active:not(:disabled),
 
   --scrollbar-thumb: rgba(75, 91, 104, 0.28);
 
-  --sidebar-w: 288px;
+  --sidebar-w: 272px;
   --session-sidebar-w: 264px;
   --header-h: 72px;
 
@@ -4847,10 +4847,53 @@ button:active:not(:disabled),
   font-size: 12px;
   color: var(--text-3);
   line-height: 1.55;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .session-panel-actions {
   gap: 6px;
+}
+
+.project-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.project-path__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: currentColor;
+  opacity: .72;
+}
+
+.project-path__icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.project-path__label {
+  min-width: 0;
+}
+
+.session-panel-subtitle__text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 100%;
+}
+
+.session-panel-subtitle__text .project-path__label {
+  white-space: nowrap;
 }
 
 .session-new-btn--full {
@@ -5002,6 +5045,11 @@ button:active:not(:disabled),
 
 .chat-header-path {
   min-width: 0;
+  max-width: 100%;
+}
+
+.chat-header-path__label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5044,6 +5092,29 @@ button:active:not(:disabled),
   border-radius: 8px;
   background: var(--bg-inset);
   font-size: 12px;
+}
+
+.session-info-value--path {
+  display: flex;
+}
+
+.session-info-value__content {
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.session-info-value__content .project-path__icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.session-info-value__label {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-list-wrap {
@@ -5236,7 +5307,7 @@ button:active:not(:disabled),
 }
 
 .message-input {
-  min-height: 108px;
+  min-height: 80px;
   max-height: 260px;
   padding: 2px 0 4px;
   font-size: 14px;
@@ -6043,6 +6114,10 @@ kbd {
   box-shadow: var(--shadow-lg);
 }
 
+.modal--new-thread {
+  max-width: 720px;
+}
+
 .modal-header {
   min-height: 0;
   padding: 18px 22px 16px;
@@ -6138,7 +6213,7 @@ kbd {
 
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;
 }
 
@@ -6301,7 +6376,7 @@ kbd {
   }
 
   .message-input {
-    min-height: 96px;
+    min-height: 72px;
   }
 
   .input-compose-bar {

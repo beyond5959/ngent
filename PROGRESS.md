@@ -11,7 +11,29 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-03-27)
+## Latest Update (2026-03-30)
+
+- `Post-M8` restrained desktop-workbench Web UI redesign completed:
+  - Phase 0 baseline completed:
+    - reviewed the embedded SPA implementation and captured before screenshots for the home empty state, `New Agent` modal, and chat workspace.
+  - Phase 1-2 visual foundation and shell completed:
+    - replaced the earlier glassy/ascii-branded presentation with a denser desktop-tool direction built on cooler neutral surfaces, restrained blue emphasis, tighter radii, flatter shadows, and a local/system font stack.
+    - removed decorative background treatments and rebuilt the shell so the main chat workspace is visually primary while the left rails recede.
+    - redesigned the no-thread workspace into an anchored workbench overview panel with one primary action instead of a large floating empty state.
+  - Phase 3-5 navigation, creation flow, and composer completed:
+    - converted thread and session browsing into more compact tool-style lists with lighter hover feedback and a restrained active-state marker instead of card-like highlight blocks.
+    - rebuilt the `New Agent` modal around a working-directory-first flow; agent selection now reads like a mature runtime picker and advanced JSON options are visually demoted.
+    - compressed the chat header hierarchy and turned the composer into a cleaner editor-like control surface with secondary model/reasoning controls and a flatter send action.
+  - Phase 6-7 message system, dark mode, and responsive refinement completed:
+    - unified assistant content, reasoning, plan, tool calls, markdown blocks, and permission review under one document-like section language rather than unrelated plugin-card styles.
+    - tuned dark mode independently instead of relying on a simple inversion, and kept the mobile layout structurally coherent when the side rails collapse.
+  - behavior compatibility:
+    - kept the existing no-framework Vite + TypeScript SPA architecture, HTTP/JSON API usage, POST SSE stream path, `activeStreamMsgId` sentinel semantics, history-load guards, permission workflow, `bindMarkdownControls(...)` calls, and existing thread/session/input/cancel bindings intact.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-03-27)
 
 - `Post-M8` shared-browser thread/session visibility completed:
   - changed thread list/get/update/delete and other thread-scoped APIs to resolve threads globally by `threadId` instead of requiring the creating browser's `X-Client-ID`.
@@ -46,11 +68,11 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
 
-- `Post-M8` Web UI premium visual refresh completed:
+- `Post-M8` initial Web UI visual refresh completed (later superseded by the 2026-03-30 desktop-workbench redesign):
   - kept the existing no-framework SPA data flow, SSE behavior, store semantics, and API contracts unchanged; the change set is UI-only.
-  - rebuilt the shell into a glass-panel workspace with a richer desktop feel: layered backdrop, elevated sidebars, stronger header hierarchy, cleaner empty states, and improved chat/composer surfaces.
+  - refreshed the shell, navigation, composer, overlays, and permission surfaces as an earlier quality pass before the later restrained workbench redesign.
   - upgraded interaction polish across thread rows, session cards, slash-command popover, settings drawer, new-agent modal, permission cards, and attachment chips.
-  - refreshed the visual token system around a restrained teal accent, warmer neutral surfaces, deeper shadows, larger radii, and a more intentional system-font stack while keeping light/dark themes and responsive behavior.
+  - updated the visual token system while keeping light/dark themes and responsive behavior intact.
   - follow-up: reduced the chat-header session title size on both desktop and narrow/mobile breakpoints so long titles feel less heavy and consume less vertical attention.
   - follow-up: switched sidebar/chat provider avatars from inline `<img>` tags to CSS background-image icons so session switches and `New session` resets no longer trigger repeat icon fetches for Codex avatars.
   - validation:
@@ -426,8 +448,8 @@ This file is the source of milestone progress, validation commands, and next act
 - `F2` completed:
   - created `src/types.ts`: full TypeScript interface set (Thread, Turn, Message, PermissionRequest, StreamState, AppState, etc.).
   - created `src/utils.ts`: generateUUID (crypto.randomUUID + fallback), formatTimestamp, formatRelativeTime, isAbsolutePath, escHtml, debounce.
-  - created `src/store.ts`: singleton AppStore with pub/sub (subscribe → unsubscribe fn), localStorage persistence for clientId/authToken/serverUrl/theme, resetClientId() helper.
-  - created `src/components/settings-panel.ts`: slide-in drawer with Client ID display+copy+reset, Bearer Token input, 3-way theme toggle (Light/System/Dark), Server URL input; all changes persist via store immediately.
+  - created `src/store.ts`: singleton AppStore with pub/sub (subscribe → unsubscribe fn) and localStorage persistence for browser settings.
+  - created `src/components/settings-panel.ts`: slide-in drawer for browser-local connection/auth/theme controls; settings persist immediately.
   - updated `src/main.ts`: imports store for theme init, wires settings button → settingsPanel.open(), system-theme change listener.
   - added settings drawer CSS to style.css (overlay, slide-in animation, theme button group).
   - implemented complete CSS design system with CSS custom properties for light/dark themes (`[data-theme]`).
@@ -449,7 +471,7 @@ This file is the source of milestone progress, validation commands, and next act
   - synchronized test fixtures and API documentation examples with the same canonical names.
   - `/v1/agents` output uses display names (not lowercase ids): `Codex`, `Claude Code`.
 - `F3` completed:
-  - created `src/api.ts`: ApiClient with ApiError class; getAgents(), getThreads(), createThread(); reads serverUrl/clientId/authToken from store on every request.
+  - created `src/api.ts`: ApiClient with ApiError class; getAgents(), getThreads(), createThread(); reads serverUrl/authToken from store on every request and sends the compatibility client header internally.
   - created `src/components/new-thread-modal.ts`: centered modal with agent card grid (radio, disabled for unavailable), CWD absolute-path validation, optional title, collapsible JSON agent-options textarea, submit with spinner, error banner; targeted DOM updates avoid full re-render during typing.
   - appended modal/form/agent-grid/skeleton/spinner CSS to style.css.
   - rewrote `src/main.ts`: init() loads agents+threads in parallel, store.subscribe drives updateThreadList()+updateChatArea(); skeleton loading state; search filter; thread click sets activeThreadId; new-thread button opens modal; error banner on API failure.
@@ -1146,12 +1168,3 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
-
-- 2026-03-26: unified the startup banner and Web UI sidebar around an ink-green ASCII `NGENT` brand mark.
-  - recolored the startup ASCII logo to the same ink-green used by the Web UI accent (`#0f766e`), but only when stderr is attached to a TTY so redirected output stays plain text without raw ANSI escapes.
-  - replaced the Web UI sidebar's old `N` monogram plus `Ngent` wordmark with the exact same multi-line block `NGENT` art used by the CLI banner, scaling it down with CSS and showing it directly in the sidebar header instead of inside a framed badge.
-  - refined the Web UI brand spacing by rendering `N/G/E/N/T` as separate block-art columns with flex `gap`, so only inter-letter spacing changes while each letter's internal ASCII strokes stay identical to the CLI glyphs.
-  - added CLI logo regression coverage for both ANSI-enabled rendering and non-TTY plain-text rendering.
-  - executed validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`

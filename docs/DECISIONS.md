@@ -2,9 +2,10 @@
 
 ## ADR Index
 
+- ADR-065: Recast the embedded Web UI as a restrained desktop workbench. (Accepted)
 - ADR-064: Share threads and sessions across browser-scoped client IDs on the same ngent instance. (Accepted)
 - ADR-058: Render bracketed inline base64 user-image placeholders as safe Web UI previews. (Accepted)
-- ADR-054: Refresh the embedded Web UI as a premium workbench without changing behavior. (Accepted)
+- ADR-054: Refresh the embedded Web UI as a premium workbench without changing behavior. (Superseded)
 - ADR-053: Replace `slog` JSON output with a human-readable stderr logger and colored access logs. (Accepted)
 - ADR-001: HTTP/JSON API with SSE streaming transport. (Accepted)
 - ADR-002: Client identity via `X-Client-ID` header. (Accepted)
@@ -57,9 +58,44 @@
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
 
-## ADR-054: Refresh The Embedded Web UI As A Premium Workbench Without Changing Behavior
+## ADR-065: Recast The Embedded Web UI As A Restrained Desktop Workbench
 
 - Status: Accepted
+- Date: 2026-03-30
+- Context:
+  - the earlier premium refresh in ADR-054 improved quality, but the resulting shell still leaned too far toward decorative glass-panel SaaS styling rather than a serious local desktop tool.
+  - product feedback for this iteration explicitly asked for a colder, denser, calmer workbench feel:
+    - no ASCII brand lockup.
+    - no background grids/orbs/glow-heavy blur.
+    - less pill/card-kit styling.
+    - a more precise hierarchy around working directories, threads, sessions, and streamed output.
+  - the runtime and protocol behavior were already correct, so the redesign needed to stay UI-only and preserve the existing store/SSE/DOM interaction model.
+- Decision:
+  - keep all backend, protocol, and streaming behavior unchanged; this redesign is limited to frontend structure, typography, tokens, and interaction treatment.
+  - replace the prior glass-heavy direction with a restrained desktop-workbench system built on:
+    - neutral graphite/light-steel surfaces.
+    - a single restrained blue accent reserved for actions, focus, and active markers.
+    - tighter radii, flatter shadows, and stronger border hierarchy.
+    - an offline-friendly local/system font stack with a monospace secondary voice for tool metadata.
+  - make the chat workspace the clear visual center:
+    - left thread rail stays present but quieter.
+    - session rail becomes an auxiliary context column rather than a third heavy primary container.
+    - empty states anchor to bounded panels instead of floating in large whitespace.
+  - make working directory selection the primary field in the thread-creation flow, and visually demote advanced JSON agent options.
+  - unify reasoning, plan, tool-call, markdown, and permission blocks under one document-like section language instead of distinct card families.
+- Consequences:
+  - the Web UI reads more like a mature local development tool and less like a decorative AI SaaS demo.
+  - interaction semantics remain stable because ids, bindings, and stream/history contracts were preserved.
+  - the visual system is now less dependent on blur/backdrop support and therefore degrades more predictably across browsers.
+  - ADR-054's glass-heavy styling direction and the earlier shared ASCII browser-branding experiment are no longer current guidance for the embedded Web UI.
+- Alternatives considered:
+  - keep the previous shell and only tweak color/radius values (rejected: too shallow for the requested direction change).
+  - push further into animated/editor-chrome spectacle (rejected: would conflict with the requested calm, professional tool posture).
+  - add bundled webfonts or a component framework to chase richer presentation (rejected: unnecessary for the requested result and inconsistent with the local-first no-framework Web UI constraints).
+
+## ADR-054: Refresh The Embedded Web UI As A Premium Workbench Without Changing Behavior
+
+- Status: Superseded by ADR-065
 - Date: 2026-03-26
 - Context:
   - the existing embedded Web UI was functionally complete, but the visual quality still read like an internal tool prototype.
@@ -525,12 +561,12 @@
 - Date: 2026-02-28
 - Context: users need a visual client to interact with the Ngent without writing curl commands or building a separate frontend project.
 - Decision:
-  - add a Vite + TypeScript (no framework) frontend under `web/src/`.
-  - build output lands in `web/dist/`, embedded via `//go:embed web/dist` in `internal/webui/webui.go`.
+  - add a Vite + TypeScript (no framework) frontend under `internal/webui/web/src/`.
+  - build output lands in `internal/webui/web/dist/`, embedded via `//go:embed web/dist` in `internal/webui/webui.go`.
   - register `GET /` and `GET /assets/*` in `httpapi` (lower priority than all `/v1/*` and `/healthz` routes).
   - SPA fallback: any non-API path returns `index.html`.
-  - `make build-web` produces the dist; `web/dist` is committed so users without Node.js can still `go build`.
-- Consequences: single-binary distribution with no external file dependencies; Go binary size increases by the size of the minified JS/CSS bundle (~200–400 KB estimated). Build pipeline requires Node.js for frontend changes.
+  - `make build-web` produces the dist; `web/dist` is not committed and must be rebuilt locally or in CI before packaging.
+- Consequences: single-binary distribution with no external file dependencies; Go binary size increases by the size of the minified JS/CSS bundle (~200–400 KB estimated). Build pipeline requires Node.js for frontend changes and for any build that packages fresh web assets.
 - Alternatives considered: separate static file directory (requires deployment of two artifacts); WebSocket-only SPA (rejected: SSE already implemented); React/Vue framework (rejected: adds runtime bundle weight and build complexity).
 - Follow-up actions: add `npm run build` to CI pipeline; version-pin Node.js in project tooling docs.
 
@@ -1644,29 +1680,6 @@ Use this template for new decisions.
 - Alternatives considered:
   - keep the old behavior and surface the 409 as a user error (rejected: browsing another session is a read-only UI action and should not feel blocked by an unrelated active turn).
   - relax the server to accept session-changing `PATCH` during active turns (rejected: would violate the existing whole-thread conflict model and risks mutating active agent scope mid-turn).
-
-## ADR-063: Use one ink-green ASCII NGENT brand mark across CLI startup and the Web UI
-
-- Status: Accepted
-- Date: 2026-03-26
-- Context:
-  - ngent already printed a large ASCII `NGENT` mark during startup, but it appeared in plain terminal text and did not visually match the Web UI brand accent.
-  - the Web UI sidebar still used a separate `N` monogram plus `Ngent` wordmark, so the product identity changed noticeably between the service banner and the browser shell.
-  - the product request is to make those two entry points feel like one system by reusing the same ink-green, ASCII-flavored branding.
-- Decision:
-  - treat the Web UI accent ink (`#0f766e`) as the canonical brand color for the ASCII logo treatment.
-  - color only the startup ASCII `NGENT` logo, and only when the banner writer is a real TTY; redirected stderr stays plain text with no ANSI escape sequences.
-  - replace the sidebar monogram/wordmark cluster with the same six-line `NGENT` ASCII art used by the CLI startup banner, scaling it down in CSS rather than introducing a second variant.
-  - render that Web UI logo directly in the sidebar header instead of placing it inside an additional framed badge, so the mark reads like the product wordmark rather than like a separate card widget.
-  - keep the rest of the startup banner structure (`Server` box, agent list, QR section) unchanged so operational scanability does not regress.
-- Consequences:
-  - the first thing users see in the terminal and the first thing they see in the browser now share one recognizable product mark and one color family.
-  - copied or redirected startup logs remain clean plain text because ANSI color is fail-closed on non-TTY writers.
-  - the browser now renders the exact same glyphs as the terminal banner, so the remaining difference between the two surfaces is size rather than logo design.
-- Alternatives considered:
-  - recolor only the CLI banner and keep the Web UI monogram (rejected: still leaves two product marks).
-  - introduce a second compact ASCII variant for the sidebar (rejected: still creates a visible mismatch between terminal and browser branding).
-  - color the whole startup banner box rather than just the logo (rejected: the request was to unify the logo treatment, and extra color on operational details would reduce contrast for server metadata).
 
 ## ADR-064: Share threads and sessions across browser-scoped client IDs on the same ngent instance
 

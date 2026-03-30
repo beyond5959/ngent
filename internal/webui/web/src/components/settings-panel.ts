@@ -26,8 +26,9 @@ function renderPanel(): string {
 
         <div class="settings-header">
           <div class="settings-header-copy">
-            <div class="settings-kicker">Preferences</div>
+            <div class="settings-kicker">Browser Preferences</div>
             <h2 class="settings-title">Settings</h2>
+            <p class="settings-header-desc">Connection, authentication, and theme controls for this browser only.</p>
           </div>
           <button class="btn btn-icon" id="settings-close-btn" aria-label="Close settings">
             ${iconClose}
@@ -36,9 +37,26 @@ function renderPanel(): string {
 
         <div class="settings-body">
           <div class="settings-intro">
-            <div class="settings-intro-badge">Browser-local</div>
-            <p class="settings-intro-copy">Adjust connection and appearance without changing server-side state.</p>
+            <div class="settings-intro-badge">Stored locally</div>
+            <p class="settings-intro-copy">These values stay in local storage and do not mutate server-side Ngent state.</p>
           </div>
+
+          <section class="settings-section">
+            <h3 class="settings-section-title">Connection</h3>
+            <label class="settings-label" for="server-url-input">Server URL</label>
+            <p class="settings-description">
+              Base URL of the Ngent Server API. Change this only when using a reverse proxy or a different local port.
+            </p>
+            <input
+              id="server-url-input"
+              class="settings-input"
+              type="url"
+              placeholder="http://127.0.0.1:8686"
+              value="${escHtml(serverUrl)}"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </section>
 
           <section class="settings-section">
             <h3 class="settings-section-title">Security</h3>
@@ -65,23 +83,6 @@ function renderPanel(): string {
               ${themeBtn('system', 'System')}
               ${themeBtn('dark', 'Dark')}
             </div>
-          </section>
-
-          <section class="settings-section">
-            <h3 class="settings-section-title">Connection</h3>
-            <label class="settings-label" for="server-url-input">Server URL</label>
-            <p class="settings-description">
-              Base URL of the Ngent Server API. Change if using a reverse proxy.
-            </p>
-            <input
-              id="server-url-input"
-              class="settings-input"
-              type="url"
-              placeholder="http://127.0.0.1:8686"
-              value="${escHtml(serverUrl)}"
-              autocomplete="off"
-              spellcheck="false"
-            />
           </section>
 
         </div>

@@ -71,9 +71,12 @@ function renderAgentCard(agent: AgentInfo, selected: boolean): string {
         ${disabled ? 'disabled' : ''}
         class="agent-card-radio"
       />
-      <div class="agent-card-icon">${agentIcon(agent.id)}</div>
-      <span class="agent-card-name">${escHtml(agent.name)}</span>
-      ${disabled ? '<span class="agent-card-status">Unavailable</span>' : ''}
+      <div class="agent-card-icon-shell">
+        <div class="agent-card-icon">${agentIcon(agent.id)}</div>
+      </div>
+      <div class="agent-card-copy">
+        <span class="agent-card-name">${escHtml(agent.name)}</span>
+      </div>
     </label>`
 }
 
@@ -83,81 +86,93 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
 
   return `
     <div class="modal-overlay" id="new-thread-overlay" role="dialog" aria-modal="true" aria-label="New agent">
-      <div class="modal" id="new-thread-modal">
+      <div class="modal modal--new-thread" id="new-thread-modal">
 
         <div class="modal-header">
           <div class="modal-header-copy">
+            <div class="modal-kicker">Create Local Thread</div>
             <h2 class="modal-title">New Agent</h2>
           </div>
           <button class="btn btn-icon" id="new-thread-close" aria-label="Close">${iconClose}</button>
         </div>
 
-        <div class="modal-body">
-          <p class="modal-lead">Choose an agent, point it at a project directory, and optionally preconfigure advanced JSON options.</p>
+        <div class="modal-body modal-body--new-thread">
+          <p class="modal-lead">Choose a working directory first. Ngent will keep this thread and its future sessions grouped under that path.</p>
 
           ${s.error ? `<div class="form-error-banner" id="modal-error">${escHtml(s.error)}</div>` : ''}
 
-          <div class="form-group">
-            <label class="form-label">Agent</label>
-            <div class="agent-grid" id="agent-grid">
-              ${agents.length
-                ? agents.map(a => renderAgentCard(a, a.id === s.selectedAgent)).join('')
-                : '<p class="form-hint">Loading agents…</p>'}
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="cwd-input">
-              Working Directory <span class="form-required">*</span>
-            </label>
-            <div class="path-search-container">
-              <input
-                id="cwd-input"
-                class="settings-input ${cwdInvalid || s.cwdError ? 'settings-input--error' : ''}"
-                type="text"
-                placeholder="Type to search directories in home folder..."
-                value="${escHtml(s.cwd)}"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              ${s.showRecentDirectories && s.recentDirectories.length > 0 && !s.pathSearchQuery ? `
-                <div class="path-search-dropdown" id="path-search-dropdown">
-                  <div class="path-search-header">Recent directories</div>
-                  ${s.recentDirectories.map((path, idx) => `
-                    <div class="path-search-item ${idx === s.pathSearchSelectedIndex ? 'path-search-item--selected' : ''}" data-path="${escHtml(path)}">
-                      ${escHtml(path)}
+          <div class="new-thread-layout">
+            <section class="form-section form-section--primary">
+              <div class="form-section-head">
+                <h3 class="form-section-title">Working Directory</h3>
+                <p class="form-section-desc">Absolute path inside configured allowed roots.</p>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="cwd-input">
+                  Working Directory <span class="form-required">*</span>
+                </label>
+                <div class="path-search-container">
+                  <input
+                    id="cwd-input"
+                    class="settings-input ${cwdInvalid || s.cwdError ? 'settings-input--error' : ''}"
+                    type="text"
+                    placeholder="Type to search directories in your home folder..."
+                    value="${escHtml(s.cwd)}"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  ${s.showRecentDirectories && s.recentDirectories.length > 0 && !s.pathSearchQuery ? `
+                    <div class="path-search-dropdown" id="path-search-dropdown">
+                      <div class="path-search-header">Recent directories</div>
+                      ${s.recentDirectories.map((path, idx) => `
+                        <div class="path-search-item ${idx === s.pathSearchSelectedIndex ? 'path-search-item--selected' : ''}" data-path="${escHtml(path)}">
+                          ${escHtml(path)}
+                        </div>
+                      `).join('')}
                     </div>
-                  `).join('')}
-                </div>
-              ` : ''}
-            ${s.pathSearchResults.length > 0 ? `
-                <div class="path-search-dropdown" id="path-search-dropdown">
-                  ${s.pathSearchResults.map((path, idx) => `
-                    <div class="path-search-item ${idx === s.pathSearchSelectedIndex ? 'path-search-item--selected' : ''}" data-path="${escHtml(path)}">
-                      ${escHtml(path)}
+                  ` : ''}
+                ${s.pathSearchResults.length > 0 ? `
+                    <div class="path-search-dropdown" id="path-search-dropdown">
+                      ${s.pathSearchResults.map((path, idx) => `
+                        <div class="path-search-item ${idx === s.pathSearchSelectedIndex ? 'path-search-item--selected' : ''}" data-path="${escHtml(path)}">
+                          ${escHtml(path)}
+                        </div>
+                      `).join('')}
                     </div>
-                  `).join('')}
+                  ` : ''}
+                  ${s.pathSearchLoading ? '<div class="path-search-loading">Searching...</div>' : ''}
                 </div>
-              ` : ''}
-              ${s.pathSearchLoading ? '<div class="path-search-loading">Searching...</div>' : ''}
-            </div>
-            ${s.cwdError
-              ? `<p class="form-hint form-hint--error" id="cwd-hint">${escHtml(s.cwdError)}</p>`
-              : cwdInvalid
-                ? `<p class="form-hint form-hint--error" id="cwd-hint">Path must be absolute (start with /)</p>`
-                : `<p class="form-hint" id="cwd-hint">Absolute path to the project directory.</p>`}
-          </div>
+                ${s.cwdError
+                  ? `<p class="form-hint form-hint--error" id="cwd-hint">${escHtml(s.cwdError)}</p>`
+                  : cwdInvalid
+                    ? `<p class="form-hint form-hint--error" id="cwd-hint">Path must be absolute (start with /)</p>`
+                    : `<p class="form-hint" id="cwd-hint">Absolute path to the project directory.</p>`}
+              </div>
 
-          <div class="form-group">
-            <label class="form-label" for="title-input">Title <span class="form-optional">(optional)</span></label>
-            <input
-              id="title-input"
-              class="settings-input"
-              type="text"
-              placeholder="e.g. Refactor payment module"
-              value="${escHtml(s.title)}"
-              maxlength="120"
-            />
+              <div class="form-group">
+                <label class="form-label" for="title-input">Title <span class="form-optional">(optional)</span></label>
+                <input
+                  id="title-input"
+                  class="settings-input"
+                  type="text"
+                  placeholder="e.g. Refactor payment module"
+                  value="${escHtml(s.title)}"
+                  maxlength="120"
+                />
+              </div>
+            </section>
+
+            <section class="form-section form-section--agent">
+              <div class="form-section-head">
+                <h3 class="form-section-title">Agent</h3>
+                <p class="form-section-desc">Choose the runtime that will own this thread.</p>
+              </div>
+              <div class="agent-grid" id="agent-grid">
+                ${agents.length
+                  ? agents.map(a => renderAgentCard(a, a.id === s.selectedAgent)).join('')
+                  : '<p class="form-hint">Loading agents…</p>'}
+              </div>
+            </section>
           </div>
 
           <div class="collapsible ${s.advancedOpen ? 'collapsible--open' : ''}">

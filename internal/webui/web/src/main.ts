@@ -68,6 +68,11 @@ const iconMenu = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" ar
   <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 </svg>`
 
+const iconBrandMark = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+  <rect x="1.5" y="1.5" width="15" height="15" rx="3.2" stroke="currentColor" stroke-width="1.4"/>
+  <path d="M5 5.5h8M5 9h8M5 12.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+</svg>`
+
 const iconCheck = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
   <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
@@ -154,54 +159,11 @@ const iconChevronRight = `<svg width="12" height="12" viewBox="0 0 24 24" fill="
   <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
-const iconDotsHorizontal = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-  <circle cx="3" cy="7" r="1.15" fill="currentColor"/>
-  <circle cx="7" cy="7" r="1.15" fill="currentColor"/>
-  <circle cx="11" cy="7" r="1.15" fill="currentColor"/>
+const iconDotsHorizontal = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <circle cx="3.2" cy="8" r="1.5" fill="currentColor"/>
+  <circle cx="8" cy="8" r="1.5" fill="currentColor"/>
+  <circle cx="12.8" cy="8" r="1.5" fill="currentColor"/>
 </svg>`
-
-const sidebarBrandLetters = [
-  [
-    '███╗   ██╗',
-    '████╗  ██║',
-    '██╔██╗ ██║',
-    '██║╚██╗██║',
-    '██║ ╚████║',
-    '╚═╝  ╚═══╝',
-  ].join('\n'),
-  [
-    ' ██████╗ ',
-    '██╔════╝ ',
-    '██║  ███╗',
-    '██║   ██║',
-    '╚██████╔╝',
-    ' ╚═════╝ ',
-  ].join('\n'),
-  [
-    '███████╗',
-    '██╔════╝',
-    '█████╗  ',
-    '██╔══╝  ',
-    '███████╗',
-    '╚══════╝',
-  ].join('\n'),
-  [
-    '███╗   ██╗',
-    '████╗  ██║',
-    '██╔██╗ ██║',
-    '██║╚██╗██║',
-    '██║ ╚████║',
-    '╚═╝  ╚═══╝',
-  ].join('\n'),
-  [
-    '████████╗',
-    '╚══██╔══╝',
-    '   ██║   ',
-    '   ██║   ',
-    '   ██║   ',
-    '   ╚═╝   ',
-  ].join('\n'),
-]
 
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
@@ -705,6 +667,13 @@ function hasReasoningText(value: string | null | undefined): value is string {
 
 function normalizeAgentKey(agentId: string): string {
   return agentId.trim().toLowerCase()
+}
+
+function agentDisplayName(agentId: string): string {
+  const key = normalizeAgentKey(agentId)
+  if (!key) return ''
+  const match = store.get().agents.find(agent => normalizeAgentKey(agent.id) === key)
+  return match?.name?.trim() || agentId.trim()
 }
 
 function cloneSlashCommands(commands: SlashCommand[] | null | undefined): SlashCommand[] {
@@ -2002,12 +1971,19 @@ async function syncSelectedSessionSelection(
 function renderSessionItem(item: SessionInfo, active: boolean, loading: boolean): string {
   const title = item.title?.trim() || item.sessionId
   const updatedLabel = item.updatedAt ? formatRelativeTime(item.updatedAt) : ''
+  const sideHTML = updatedLabel
+    ? `
+        <div class="session-item-side">
+          <div class="session-item-meta">${escHtml(updatedLabel)}</div>
+        </div>`
+    : ''
   return `
     <button
       class="session-item ${active ? 'session-item--active' : ''}"
       type="button"
       data-session-id="${escHtml(item.sessionId)}"
       aria-pressed="${active ? 'true' : 'false'}"
+      ${active ? 'aria-current="true"' : ''}
       title="${escHtml(title)}"
     >
       <div class="session-item-main">
@@ -2015,7 +1991,7 @@ function renderSessionItem(item: SessionInfo, active: boolean, loading: boolean)
           ${renderSessionStatusIndicator(loading)}
           <div class="session-item-title">${escHtml(title)}</div>
         </div>
-        ${updatedLabel ? `<div class="session-item-meta">${escHtml(updatedLabel)}</div>` : ''}
+        ${sideHTML}
       </div>
     </button>`
 }
@@ -2089,13 +2065,14 @@ function renderSessionPanel(): string {
 
   return `
     <div class="session-panel-header">
+      <div class="session-panel-section-label">Session History</div>
       <div class="session-panel-heading-row">
         <div class="session-panel-heading-copy">
           <div class="session-panel-title-row">
             <h3 class="session-panel-title" title="${escHtml(threadTitle(thread))}">
               <span class="session-panel-title__text">${escHtml(threadTitle(thread))}</span>
             </h3>
-            <span class="badge badge--agent">${escHtml(thread.agent ?? '')}</span>
+            <span class="session-panel-agent">${escHtml(agentDisplayName(thread.agent ?? ''))}</span>
           </div>
           <div class="session-panel-subtitle" title="${escHtml(thread.cwd)}">
             <span class="session-panel-subtitle__text">${escHtml(thread.cwd)}</span>
@@ -2658,6 +2635,7 @@ function renderThreadItem(
   const hasIconAvatar = hasAgentAvatarIcon(t.agent ?? '')
   const avatar = renderAgentAvatar(t.agent ?? '', 'thread')
   const displayTitle = threadTitle(t)
+  const displayAgent = agentDisplayName(t.agent ?? '')
   const relTime = t.updatedAt ? formatRelativeTime(t.updatedAt) : ''
 
   return `
@@ -2666,26 +2644,28 @@ function renderThreadItem(
          role="button"
          tabindex="0"
          aria-label="${escHtml(displayTitle)}">
-      <div class="thread-item-avatar ${hasIconAvatar ? 'thread-item-avatar--icon' : (isActive ? '' : 'thread-item-avatar--inactive')}">${avatar}</div>
-      <div class="thread-item-body">
-        <div class="thread-item-title" title="${escHtml(displayTitle)}">
-          <span class="thread-item-title__text">${escHtml(displayTitle)}</span>
-        </div>
-        <div class="thread-item-foot">
-          <span class="badge badge--agent">${escHtml(t.agent ?? '')}</span>
+      <div class="thread-item-main">
+        <div class="thread-item-avatar ${hasIconAvatar ? 'thread-item-avatar--icon' : (isActive ? '' : 'thread-item-avatar--inactive')}">${avatar}</div>
+        <div class="thread-item-body">
+          <div class="thread-item-row">
+            <div class="thread-item-title" title="${escHtml(displayTitle)}">
+              <span class="thread-item-title__text">${escHtml(displayTitle)}</span>
+            </div>
+            ${relTime ? `<span class="thread-item-time">${escHtml(relTime)}</span>` : ''}
+          </div>
+          <div class="thread-item-meta">
+            <span class="thread-item-agent">${escHtml(displayAgent)}</span>
+            ${renderThreadStatusIndicator(activityIndicator)}
+          </div>
         </div>
       </div>
       <div class="thread-item-actions">
-        ${renderThreadStatusIndicator(activityIndicator)}
-        <div class="thread-item-action-meta">
-          <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
-                  data-thread-id="${escHtml(t.threadId)}"
-                  aria-expanded="${isMenuOpen ? 'true' : 'false'}"
-                  aria-label="Agent actions">
-            ${iconDotsHorizontal}
-          </button>
-          ${relTime ? `<span class="thread-item-time thread-item-time--actions">${relTime}</span>` : ''}
-        </div>
+        <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
+                data-thread-id="${escHtml(t.threadId)}"
+                aria-expanded="${isMenuOpen ? 'true' : 'false'}"
+                aria-label="Agent actions">
+          ${iconDotsHorizontal}
+        </button>
       </div>
     </div>`
 }
@@ -2694,8 +2674,8 @@ function renderThreadListEmptyState(): string {
   return `
     <div class="thread-list-empty">
       <div class="thread-list-empty__visual" aria-hidden="true">${iconPlus}</div>
-      <div class="thread-list-empty__title">No agents yet</div>
-      <div class="thread-list-empty__desc">Create an agent to start your first session.</div>
+      <div class="thread-list-empty__title">No threads yet</div>
+      <div class="thread-list-empty__desc">Create a working-directory thread to start a local agent session.</div>
     </div>`
 }
 
@@ -4253,7 +4233,7 @@ function updateMessageList(): void {
   if (!msgs.length) {
     listEl.innerHTML = renderEmptyState(
       'Start the conversation',
-      `Send the first message to begin working with ${thread?.agent ?? 'the agent'}.`,
+      `Send the first message to begin working with ${agentDisplayName(thread?.agent ?? '') || 'the agent'}.`,
       'conversation',
     )
     return
@@ -4439,9 +4419,7 @@ function updateSlashCommandMenu(): void {
 function renderEmptyStateVisual(icon: string, variant: string): string {
   return `
     <div class="empty-state-visual empty-state-visual--${escHtml(variant)}" aria-hidden="true">
-      <span class="empty-state-visual__halo"></span>
-      <span class="empty-state-visual__orb"></span>
-      <span class="empty-state-visual__core">${icon}</span>
+      <span class="empty-state-visual__frame">${icon}</span>
     </div>`
 }
 
@@ -4451,7 +4429,7 @@ function renderEmptyState(
   variant: 'workspace' | 'conversation' | 'sidebar',
   actionHTML = '',
 ): string {
-  const icon = variant === 'sidebar' ? iconPlus : iconSparkles
+  const icon = variant === 'sidebar' ? iconPlus : iconBrandMark
   return `
     <div class="empty-state empty-state--${variant}">
       ${renderEmptyStateVisual(icon, variant)}
@@ -4485,15 +4463,39 @@ function selectSlashCommand(commandName: string): void {
 // ── Chat area rendering ───────────────────────────────────────────────────
 
 function renderChatEmpty(): string {
-  return renderEmptyState(
-    'No agent selected',
-    'Pick an existing agent from the left, or create a new one to start working.',
-    'workspace',
-    `
-      <button class="btn btn-primary" id="new-thread-empty-btn">
-        ${iconPlus} New Agent
-      </button>`,
-  )
+  return `
+    <div class="workspace-landing">
+      <div class="workspace-landing__panel">
+        <div class="workspace-landing__eyebrow">Ngent Local Workbench</div>
+        <div class="workspace-landing__hero">
+          <div class="workspace-landing__mark" aria-hidden="true">${iconBrandMark}</div>
+          <div class="workspace-landing__copy">
+            <h2 class="workspace-landing__title">Run local agents against real working directories.</h2>
+            <p class="workspace-landing__desc">
+              Create a thread, choose an agent, and keep streaming output, tool activity, session history,
+              and permission review inside one desktop-style workspace.
+            </p>
+          </div>
+        </div>
+        <div class="workspace-landing__facts">
+          <div class="workspace-landing__fact">
+            <span class="workspace-landing__fact-label">Bind</span>
+            <strong>Loopback-first by default</strong>
+          </div>
+          <div class="workspace-landing__fact">
+            <span class="workspace-landing__fact-label">Transport</span>
+            <strong>HTTP + POST SSE streaming</strong>
+          </div>
+          <div class="workspace-landing__fact">
+            <span class="workspace-landing__fact-label">Focus</span>
+            <strong>Working directory first</strong>
+          </div>
+        </div>
+        <button class="btn btn-primary workspace-landing__cta" id="new-thread-empty-btn">
+          ${iconPlus} New Agent
+        </button>
+      </div>
+    </div>`
 }
 
 function renderSessionInfoField(label: string, value: string, copyLabel: string): string {
@@ -4633,10 +4635,17 @@ function renderChatThread(t: Thread): string {
       <div class="chat-header-left">
         <button class="btn btn-icon mobile-menu-btn" aria-label="Open menu">${iconMenu}</button>
         <div class="chat-header-main">
+          <div class="chat-header-kicker-row">
+            <span class="chat-header-kicker">Session</span>
+            <span class="chat-header-divider" aria-hidden="true">/</span>
+            <span class="chat-header-context">${escHtml(agentDisplayName(t.agent ?? '') || 'agent')}</span>
+          </div>
           <div class="chat-header-title-row">
             <h2 class="chat-title" title="${escHtml(sessionTitleLabel)}">${escHtml(sessionTitleLabel)}</h2>
           </div>
-          <div class="chat-header-subtitle" title="${escHtml(t.cwd)}">${escHtml(t.cwd)}</div>
+          <div class="chat-header-subtitle" title="${escHtml(t.cwd)}">
+            <span class="chat-header-path">${escHtml(t.cwd)}</span>
+          </div>
         </div>
       </div>
       <div class="chat-header-right">
@@ -4658,7 +4667,7 @@ function renderChatThread(t: Thread): string {
         <textarea
           id="message-input"
           class="message-input"
-          placeholder="Ask for changes, inspect code, or attach files"
+          placeholder="Describe the change, inspect the codebase, or continue the session"
           rows="1"
           aria-label="Message input"
         >${escHtml(draft)}</textarea>
@@ -4685,7 +4694,7 @@ function renderChatThread(t: Thread): string {
           </button>
         </div>
       </div>
-      <div class="input-hint"><span class="input-hint-label">Shortcuts</span> Press <kbd>⌘ Enter</kbd> to send · Type <kbd>/</kbd> for slash commands</div>
+      <div class="input-hint">Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
     </div>`
 }
 
@@ -5685,23 +5694,21 @@ function renderShell(): void {
 
   root.innerHTML = `
     <div class="layout-shell">
-      <div class="layout-backdrop" aria-hidden="true">
-        <span class="layout-backdrop__orb layout-backdrop__orb--one"></span>
-        <span class="layout-backdrop__orb layout-backdrop__orb--two"></span>
-        <span class="layout-backdrop__grid"></span>
-      </div>
-
       <div class="layout">
         <aside class="sidebar" id="sidebar">
           <div class="sidebar-header">
-            <div class="sidebar-brand" role="img" aria-label="Ngent">
-              ${sidebarBrandLetters.map(letter => `<pre class="sidebar-brand-letter" aria-hidden="true">${letter}</pre>`).join('')}
+            <div class="sidebar-brand" aria-label="Ngent">
+              <div class="sidebar-brand-mark" aria-hidden="true">${iconBrandMark}</div>
+              <div class="sidebar-brand-copy">
+                <div class="sidebar-brand-wordmark">Ngent</div>
+                <div class="sidebar-brand-subtitle">Local Agent Workbench</div>
+              </div>
             </div>
           </div>
 
           <div class="sidebar-section">
             <div class="sidebar-section-head">
-              <span class="sidebar-section-label">Agents</span>
+              <span class="sidebar-section-label">Threads</span>
               <span class="sidebar-section-meta" id="thread-count">${threads.length}</span>
             </div>
 

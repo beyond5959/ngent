@@ -2666,11 +2666,23 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
   min-width: 0;
   margin-left: auto;
 }
 
 .input-meta-actions:empty {
+  display: none;
+}
+
+.input-meta-slot {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.input-meta-slot:empty {
   display: none;
 }
 
@@ -2880,6 +2892,70 @@ body {
   color: var(--text-3);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.session-usage-indicator {
+  --usage-indicator-tone: var(--accent);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--text-1);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-panel-strong) 95%, transparent) 0%,
+    color-mix(in srgb, var(--bg-panel-strong) 80%, var(--bg-inset) 20%) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 26%, transparent),
+    0 10px 20px -18px color-mix(in srgb, var(--usage-indicator-tone) 68%, transparent);
+  transition:
+    transform var(--t-fast),
+    border-color var(--t-fast),
+    box-shadow var(--t-fast);
+}
+
+.session-usage-indicator:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--usage-indicator-tone) 22%, var(--border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent),
+    0 12px 24px -18px color-mix(in srgb, var(--usage-indicator-tone) 78%, transparent);
+}
+
+.session-usage-indicator--warn {
+  --usage-indicator-tone: #d97706;
+}
+
+.session-usage-indicator--danger {
+  --usage-indicator-tone: #dc2626;
+}
+
+.session-usage-indicator__ring {
+  width: 34px;
+  height: 34px;
+  transform: rotate(-90deg);
+}
+
+.session-usage-indicator__ring-track,
+.session-usage-indicator__ring-value {
+  fill: none;
+  stroke-width: 4;
+}
+
+.session-usage-indicator__ring-track {
+  stroke: color-mix(in srgb, var(--border-strong) 86%, transparent);
+}
+
+.session-usage-indicator__ring-value {
+  stroke: var(--usage-indicator-tone);
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--t-base), stroke var(--t-fast);
 }
 
 kbd {

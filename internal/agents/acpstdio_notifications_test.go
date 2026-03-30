@@ -174,3 +174,41 @@ func TestNewACPNotificationHandlerRoutesSessionInfoBeforePromptStart(t *testing.
 		t.Fatal("received.HasTitle = false, want true")
 	}
 }
+
+func TestNewACPNotificationHandlerRoutesSessionUsageBeforePromptStart(t *testing.T) {
+	t.Parallel()
+
+	var received SessionUsageUpdate
+	ctx := WithSessionUsageHandler(context.Background(), func(ctx context.Context, update SessionUsageUpdate) error {
+		_ = ctx
+		received = CloneSessionUsageUpdate(update)
+		return nil
+	})
+
+	handler, _ := NewACPNotificationHandler(ctx, func(delta string) error {
+		_ = delta
+		return nil
+	})
+
+	raw := json.RawMessage(`{
+		"sessionId": "sess-usage-42",
+		"update": {
+			"sessionUpdate": "usage_update",
+			"used": 42000,
+			"size": 200000
+		}
+	}`)
+	if err := handler("session/update", raw); err != nil {
+		t.Fatalf("handler() error = %v", err)
+	}
+
+	if got := received.SessionID; got != "sess-usage-42" {
+		t.Fatalf("received.SessionID = %q, want %q", got, "sess-usage-42")
+	}
+	if received.ContextUsed == nil || *received.ContextUsed != 42000 {
+		t.Fatalf("received.ContextUsed = %#v, want 42000", received.ContextUsed)
+	}
+	if received.ContextSize == nil || *received.ContextSize != 200000 {
+		t.Fatalf("received.ContextSize = %#v, want 200000", received.ContextSize)
+	}
+}

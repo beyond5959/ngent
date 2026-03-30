@@ -13,6 +13,20 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-03-30)
 
+- `Post-M8` ACP session-usage persistence and Web UI context-pressure indicator completed:
+  - added shared ACP session-usage handling for both `session/update {sessionUpdate:"usage_update"}` and cumulative prompt-response `usage` payloads, including embedded Codex/Claude flows and shared ACP CLI drivers.
+  - persisted per-session usage snapshots in sqlite `session_usage_cache`, keyed by `(agent_id, cwd, session_id)` and merged with `COALESCE` semantics so partial provider updates can accumulate over time instead of overwriting earlier fields with nulls.
+  - added `GET /v1/threads/{threadId}/session-usage?sessionId=...` plus streamed/persisted `session_usage_update` turn events, so both the browser and later tooling can re-query usage after the original turn is gone.
+  - the embedded Web UI now listens for live `session_usage_update`, loads cached usage when a session is opened, and renders a small ring-only circular progress badge at the composer footer bottom-right to the right of the git branch pill.
+  - the badge is intentionally fail-soft:
+    - if a provider never returns usage, the Web UI shows nothing.
+    - if a provider returns token totals but no context-window `used/size`, the data is still cached in sqlite but the Web UI stays hidden because no safe percentage can be computed.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-03-30)
+
 - `Post-M8` Web UI git-branch footer and checkout switcher completed:
   - added thread-scoped git inspection/switch support through new `GET/POST /v1/threads/{threadId}/git` endpoints backed by `internal/gitutil`.
   - the backend now treats branch checkout as a thread-wide shared-state mutation: if any session on the thread is actively streaming, branch switching returns `409 CONFLICT`.
@@ -23,7 +37,7 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
 
-## Previous Update (2026-03-30)
+## Earlier Update (2026-03-30)
 
 - `Post-M8` restrained desktop-workbench Web UI redesign completed:
   - Phase 0 baseline completed:

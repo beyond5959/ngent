@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestConsumeCodexReplayUpdate(t *testing.T) {
 		},
 	}
 	for _, update := range updates {
-		if err := consumeCodexReplayUpdate(collector, update); err != nil {
+		if err := consumeCodexReplayUpdate(context.Background(), collector, update); err != nil {
 			t.Fatalf("consumeCodexReplayUpdate() error = %v", err)
 		}
 	}
@@ -54,7 +55,7 @@ func TestDrainCodexReplayUpdates(t *testing.T) {
 		Params: json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" and two"}}}`),
 	}
 
-	if err := drainCodexReplayUpdates(collector, updates); err != nil {
+	if err := drainCodexReplayUpdates(context.Background(), collector, updates); err != nil {
 		t.Fatalf("drainCodexReplayUpdates() error = %v", err)
 	}
 

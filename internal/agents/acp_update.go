@@ -24,6 +24,8 @@ const (
 	ACPUpdateTypeSessionInfo = "session_info_update"
 	// ACPUpdateTypeAvailableCommands replaces the current slash-command list.
 	ACPUpdateTypeAvailableCommands = "available_commands_update"
+	// ACPUpdateTypeUsage updates cumulative session usage and context state.
+	ACPUpdateTypeUsage = "usage_update"
 )
 
 // PlanEntry is one ACP plan entry shown to the user.
@@ -43,6 +45,7 @@ type ACPUpdate struct {
 	PlanEntries    []PlanEntry
 	Commands       []SlashCommand
 	SessionInfo    *SessionInfoUpdate
+	SessionUsage   *SessionUsageUpdate
 	MessageContent *ACPMessageContent
 	ToolCall       *ACPToolCall
 }
@@ -74,6 +77,12 @@ func ParseACPUpdate(raw json.RawMessage) (ACPUpdate, error) {
 			RawOutput         json.RawMessage   `json:"rawOutput"`
 			Entries           []PlanEntry       `json:"entries"`
 			AvailableCommands []json.RawMessage `json:"availableCommands"`
+			Used              *int64            `json:"used"`
+			Size              *int64            `json:"size"`
+			Cost              *struct {
+				Amount   *float64 `json:"amount"`
+				Currency string   `json:"currency"`
+			} `json:"cost"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -162,6 +171,26 @@ func ParseACPUpdate(raw json.RawMessage) (ACPUpdate, error) {
 		return ACPUpdate{
 			Type:     ACPUpdateTypeAvailableCommands,
 			Commands: parseACPUpdateSlashCommands(payload.Update.AvailableCommands),
+		}, nil
+	case ACPUpdateTypeUsage:
+		sessionUsage := CloneSessionUsageUpdate(SessionUsageUpdate{
+			SessionID:   strings.TrimSpace(payload.SessionID),
+			ContextUsed: cloneInt64Ptr(payload.Update.Used),
+			ContextSize: cloneInt64Ptr(payload.Update.Size),
+		})
+		if payload.Update.Cost != nil && payload.Update.Cost.Amount != nil {
+			sessionUsage.CostAmount = cloneFloat64Ptr(payload.Update.Cost.Amount)
+			sessionUsage.CostCurrency = strings.TrimSpace(payload.Update.Cost.Currency)
+			if sessionUsage.CostCurrency == "" {
+				sessionUsage.CostAmount = nil
+			}
+		}
+		if !HasSessionUsageValues(sessionUsage) {
+			return ACPUpdate{Type: ACPUpdateTypeUsage}, nil
+		}
+		return ACPUpdate{
+			Type:         ACPUpdateTypeUsage,
+			SessionUsage: &sessionUsage,
 		}, nil
 	case ACPUpdateTypeToolCall, ACPUpdateTypeToolCallUpdate:
 		title, hasTitle := normalizeACPOptionalString(payload.Update.Title)

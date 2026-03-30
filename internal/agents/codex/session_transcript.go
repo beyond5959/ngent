@@ -120,7 +120,7 @@ func (c *Client) collectSessionReplay(
 			if result.err != nil {
 				return agents.SessionTranscriptResult{}, result.err
 			}
-			if err := drainCodexReplayUpdates(collector, updates); err != nil {
+			if err := drainCodexReplayUpdates(ctx, collector, updates); err != nil {
 				return agents.SessionTranscriptResult{}, err
 			}
 			replay := collector.Result()
@@ -133,7 +133,7 @@ func (c *Client) collectSessionReplay(
 				}
 				return agents.SessionTranscriptResult{}, errors.New("codex: embedded updates channel closed")
 			}
-			if err := consumeCodexReplayUpdate(collector, msg); err != nil {
+			if err := consumeCodexReplayUpdate(ctx, collector, msg); err != nil {
 				return agents.SessionTranscriptResult{}, err
 			}
 		}
@@ -141,6 +141,7 @@ func (c *Client) collectSessionReplay(
 }
 
 func drainCodexReplayUpdates(
+	ctx context.Context,
 	collector *agents.ACPTranscriptCollector,
 	updates <-chan codexacp.RPCMessage,
 ) error {
@@ -150,7 +151,7 @@ func drainCodexReplayUpdates(
 			if !ok {
 				return nil
 			}
-			if err := consumeCodexReplayUpdate(collector, msg); err != nil {
+			if err := consumeCodexReplayUpdate(ctx, collector, msg); err != nil {
 				return err
 			}
 		default:
@@ -160,6 +161,7 @@ func drainCodexReplayUpdates(
 }
 
 func consumeCodexReplayUpdate(
+	ctx context.Context,
 	collector *agents.ACPTranscriptCollector,
 	msg codexacp.RPCMessage,
 ) error {
@@ -167,5 +169,15 @@ func consumeCodexReplayUpdate(
 	if msg.Method != methodSessionUpdate || len(msg.Params) == 0 {
 		return nil
 	}
-	return collector.HandleRawUpdate(msg.Params)
+	update, err := agents.ParseACPUpdate(msg.Params)
+	if err != nil {
+		return err
+	}
+	if update.Type == agents.ACPUpdateTypeUsage && update.SessionUsage != nil {
+		if err := agents.NotifySessionUsageUpdate(ctx, *update.SessionUsage); err != nil {
+			return err
+		}
+	}
+	collector.HandleUpdate(update)
+	return nil
 }

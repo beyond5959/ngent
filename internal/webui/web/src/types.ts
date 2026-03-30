@@ -77,6 +77,21 @@ export interface ThreadGitInfo {
   branches: GitBranchInfo[]
 }
 
+export interface SessionUsage {
+  sessionId: string
+  updatedAt?: string
+  totalTokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  thoughtTokens?: number
+  cachedReadTokens?: number
+  cachedWriteTokens?: number
+  contextUsed?: number
+  contextSize?: number
+  costAmount?: number
+  costCurrency?: string
+}
+
 export interface TurnEvent {
   eventId: number
   seq: number

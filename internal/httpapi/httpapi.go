@@ -57,6 +57,8 @@ type ThreadStore interface {
 	UpsertSessionTranscriptCache(ctx context.Context, params storage.UpsertSessionTranscriptCacheParams) error
 	GetSessionConfigCache(ctx context.Context, agentID, cwd, sessionID string) (storage.SessionConfigCache, error)
 	UpsertSessionConfigCache(ctx context.Context, params storage.UpsertSessionConfigCacheParams) error
+	GetSessionUsageCache(ctx context.Context, agentID, cwd, sessionID string) (storage.SessionUsageCache, error)
+	UpsertSessionUsageCache(ctx context.Context, params storage.UpsertSessionUsageCacheParams) error
 	ListThreads(ctx context.Context) ([]storage.Thread, error)
 	CreateTurn(ctx context.Context, params storage.CreateTurnParams) (storage.Turn, error)
 	CreateTurnAttachments(ctx context.Context, params []storage.CreateTurnAttachmentParams) error
@@ -139,6 +141,7 @@ const (
 	eventTypeMessageContent          = "message_content"
 	eventTypeReasoningDelta          = "reasoning_delta"
 	eventTypeSessionInfoUpdate       = "session_info_update"
+	eventTypeSessionUsageUpdate      = "session_usage_update"
 	eventTypeToolCall                = "tool_call"
 	eventTypeToolCallUpdate          = "tool_call_update"
 )
@@ -553,6 +556,8 @@ func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, cl
 		s.handleThreadSessions(w, r, clientID, threadID)
 	case "session-history":
 		s.handleThreadSessionHistory(w, r, clientID, threadID)
+	case "session-usage":
+		s.handleThreadSessionUsage(w, r, clientID, threadID)
 	case "config-options":
 		s.handleThreadConfigOptions(w, r, clientID, threadID)
 	case "slash-commands":
@@ -1046,6 +1051,11 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 			"title":     update.Title,
 		})
 	})
+	turnCtx = agents.WithSessionUsageHandler(turnCtx, func(sessionUsageCtx context.Context, update agents.SessionUsageUpdate) error {
+		_ = sessionUsageCtx
+		s.persistSessionUsageSnapshotBestEffort(persistCtx, thread, update)
+		return emit(eventTypeSessionUsageUpdate, sessionUsageEventPayload(turnID, update))
+	})
 	turnCtx = agents.WithMessageContentHandler(turnCtx, func(messageCtx context.Context, event agents.ACPMessageContent) error {
 		_ = messageCtx
 		return emit(eventTypeMessageContent, event.EventPayload(turnID))
@@ -1302,6 +1312,11 @@ func (s *Server) handleCompactThread(w http.ResponseWriter, r *http.Request, cli
 			"turnId": turnID,
 			"delta":  delta,
 		})
+	})
+	turnCtx = agents.WithSessionUsageHandler(turnCtx, func(sessionUsageCtx context.Context, update agents.SessionUsageUpdate) error {
+		_ = sessionUsageCtx
+		s.persistSessionUsageSnapshotBestEffort(persistCtx, thread, update)
+		return appendOnlyEvent(eventTypeSessionUsageUpdate, sessionUsageEventPayload(turnID, update))
 	})
 	turnCtx = agents.WithMessageContentHandler(turnCtx, func(messageCtx context.Context, event agents.ACPMessageContent) error {
 		_ = messageCtx
@@ -1974,7 +1989,13 @@ func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	result, err := loader.LoadSessionTranscript(r.Context(), agents.SessionTranscriptRequest{
+	loadCtx := agents.WithSessionUsageHandler(r.Context(), func(sessionUsageCtx context.Context, update agents.SessionUsageUpdate) error {
+		_ = sessionUsageCtx
+		s.persistSessionUsageSnapshotBestEffort(r.Context(), thread, update)
+		return nil
+	})
+
+	result, err := loader.LoadSessionTranscript(loadCtx, agents.SessionTranscriptRequest{
 		CWD:       thread.CWD,
 		SessionID: sessionID,
 	})
@@ -2030,6 +2051,46 @@ func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Reque
 		"supported": true,
 		"messages":  result.Messages,
 	})
+}
+
+func (s *Server) handleThreadSessionUsage(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
+	if err := requireMethod(r, http.MethodGet); err != nil {
+		writeMethodNotAllowed(w, r)
+		return
+	}
+
+	thread, ok := s.getAccessibleThread(r.Context(), threadID)
+	if !ok {
+		writeError(w, http.StatusNotFound, codeNotFound, "thread not found", map[string]any{})
+		return
+	}
+
+	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionId"))
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, codeInvalidArgument, "sessionId is required", map[string]any{
+			"field": "sessionId",
+		})
+		return
+	}
+
+	cachedUsage, found, err := s.loadStoredSessionUsage(r.Context(), thread, sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to load session usage cache", map[string]any{
+			"threadId":  thread.ThreadID,
+			"sessionId": sessionID,
+			"reason":    err.Error(),
+		})
+		return
+	}
+
+	payload := map[string]any{
+		"threadId":  thread.ThreadID,
+		"sessionId": sessionID,
+	}
+	if found {
+		payload["usage"] = sessionUsageResponsePayload(cachedUsage)
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) loadCachedSessionTranscript(
@@ -2100,6 +2161,21 @@ func encodeSessionTranscriptCache(result agents.SessionTranscriptResult) (string
 		return "", fmt.Errorf("encode session transcript cache: %w", err)
 	}
 	return string(payload), nil
+}
+
+func (s *Server) loadStoredSessionUsage(
+	ctx context.Context,
+	thread storage.Thread,
+	sessionID string,
+) (storage.SessionUsageCache, bool, error) {
+	cache, err := s.store.GetSessionUsageCache(ctx, thread.AgentID, thread.CWD, sessionID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return storage.SessionUsageCache{}, false, nil
+		}
+		return storage.SessionUsageCache{}, false, err
+	}
+	return cache, true, nil
 }
 
 func (s *Server) handleThreadConfigOptions(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
@@ -3691,6 +3767,113 @@ func (s *Server) persistSessionLoadConfigSnapshotBestEffort(
 		)
 	}
 	s.persistSessionConfigSnapshotForSessionIDBestEffort(ctx, *thread, sessionID, normalized)
+}
+
+func (s *Server) persistSessionUsageSnapshotBestEffort(
+	ctx context.Context,
+	thread storage.Thread,
+	update agents.SessionUsageUpdate,
+) {
+	update = agents.CloneSessionUsageUpdate(update)
+	if update.SessionID == "" || !agents.HasSessionUsageValues(update) {
+		return
+	}
+
+	if err := s.store.UpsertSessionUsageCache(ctx, storage.UpsertSessionUsageCacheParams{
+		AgentID:           thread.AgentID,
+		CWD:               thread.CWD,
+		SessionID:         update.SessionID,
+		TotalTokens:       update.TotalTokens,
+		InputTokens:       update.InputTokens,
+		OutputTokens:      update.OutputTokens,
+		ThoughtTokens:     update.ThoughtTokens,
+		CachedReadTokens:  update.CachedReadTokens,
+		CachedWriteTokens: update.CachedWriteTokens,
+		ContextUsed:       update.ContextUsed,
+		ContextSize:       update.ContextSize,
+		CostAmount:        update.CostAmount,
+		CostCurrency:      update.CostCurrency,
+	}); err != nil {
+		s.logger.Warn("thread.session_usage_persist_failed",
+			"threadId", thread.ThreadID,
+			"agent", thread.AgentID,
+			"sessionId", update.SessionID,
+			"reason", err.Error(),
+		)
+	}
+}
+
+func sessionUsageEventPayload(turnID string, update agents.SessionUsageUpdate) map[string]any {
+	update = agents.CloneSessionUsageUpdate(update)
+	payload := map[string]any{
+		"turnId":    strings.TrimSpace(turnID),
+		"sessionId": update.SessionID,
+	}
+	if update.TotalTokens != nil {
+		payload["totalTokens"] = *update.TotalTokens
+	}
+	if update.InputTokens != nil {
+		payload["inputTokens"] = *update.InputTokens
+	}
+	if update.OutputTokens != nil {
+		payload["outputTokens"] = *update.OutputTokens
+	}
+	if update.ThoughtTokens != nil {
+		payload["thoughtTokens"] = *update.ThoughtTokens
+	}
+	if update.CachedReadTokens != nil {
+		payload["cachedReadTokens"] = *update.CachedReadTokens
+	}
+	if update.CachedWriteTokens != nil {
+		payload["cachedWriteTokens"] = *update.CachedWriteTokens
+	}
+	if update.ContextUsed != nil {
+		payload["contextUsed"] = *update.ContextUsed
+	}
+	if update.ContextSize != nil {
+		payload["contextSize"] = *update.ContextSize
+	}
+	if update.CostAmount != nil && update.CostCurrency != "" {
+		payload["costAmount"] = *update.CostAmount
+		payload["costCurrency"] = update.CostCurrency
+	}
+	return payload
+}
+
+func sessionUsageResponsePayload(cache storage.SessionUsageCache) map[string]any {
+	payload := map[string]any{
+		"sessionId": cache.SessionID,
+		"updatedAt": cache.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if cache.TotalTokens != nil {
+		payload["totalTokens"] = *cache.TotalTokens
+	}
+	if cache.InputTokens != nil {
+		payload["inputTokens"] = *cache.InputTokens
+	}
+	if cache.OutputTokens != nil {
+		payload["outputTokens"] = *cache.OutputTokens
+	}
+	if cache.ThoughtTokens != nil {
+		payload["thoughtTokens"] = *cache.ThoughtTokens
+	}
+	if cache.CachedReadTokens != nil {
+		payload["cachedReadTokens"] = *cache.CachedReadTokens
+	}
+	if cache.CachedWriteTokens != nil {
+		payload["cachedWriteTokens"] = *cache.CachedWriteTokens
+	}
+	if cache.ContextUsed != nil {
+		payload["contextUsed"] = *cache.ContextUsed
+	}
+	if cache.ContextSize != nil {
+		payload["contextSize"] = *cache.ContextSize
+	}
+	if cache.CostAmount != nil && strings.TrimSpace(cache.CostCurrency) != "" {
+		payload["costAmount"] = *cache.CostAmount
+		payload["costCurrency"] = strings.TrimSpace(cache.CostCurrency)
+	}
+	return payload
 }
 
 func (s *Server) persistAgentSlashCommands(

@@ -65,8 +65,10 @@ type Client struct {
 	mu     sync.Mutex
 	closed bool
 
-	runtime   *claudeacp.EmbeddedRuntime
-	sessionID string
+	runtime          *claudeacp.EmbeddedRuntime
+	sessionID        string
+	updateUnsub      func()
+	sessionUsageByID map[string]agents.SessionUsageUpdate
 
 	configOptions  []agents.ConfigOption
 	canLoadSession bool
@@ -268,10 +270,16 @@ func (c *Client) Close() error {
 	runtime := c.runtime
 	c.runtime = nil
 	c.sessionID = ""
+	updateUnsub := c.updateUnsub
+	c.updateUnsub = nil
+	c.sessionUsageByID = nil
 	c.configOptions = nil
 	c.canLoadSession = false
 	c.mu.Unlock()
 
+	if updateUnsub != nil {
+		updateUnsub()
+	}
 	if runtime != nil {
 		return runtime.Close()
 	}
@@ -315,6 +323,9 @@ func (c *Client) StreamPrompt(ctx context.Context, prompt agents.Prompt, onDelta
 			if err := agents.NotifySessionBound(ctx, sessionID); err != nil {
 				return agents.StopReasonEndTurn, fmt.Errorf("claude: report session bound: %w", err)
 			}
+		}
+		if err := c.notifyCachedSessionUsage(ctx, sessionID); err != nil {
+			return agents.StopReasonEndTurn, fmt.Errorf("claude: report cached session usage: %w", err)
 		}
 
 		stopReason, streamErr := c.streamOnce(ctx, runtime, sessionID, prompt, onDelta)
@@ -396,6 +407,16 @@ func (c *Client) streamOnce(
 			if parseErr != nil {
 				return agents.StopReasonEndTurn, parseErr
 			}
+			usageUpdate, usageErr := agents.ParseACPPromptUsage(result.response.Result)
+			if usageErr != nil {
+				return agents.StopReasonEndTurn, fmt.Errorf("claude: decode session/prompt usage: %w", usageErr)
+			}
+			if usageUpdate.SessionID == "" {
+				usageUpdate.SessionID = strings.TrimSpace(sessionID)
+			}
+			if err := agents.NotifySessionUsageUpdate(ctx, usageUpdate); err != nil {
+				return agents.StopReasonEndTurn, fmt.Errorf("claude: report session usage: %w", err)
+			}
 			if stopReason == "cancelled" {
 				return agents.StopReasonCancelled, nil
 			}
@@ -430,9 +451,15 @@ func (c *Client) resetRuntime() {
 	runtime := c.runtime
 	c.runtime = nil
 	c.sessionID = ""
+	updateUnsub := c.updateUnsub
+	c.updateUnsub = nil
+	c.sessionUsageByID = nil
 	c.configOptions = nil
 	c.mu.Unlock()
 
+	if updateUnsub != nil {
+		updateUnsub()
+	}
 	if runtime != nil {
 		_ = runtime.Close()
 	}
@@ -484,6 +511,15 @@ func (c *Client) handleUpdate(
 				c.sendSessionCancel(runtime, c.currentSessionID())
 				return err
 			}
+		case agents.ACPUpdateTypeUsage:
+			if update.SessionUsage == nil {
+				return nil
+			}
+			c.cacheSessionUsage(*update.SessionUsage)
+			if err := agents.NotifySessionUsageUpdate(ctx, *update.SessionUsage); err != nil {
+				c.sendSessionCancel(runtime, c.currentSessionID())
+				return err
+			}
 		case agents.ACPUpdateTypeAvailableCommands:
 			if err := agents.NotifySlashCommands(ctx, update.Commands); err != nil {
 				c.sendSessionCancel(runtime, c.currentSessionID())
@@ -510,6 +546,70 @@ func (c *Client) handleUpdate(
 		return fmt.Errorf("claude: unsupported embedded request method %q", msg.Method)
 	}
 	return nil
+}
+
+func (c *Client) installUpdateMonitor(runtime *claudeacp.EmbeddedRuntime) {
+	if runtime == nil {
+		return
+	}
+
+	updates, unsubscribe := runtime.SubscribeUpdates(256)
+
+	c.mu.Lock()
+	prevUnsub := c.updateUnsub
+	c.updateUnsub = unsubscribe
+	c.sessionUsageByID = nil
+	c.mu.Unlock()
+
+	if prevUnsub != nil {
+		prevUnsub()
+	}
+
+	go c.monitorUpdates(updates)
+}
+
+func (c *Client) monitorUpdates(updates <-chan claudeacp.RPCMessage) {
+	for msg := range updates {
+		if msg.Method != methodSessionUpdate || len(msg.Params) == 0 {
+			continue
+		}
+		update, err := agents.ParseACPUpdate(msg.Params)
+		if err != nil {
+			continue
+		}
+		if update.Type == agents.ACPUpdateTypeUsage && update.SessionUsage != nil {
+			c.cacheSessionUsage(*update.SessionUsage)
+		}
+	}
+}
+
+func (c *Client) cacheSessionUsage(update agents.SessionUsageUpdate) {
+	update = agents.CloneSessionUsageUpdate(update)
+	if update.SessionID == "" || !agents.HasSessionUsageValues(update) {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sessionUsageByID == nil {
+		c.sessionUsageByID = make(map[string]agents.SessionUsageUpdate)
+	}
+	c.sessionUsageByID[update.SessionID] = agents.MergeSessionUsageUpdate(c.sessionUsageByID[update.SessionID], update)
+}
+
+func (c *Client) notifyCachedSessionUsage(ctx context.Context, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+
+	c.mu.Lock()
+	update, ok := c.sessionUsageByID[sessionID]
+	c.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return agents.NotifySessionUsageUpdate(ctx, update)
 }
 
 func (c *Client) handlePermissionRequest(
@@ -612,6 +712,7 @@ func (c *Client) ensureInitialized(ctx context.Context) (*claudeacp.EmbeddedRunt
 	if err != nil {
 		return nil, "", err
 	}
+	c.installUpdateMonitor(runtime)
 
 	sessionID := c.CurrentSessionID()
 	configOptions := []agents.ConfigOption(nil)

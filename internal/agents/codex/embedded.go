@@ -81,6 +81,7 @@ type Client struct {
 	slashCommands      []agents.SlashCommand
 	slashCommandsKnown bool
 	slashCommandsReady chan struct{}
+	sessionUsageByID   map[string]agents.SessionUsageUpdate
 
 	requestSeq uint64
 }
@@ -355,6 +356,7 @@ func (c *Client) Close() error {
 	c.canLoadSession = false
 	c.slashCommands = nil
 	c.slashCommandsKnown = false
+	c.sessionUsageByID = nil
 	slashCommandsReady := c.slashCommandsReady
 	c.slashCommandsReady = nil
 	c.mu.Unlock()
@@ -412,6 +414,9 @@ func (c *Client) StreamPrompt(ctx context.Context, prompt agents.Prompt, onDelta
 			if err := agents.NotifySessionBound(ctx, stableSessionID); err != nil {
 				return agents.StopReasonEndTurn, fmt.Errorf("codex: report session bound: %w", err)
 			}
+		}
+		if err := c.notifyCachedSessionUsage(ctx, stableSessionID, sessionID); err != nil {
+			return agents.StopReasonEndTurn, fmt.Errorf("codex: report cached session usage: %w", err)
 		}
 
 		stopReason, streamErr := c.streamOnce(ctx, runtime, sessionID, prompt, onDelta)
@@ -541,6 +546,23 @@ func (c *Client) streamOnce(
 				stopDrainTimer()
 				return agents.StopReasonEndTurn, parseErr
 			}
+			usageUpdate, usageErr := agents.ParseACPPromptUsage(result.response.Result)
+			if usageErr != nil {
+				stopCancelWatcher()
+				stopDrainTimer()
+				return agents.StopReasonEndTurn, fmt.Errorf("codex: decode session/prompt usage: %w", usageErr)
+			}
+			if usageUpdate.SessionID == "" {
+				usageUpdate.SessionID = strings.TrimSpace(c.CurrentSessionID())
+				if usageUpdate.SessionID == "" {
+					usageUpdate.SessionID = strings.TrimSpace(sessionID)
+				}
+			}
+			if err := agents.NotifySessionUsageUpdate(ctx, usageUpdate); err != nil {
+				stopCancelWatcher()
+				stopDrainTimer()
+				return agents.StopReasonEndTurn, fmt.Errorf("codex: report session usage: %w", err)
+			}
 			if stopReason == "cancelled" {
 				finalStopReason = agents.StopReasonCancelled
 			} else {
@@ -604,6 +626,7 @@ func (c *Client) resetRuntime() {
 	c.canLoadSession = false
 	c.slashCommands = nil
 	c.slashCommandsKnown = false
+	c.sessionUsageByID = nil
 	slashCommandsReady := c.slashCommandsReady
 	c.slashCommandsReady = nil
 	c.mu.Unlock()
@@ -670,6 +693,15 @@ func (c *Client) handleUpdate(
 				return nil
 			}
 			if err := agents.NotifySessionInfoUpdate(ctx, *update.SessionInfo); err != nil {
+				c.sendSessionCancel(runtime, c.currentSessionID())
+				return err
+			}
+		case agents.ACPUpdateTypeUsage:
+			if update.SessionUsage == nil {
+				return nil
+			}
+			c.cacheSessionUsage(*update.SessionUsage)
+			if err := agents.NotifySessionUsageUpdate(ctx, *update.SessionUsage); err != nil {
 				c.sendSessionCancel(runtime, c.currentSessionID())
 				return err
 			}
@@ -1228,6 +1260,7 @@ func (c *Client) installUpdateMonitor(runtime *codexacp.EmbeddedRuntime) {
 	c.slashCommands = nil
 	c.slashCommandsKnown = false
 	c.slashCommandsReady = ready
+	c.sessionUsageByID = nil
 	c.mu.Unlock()
 
 	if prevUnsub != nil {
@@ -1246,7 +1279,13 @@ func (c *Client) monitorUpdates(updates <-chan codexacp.RPCMessage, ready chan s
 			continue
 		}
 		update, err := agents.ParseACPUpdate(msg.Params)
-		if err != nil || update.Type != agents.ACPUpdateTypeAvailableCommands {
+		if err != nil {
+			continue
+		}
+		if update.Type == agents.ACPUpdateTypeUsage && update.SessionUsage != nil {
+			c.cacheSessionUsage(*update.SessionUsage)
+		}
+		if update.Type != agents.ACPUpdateTypeAvailableCommands {
 			continue
 		}
 		c.mu.Lock()
@@ -1267,12 +1306,49 @@ func (c *Client) clearUpdateMonitor() {
 	c.slashCommandsReady = nil
 	c.slashCommands = nil
 	c.slashCommandsKnown = false
+	c.sessionUsageByID = nil
 	c.mu.Unlock()
 
 	if updateUnsub != nil {
 		updateUnsub()
 	}
 	closeReadySignal(slashCommandsReady)
+}
+
+func (c *Client) cacheSessionUsage(update agents.SessionUsageUpdate) {
+	update = agents.CloneSessionUsageUpdate(update)
+	if update.SessionID == "" || !agents.HasSessionUsageValues(update) {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sessionUsageByID == nil {
+		c.sessionUsageByID = make(map[string]agents.SessionUsageUpdate)
+	}
+	c.sessionUsageByID[update.SessionID] = agents.MergeSessionUsageUpdate(c.sessionUsageByID[update.SessionID], update)
+}
+
+func (c *Client) notifyCachedSessionUsage(ctx context.Context, sessionIDs ...string) error {
+	c.mu.Lock()
+	if len(c.sessionUsageByID) == 0 {
+		c.mu.Unlock()
+		return nil
+	}
+	for _, sessionID := range sessionIDs {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "" {
+			continue
+		}
+		update, ok := c.sessionUsageByID[sessionID]
+		if !ok {
+			continue
+		}
+		c.mu.Unlock()
+		return agents.NotifySessionUsageUpdate(ctx, update)
+	}
+	c.mu.Unlock()
+	return nil
 }
 
 func (c *Client) cacheSlashCommands(commands []agents.SlashCommand) {

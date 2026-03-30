@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-067: Persist ACP session usage snapshots and surface context-window pressure in the Web UI. (Accepted)
 - ADR-066: Surface thread-scoped git branch state in the Web UI composer. (Accepted)
 - ADR-065: Recast the embedded Web UI as a restrained desktop workbench. (Accepted)
 - ADR-064: Share threads and sessions across browser-scoped client IDs on the same ngent instance. (Accepted)
@@ -58,6 +59,38 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-067: Persist ACP Session Usage Snapshots And Surface Context-Window Pressure In The Web UI
+
+- Status: Accepted
+- Date: 2026-03-30
+- Context:
+  - ACP's session-usage RFD adds two related but different signals:
+    - cumulative prompt-token usage on `session/prompt` responses.
+    - `session/update` `usage_update` snapshots with current context-window `used` and `size`.
+  - product needed both:
+    - sqlite persistence so session usage can be queried again later.
+    - a Codex-style context-pressure indicator in the embedded Web UI.
+  - provider support is partial today, so the feature must fail soft when usage is absent instead of showing placeholders or misleading zeros.
+- Decision:
+  - treat ACP session usage as a cumulative per-session snapshot keyed by `(agent_id, cwd, session_id)`.
+  - persist those snapshots in sqlite `session_usage_cache`, storing:
+    - token totals (`total/input/output/thought/cached_*`)
+    - current context-window `used/size`
+    - optional cost amount/currency
+  - merge partial updates with `COALESCE` semantics on conflict so providers can send prompt-response totals and later `usage_update` context data independently without clearing earlier fields.
+  - emit a first-class `session_usage_update` event into SSE/history whenever usage arrives during a turn.
+  - expose `GET /v1/threads/{threadId}/session-usage?sessionId=...` so the Web UI and future tooling can query the latest stored snapshot without replaying all history.
+  - render the Web UI badge only when `contextUsed` and `contextSize` are both present and `contextSize > 0`; otherwise hide the badge entirely.
+- Consequences:
+  - session usage survives page reloads and server restarts.
+  - the browser can hydrate usage cheaply from sqlite and then refine it with live SSE updates during the current turn.
+  - providers that only expose token totals still contribute useful stored data, but the UI remains silent because a context-window percentage would be incomplete.
+  - provider gaps remain visible only by absence, not by noisy error chrome.
+- Alternatives considered:
+  - reconstruct usage only from persisted turn events in the browser (rejected: repeated replay work and no simple single-snapshot query surface).
+  - show a placeholder badge for every session even when providers do not emit usage (rejected: adds UI noise and implies unsupported precision).
+  - persist only total token counts and ignore context-window size (rejected: does not satisfy the requested percentage indicator).
 
 ## ADR-066: Surface Thread-Scoped Git Branch State In The Web UI Composer
 

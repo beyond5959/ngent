@@ -17,6 +17,7 @@ import type {
   TurnEvent,
   PlanEntry,
   SessionInfo,
+  SessionUsage,
   SessionTranscriptMessage,
   ToolCall,
   MessageAttachment,
@@ -30,6 +31,7 @@ import type {
   ReasoningDeltaPayload,
   SessionBoundPayload,
   SessionInfoUpdatePayload,
+  SessionUsageUpdatePayload,
   ToolCallPayload,
 } from './sse.ts'
 import { copyText, debounce, escHtml, formatBytes, formatRelativeTime, formatTimestamp, generateUUID } from './utils.ts'
@@ -219,6 +221,11 @@ interface ComposerAttachmentDraft {
   previewUrl?: string
 }
 
+interface RenderableSessionUsage extends SessionUsage {
+  contextUsed: number
+  contextSize: number
+}
+
 const sessionPanelStateByThread = new Map<string, SessionPanelState>()
 const sessionPanelRequestSeqByThread = new Map<string, number>()
 const sessionPanelScrollTopByThread = new Map<string, number>()
@@ -226,6 +233,7 @@ const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 const composerDraftByScope = new Map<string, string>()
 const threadGitStateByThread = new Map<string, ThreadGitState>()
+const sessionUsageByScope = new Map<string, SessionUsage>()
 const threadGitRequestSeqByThread = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
@@ -330,6 +338,118 @@ function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitSta
     loading: false,
     error: '',
   })
+}
+
+function sanitizeUsageNumber(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined
+  return value
+}
+
+function cloneSessionUsage(usage: SessionUsage | null | undefined): SessionUsage | null {
+  if (!usage) return null
+
+  const sessionId = usage.sessionId?.trim() ?? ''
+  if (!sessionId) return null
+
+  const cloned: SessionUsage = { sessionId }
+  const updatedAt = usage.updatedAt?.trim() ?? ''
+  const totalTokens = sanitizeUsageNumber(usage.totalTokens)
+  const inputTokens = sanitizeUsageNumber(usage.inputTokens)
+  const outputTokens = sanitizeUsageNumber(usage.outputTokens)
+  const thoughtTokens = sanitizeUsageNumber(usage.thoughtTokens)
+  const cachedReadTokens = sanitizeUsageNumber(usage.cachedReadTokens)
+  const cachedWriteTokens = sanitizeUsageNumber(usage.cachedWriteTokens)
+  const contextUsed = sanitizeUsageNumber(usage.contextUsed)
+  const contextSize = sanitizeUsageNumber(usage.contextSize)
+  const costAmount = sanitizeUsageNumber(usage.costAmount)
+  const costCurrency = usage.costCurrency?.trim() ?? ''
+
+  if (updatedAt) cloned.updatedAt = updatedAt
+  if (totalTokens !== undefined) cloned.totalTokens = totalTokens
+  if (inputTokens !== undefined) cloned.inputTokens = inputTokens
+  if (outputTokens !== undefined) cloned.outputTokens = outputTokens
+  if (thoughtTokens !== undefined) cloned.thoughtTokens = thoughtTokens
+  if (cachedReadTokens !== undefined) cloned.cachedReadTokens = cachedReadTokens
+  if (cachedWriteTokens !== undefined) cloned.cachedWriteTokens = cachedWriteTokens
+  if (contextUsed !== undefined) cloned.contextUsed = contextUsed
+  if (contextSize !== undefined) cloned.contextSize = contextSize
+  if (costAmount !== undefined && costCurrency) {
+    cloned.costAmount = costAmount
+    cloned.costCurrency = costCurrency
+  }
+  return cloned
+}
+
+function mergeSessionUsage(
+  base: SessionUsage | null | undefined,
+  patch: SessionUsage | null | undefined,
+): SessionUsage | null {
+  const nextBase = cloneSessionUsage(base)
+  const nextPatch = cloneSessionUsage(patch)
+  if (!nextPatch) return nextBase
+
+  const merged: SessionUsage = nextBase ? { ...nextBase } : { sessionId: nextPatch.sessionId }
+  merged.sessionId = nextPatch.sessionId || merged.sessionId
+
+  if (nextPatch.updatedAt) merged.updatedAt = nextPatch.updatedAt
+  if (nextPatch.totalTokens !== undefined) merged.totalTokens = nextPatch.totalTokens
+  if (nextPatch.inputTokens !== undefined) merged.inputTokens = nextPatch.inputTokens
+  if (nextPatch.outputTokens !== undefined) merged.outputTokens = nextPatch.outputTokens
+  if (nextPatch.thoughtTokens !== undefined) merged.thoughtTokens = nextPatch.thoughtTokens
+  if (nextPatch.cachedReadTokens !== undefined) merged.cachedReadTokens = nextPatch.cachedReadTokens
+  if (nextPatch.cachedWriteTokens !== undefined) merged.cachedWriteTokens = nextPatch.cachedWriteTokens
+  if (nextPatch.contextUsed !== undefined) merged.contextUsed = nextPatch.contextUsed
+  if (nextPatch.contextSize !== undefined) merged.contextSize = nextPatch.contextSize
+  if (nextPatch.costAmount !== undefined && nextPatch.costCurrency) {
+    merged.costAmount = nextPatch.costAmount
+    merged.costCurrency = nextPatch.costCurrency
+  }
+  return cloneSessionUsage(merged)
+}
+
+function scopeSessionUsage(scopeKey: string): SessionUsage | null {
+  return cloneSessionUsage(sessionUsageByScope.get(scopeKey))
+}
+
+function mergeScopeSessionUsage(scopeKey: string, patch: SessionUsage | null | undefined): SessionUsage | null {
+  scopeKey = scopeKey.trim()
+  if (!scopeKey) return null
+
+  const merged = mergeSessionUsage(sessionUsageByScope.get(scopeKey), patch)
+  if (merged) {
+    sessionUsageByScope.set(scopeKey, merged)
+  } else {
+    sessionUsageByScope.delete(scopeKey)
+  }
+  return merged
+}
+
+function hasRenderableSessionUsage(usage: SessionUsage | null | undefined): usage is RenderableSessionUsage {
+  return !!usage
+    && typeof usage.contextUsed === 'number'
+    && Number.isFinite(usage.contextUsed)
+    && typeof usage.contextSize === 'number'
+    && Number.isFinite(usage.contextSize)
+    && usage.contextSize > 0
+}
+
+function sessionUsageProgressRatio(usage: RenderableSessionUsage): number {
+  return Math.max(0, Math.min(1, usage.contextUsed / usage.contextSize))
+}
+
+function formatTokenValue(value: number): string {
+  return new Intl.NumberFormat().format(Math.max(0, Math.round(value)))
+}
+
+function sessionUsageTooltip(usage: RenderableSessionUsage): string {
+  const percent = Math.round(sessionUsageProgressRatio(usage) * 100)
+  const parts = [
+    `Context ${formatTokenValue(usage.contextUsed ?? 0)} / ${formatTokenValue(usage.contextSize ?? 0)} tokens (${percent}%)`,
+  ]
+  if (usage.totalTokens !== undefined) {
+    parts.push(`Total tokens used ${formatTokenValue(usage.totalTokens)}`)
+  }
+  return parts.join(' · ')
 }
 
 function clonePlanEntries(entries: PlanEntry[] | null | undefined): PlanEntry[] | undefined {
@@ -1678,6 +1798,13 @@ function rebindScopeRuntime(oldScopeKey: string, nextScopeKey: string, nextSessi
     loadedHistoryScopeKeys.delete(oldScopeKey)
     loadedHistoryScopeKeys.add(nextScopeKey)
   }
+  if (sessionUsageByScope.has(oldScopeKey)) {
+    const mergedUsage = mergeSessionUsage(sessionUsageByScope.get(nextScopeKey), sessionUsageByScope.get(oldScopeKey))
+    sessionUsageByScope.delete(oldScopeKey)
+    if (mergedUsage) {
+      sessionUsageByScope.set(nextScopeKey, mergedUsage)
+    }
+  }
   moveComposerDraft(oldScopeKey, nextScopeKey)
   if (activeStreamScopeKey === oldScopeKey) {
     activeStreamScopeKey = nextScopeKey
@@ -1899,6 +2026,74 @@ function applySessionTitleUpdate(threadId: string, sessionID: string, title: str
 
   if (store.get().activeThreadId === normalizedThreadID) {
     updateSessionPanel()
+  }
+}
+
+async function loadSessionUsageForScope(threadId: string, scopeKey: string, sessionID: string): Promise<void> {
+  const normalizedThreadID = threadId.trim()
+  const normalizedScopeKey = scopeKey.trim()
+  const normalizedSessionID = sessionID.trim()
+  if (!normalizedThreadID || !normalizedSessionID) {
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncSessionUsageControl(normalizedThreadID)
+    }
+    return
+  }
+
+  try {
+    const usage = await api.getThreadSessionUsage(normalizedThreadID, normalizedSessionID)
+    if (!usage) return
+
+    const stableScopeKey = threadSessionScopeKey(normalizedThreadID, normalizedSessionID)
+    mergeScopeSessionUsage(stableScopeKey, usage)
+    if (
+      normalizedScopeKey
+      && normalizedScopeKey !== stableScopeKey
+      && activeChatScopeKey() === normalizedScopeKey
+    ) {
+      mergeScopeSessionUsage(normalizedScopeKey, usage)
+    }
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncSessionUsageControl(normalizedThreadID)
+    }
+  } catch {
+    // Ignore cached session-usage load failures.
+  }
+}
+
+function loadThreadSessionUsage(thread: Thread): Promise<void> {
+  return loadSessionUsageForScope(thread.threadId, threadChatScopeKey(thread), selectedThreadSessionID(thread))
+}
+
+function applySessionUsageUpdate(
+  threadId: string,
+  scopeKey: string,
+  event: SessionUsageUpdatePayload,
+): void {
+  const sessionId = event.sessionId?.trim() ?? ''
+  if (!sessionId) return
+
+  const usage: SessionUsage = {
+    sessionId,
+    totalTokens: sanitizeUsageNumber(event.totalTokens),
+    inputTokens: sanitizeUsageNumber(event.inputTokens),
+    outputTokens: sanitizeUsageNumber(event.outputTokens),
+    thoughtTokens: sanitizeUsageNumber(event.thoughtTokens),
+    cachedReadTokens: sanitizeUsageNumber(event.cachedReadTokens),
+    cachedWriteTokens: sanitizeUsageNumber(event.cachedWriteTokens),
+    contextUsed: sanitizeUsageNumber(event.contextUsed),
+    contextSize: sanitizeUsageNumber(event.contextSize),
+    costAmount: sanitizeUsageNumber(event.costAmount),
+    costCurrency: event.costCurrency?.trim() || undefined,
+  }
+
+  mergeScopeSessionUsage(scopeKey, usage)
+  const stableScopeKey = threadSessionScopeKey(threadId, sessionId)
+  if (stableScopeKey !== scopeKey) {
+    mergeScopeSessionUsage(stableScopeKey, usage)
+  }
+  if (store.get().activeThreadId === threadId) {
+    syncSessionUsageControl(threadId)
   }
 }
 
@@ -2894,6 +3089,11 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   sessionSwitchingThreads.delete(threadId)
   freshSessionNonceByThread.delete(threadId)
   selectedSessionOverrideByThread.delete(threadId)
+  Array.from(sessionUsageByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      sessionUsageByScope.delete(scopeKey)
+    }
+  })
   clearThreadComposerAttachments(threadId)
   let nextThreadCompletionBadges = omitThreadCompletionBadge(state.threadCompletionBadges, threadId)
   if (nextActiveThreadId) {
@@ -4415,6 +4615,25 @@ function syncThreadGitControl(threadId = store.get().activeThreadId ?? ''): void
   updateInputState()
 }
 
+function syncSessionUsageControl(threadId = store.get().activeThreadId ?? ''): void {
+  const slotEl = document.getElementById('session-usage-slot')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const activeThreadId = store.get().activeThreadId ?? ''
+  if (!activeThreadId || threadId !== activeThreadId) {
+    slotEl.innerHTML = ''
+    return
+  }
+
+  const thread = store.get().threads.find(item => item.threadId === activeThreadId)
+  if (!thread) {
+    slotEl.innerHTML = ''
+    return
+  }
+
+  slotEl.innerHTML = renderSessionUsageControl(thread)
+}
+
 async function loadThreadGitState(threadId: string, options: { force?: boolean } = {}): Promise<ThreadGitState> {
   const normalizedThreadID = threadId.trim()
   if (!normalizedThreadID) return emptyThreadGitState()
@@ -4897,6 +5116,40 @@ function renderThreadGitControl(threadId: string): string {
     </div>`
 }
 
+function renderSessionUsageControl(thread: Thread): string {
+  const usage = scopeSessionUsage(threadChatScopeKey(thread))
+  if (!hasRenderableSessionUsage(usage)) return ''
+
+  const ratio = sessionUsageProgressRatio(usage)
+  const percent = Math.round(ratio * 100)
+  const circumference = 2 * Math.PI * 18
+  const dashOffset = circumference * (1 - ratio)
+  let toneClass = ''
+  if (percent >= 90) {
+    toneClass = ' session-usage-indicator--danger'
+  } else if (percent >= 75) {
+    toneClass = ' session-usage-indicator--warn'
+  }
+
+  return `
+    <div
+      class="session-usage-indicator${toneClass}"
+      title="${escHtml(sessionUsageTooltip(usage))}"
+      aria-label="${escHtml(sessionUsageTooltip(usage))}"
+    >
+      <svg class="session-usage-indicator__ring" viewBox="0 0 44 44" aria-hidden="true">
+        <circle class="session-usage-indicator__ring-track" cx="22" cy="22" r="18"></circle>
+        <circle
+          class="session-usage-indicator__ring-value"
+          cx="22"
+          cy="22"
+          r="18"
+          style="stroke-dasharray:${circumference.toFixed(2)};stroke-dashoffset:${dashOffset.toFixed(2)}"
+        ></circle>
+      </svg>
+    </div>`
+}
+
 function renderChatThread(t: Thread): string {
   const sessionTitleLabel = getCurrentSessionTitle(t)
   const scopeKey = threadChatScopeKey(t)
@@ -5002,7 +5255,10 @@ function renderChatThread(t: Thread): string {
       </div>
       <div class="input-meta-row">
         <div class="input-hint">Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
-        <div class="input-meta-actions" id="thread-git-slot">${renderThreadGitControl(t.threadId)}</div>
+        <div class="input-meta-actions">
+          <div class="input-meta-slot" id="thread-git-slot">${renderThreadGitControl(t.threadId)}</div>
+          <div class="input-meta-slot" id="session-usage-slot">${renderSessionUsageControl(t)}</div>
+        </div>
       </div>
     </div>`
 }
@@ -5114,7 +5370,9 @@ function updateChatArea(): void {
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
   syncThreadGitControl(thread.threadId)
+  syncSessionUsageControl(thread.threadId)
   void loadThreadGitState(thread.threadId)
+  void loadThreadSessionUsage(thread)
 
   // Always reload history from server (keeps view fresh; guards against overwrites during streaming)
   void loadHistory(thread.threadId)
@@ -5845,10 +6103,16 @@ async function handleSend(): Promise<void> {
       capturedScopeKey = threadSessionScopeKey(capturedThreadID, capturedSessionID)
       rebindScopeRuntime(previousScopeKey, capturedScopeKey, capturedSessionID)
       updateThreadSessionID(capturedThreadID, sessionId)
+      syncSessionUsageControl(capturedThreadID)
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
     },
 
     onSessionInfoUpdate({ sessionId, title }: SessionInfoUpdatePayload) {
       applySessionTitleUpdate(capturedThreadID, sessionId, title)
+    },
+
+    onSessionUsageUpdate(event: SessionUsageUpdatePayload) {
+      applySessionUsageUpdate(capturedThreadID, capturedScopeKey, event)
     },
 
     onPermissionRequired(event) {
@@ -5873,6 +6137,7 @@ async function handleSend(): Promise<void> {
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
       void loadThreadGitState(capturedThreadID, { force: true })
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {
@@ -5911,6 +6176,7 @@ async function handleSend(): Promise<void> {
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
       void loadThreadGitState(capturedThreadID, { force: true })
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {
@@ -5950,6 +6216,7 @@ async function handleSend(): Promise<void> {
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
       void loadThreadGitState(capturedThreadID, { force: true })
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {

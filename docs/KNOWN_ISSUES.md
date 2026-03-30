@@ -15,6 +15,20 @@
 
 ## Open Issues
 
+- ID: KI-046
+- Title: ACP session-usage visibility still depends on provider support
+- Status: Open
+- Severity: Low
+- Affects: threads backed by providers that do not emit ACP prompt `usage` and/or `usage_update`
+- Symptom:
+  - sqlite `session_usage_cache` and the Web UI footer indicator update only when the upstream provider actually returns session-usage data.
+  - on providers with no usage support, the composer footer stays unchanged and there is no per-session token/context snapshot to query later.
+- Workaround:
+  - none inside ngent today; use provider-native billing/usage surfaces when available.
+- Follow-up plan:
+  - keep watching provider ACP compatibility and add support automatically when a provider starts emitting usage.
+  - evaluate optional provider-specific approximations only if product requirements later demand a universal badge.
+
 - ID: KI-045
 - Title: Web UI git branch badge can lag behind out-of-band repository changes
 - Status: Open

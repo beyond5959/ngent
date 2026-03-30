@@ -1,5 +1,15 @@
 import { store } from './store.ts'
-import type { AgentInfo, ConfigOption, ModelOption, SessionInfo, SessionTranscriptMessage, SlashCommand, Thread, Turn } from './types.ts'
+import type {
+  AgentInfo,
+  ConfigOption,
+  ModelOption,
+  SessionInfo,
+  SessionTranscriptMessage,
+  SlashCommand,
+  Thread,
+  ThreadGitInfo,
+  Turn,
+} from './types.ts'
 import { TurnStream } from './sse.ts'
 import type { TurnStreamCallbacks } from './sse.ts'
 
@@ -56,6 +66,15 @@ interface ThreadSlashCommandsResponse {
   threadId: string
   agentId: string
   commands: SlashCommand[]
+}
+interface ThreadGitResponse {
+  threadId: string
+  available: boolean
+  repoRoot?: string
+  currentRef?: string
+  currentBranch?: string
+  detached?: boolean
+  branches?: ThreadGitInfo['branches']
 }
 interface CancelTurnResponse    { turnId: string; threadId: string; status: string }
 interface DeleteThreadResponse  { threadId: string; status: string }
@@ -195,6 +214,41 @@ class ApiClient {
       `/v1/threads/${encodeURIComponent(threadId)}/slash-commands`,
     )
     return data.commands ?? []
+  }
+
+  /** GET /v1/threads/{threadId}/git */
+  async getThreadGitInfo(threadId: string): Promise<ThreadGitInfo> {
+    const data = await this.request<ThreadGitResponse>(
+      'GET',
+      `/v1/threads/${encodeURIComponent(threadId)}/git`,
+    )
+    return {
+      threadId: data.threadId,
+      available: !!data.available,
+      repoRoot: data.repoRoot?.trim() || undefined,
+      currentRef: data.currentRef?.trim() || undefined,
+      currentBranch: data.currentBranch?.trim() || undefined,
+      detached: !!data.detached,
+      branches: data.branches ?? [],
+    }
+  }
+
+  /** POST /v1/threads/{threadId}/git */
+  async switchThreadGitBranch(threadId: string, branch: string): Promise<ThreadGitInfo> {
+    const data = await this.request<ThreadGitResponse>(
+      'POST',
+      `/v1/threads/${encodeURIComponent(threadId)}/git`,
+      { branch },
+    )
+    return {
+      threadId: data.threadId,
+      available: !!data.available,
+      repoRoot: data.repoRoot?.trim() || undefined,
+      currentRef: data.currentRef?.trim() || undefined,
+      currentBranch: data.currentBranch?.trim() || undefined,
+      detached: !!data.detached,
+      branches: data.branches ?? [],
+    }
   }
 
   /** POST /v1/threads/{threadId}/config-options */

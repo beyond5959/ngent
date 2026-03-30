@@ -2654,6 +2654,234 @@ body {
   text-align: left;
 }
 
+.input-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+}
+
+.input-meta-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.input-meta-actions:empty {
+  display: none;
+}
+
+.git-branch-picker {
+  position: relative;
+  max-width: min(100%, 320px);
+}
+
+.git-branch-picker--busy {
+  pointer-events: none;
+}
+
+.git-branch-picker--loading .git-branch-trigger {
+  opacity: 0.74;
+}
+
+.git-branch-trigger {
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px 0 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: var(--r-full);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-panel-strong) 94%, transparent) 0%,
+    color-mix(in srgb, var(--bg-panel-strong) 82%, var(--bg-inset) 18%) 100%
+  );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 24%, transparent);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition:
+    background var(--t-fast),
+    color var(--t-fast),
+    opacity var(--t-fast),
+    border-color var(--t-fast),
+    box-shadow var(--t-fast);
+}
+
+.git-branch-trigger:hover:not(:disabled),
+.git-branch-trigger[aria-expanded="true"] {
+  color: var(--text-1);
+  border-color: color-mix(in srgb, var(--accent) 14%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-panel-strong) 94%, var(--accent) 4%) 0%,
+    color-mix(in srgb, var(--bg-panel-strong) 80%, var(--accent) 9%) 100%
+  );
+  box-shadow:
+    0 10px 18px -16px color-mix(in srgb, var(--accent) 52%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent);
+}
+
+.git-branch-trigger:disabled {
+  opacity: 0.56;
+  cursor: default;
+}
+
+.git-branch-trigger-icon,
+.git-branch-option-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.git-branch-trigger-icon {
+  width: 13px;
+  height: 13px;
+  color: color-mix(in srgb, var(--text-2) 72%, var(--text-3));
+}
+
+.git-branch-trigger:hover:not(:disabled) .git-branch-trigger-icon,
+.git-branch-trigger[aria-expanded="true"] .git-branch-trigger-icon {
+  color: color-mix(in srgb, var(--text-1) 84%, var(--accent) 16%);
+}
+
+.git-branch-trigger-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.git-branch-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.git-branch-trigger-arrow {
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1;
+  transition: transform var(--t-fast), color var(--t-fast);
+}
+
+.git-branch-trigger:hover:not(:disabled) .git-branch-trigger-arrow,
+.git-branch-trigger[aria-expanded="true"] .git-branch-trigger-arrow {
+  color: color-mix(in srgb, var(--text-2) 84%, var(--accent) 16%);
+}
+
+.git-branch-trigger[aria-expanded="true"] .git-branch-trigger-arrow {
+  transform: rotate(180deg);
+}
+
+.git-branch-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: min(320px, calc(100vw - 36px));
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 96%, transparent);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(14px);
+  z-index: 80;
+}
+
+.git-branch-menu[hidden] {
+  display: none;
+}
+
+.git-branch-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 4px 8px 8px;
+}
+
+.git-branch-menu-title {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 700;
+}
+
+.git-branch-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.git-branch-option-item {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-1);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  text-align: left;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.git-branch-option-item:hover:not(:disabled),
+.git-branch-option-item--current {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-inset));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.git-branch-option-item:disabled {
+  cursor: default;
+}
+
+.git-branch-option-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.git-branch-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.git-branch-option-hint {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.git-branch-option-indicator {
+  color: var(--accent);
+}
+
+.git-branch-empty {
+  padding: 14px 10px 10px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 kbd {
   font-family: var(--font);
   font-size: var(--font-size-xs);
@@ -2909,6 +3137,20 @@ button:active:not(:disabled),
 
   .input-area {
     padding: 12px 14px 14px;
+  }
+
+  .input-meta-row {
+    align-items: flex-start;
+  }
+
+  .input-meta-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .git-branch-picker {
+    max-width: 100%;
   }
 
   .thread-model-trigger {
@@ -6046,6 +6288,12 @@ kbd {
 
   .input-area {
     padding: 10px 14px 14px;
+  }
+
+  .input-meta-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
   }
 
   .input-wrapper {

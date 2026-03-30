@@ -20,6 +20,7 @@ import type {
   SessionTranscriptMessage,
   ToolCall,
   MessageAttachment,
+  ThreadGitInfo,
 } from './types.ts'
 import type {
   MessageContentPayload,
@@ -165,6 +166,14 @@ const iconDotsHorizontal = `<svg width="16" height="16" viewBox="0 0 16 16" fill
   <circle cx="12.8" cy="8" r="1.5" fill="currentColor"/>
 </svg>`
 
+const iconGitBranch = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <circle cx="4" cy="3" r="1.35" fill="currentColor"/>
+  <circle cx="12" cy="6" r="1.35" fill="currentColor"/>
+  <circle cx="4" cy="13" r="1.35" fill="currentColor"/>
+  <path d="M4 4.85v6.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M4 6.15v1.05A1.8 1.8 0 0 0 5.8 9h4.85" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -185,6 +194,18 @@ interface SessionPanelState {
   error: string
 }
 
+interface ThreadGitState {
+  available: boolean | null
+  currentRef: string
+  currentBranch: string
+  detached: boolean
+  repoRoot: string
+  branches: ThreadGitInfo['branches']
+  loading: boolean
+  switching: boolean
+  error: string
+}
+
 interface ComposerAttachmentDraft {
   id: string
   file: File
@@ -200,8 +221,11 @@ const sessionPanelScrollTopByThread = new Map<string, number>()
 const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 const composerDraftByScope = new Map<string, string>()
+const threadGitStateByThread = new Map<string, ThreadGitState>()
+const threadGitRequestSeqByThread = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
+let threadGitRequestSeq = 0
 
 function cloneConfigOptions(options: ConfigOption[]): ConfigOption[] {
   return options.map(option => ({
@@ -265,6 +289,43 @@ function normalizeAgentConfigCatalogKey(agentId: string, modelId = ''): string {
   const normalizedModelID = modelId.trim()
   if (!normalizedModelID) return ''
   return `${normalizedAgentID}::${normalizedModelID}`
+}
+
+function emptyThreadGitState(): ThreadGitState {
+  return {
+    available: null,
+    currentRef: '',
+    currentBranch: '',
+    detached: false,
+    repoRoot: '',
+    branches: [],
+    loading: false,
+    switching: false,
+    error: '',
+  }
+}
+
+function threadGitState(threadId: string): ThreadGitState {
+  return threadGitStateByThread.get(threadId) ?? emptyThreadGitState()
+}
+
+function setThreadGitState(threadId: string, patch: Partial<ThreadGitState>): ThreadGitState {
+  const next = { ...threadGitState(threadId), ...patch }
+  threadGitStateByThread.set(threadId, next)
+  return next
+}
+
+function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitState {
+  return setThreadGitState(threadId, {
+    available: info.available,
+    currentRef: info.currentRef?.trim() || '',
+    currentBranch: info.currentBranch?.trim() || '',
+    detached: !!info.detached,
+    repoRoot: info.repoRoot?.trim() || '',
+    branches: [...(info.branches ?? [])],
+    loading: false,
+    error: '',
+  })
 }
 
 function clonePlanEntries(entries: PlanEntry[] | null | undefined): PlanEntry[] | undefined {
@@ -2824,6 +2885,8 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   sessionPanelRequestSeqByThread.delete(threadId)
   sessionPanelScrollTopByThread.delete(threadId)
   sessionTitleOverridesByThread.delete(threadId)
+  threadGitStateByThread.delete(threadId)
+  threadGitRequestSeqByThread.delete(threadId)
   sessionSwitchingThreads.delete(threadId)
   freshSessionNonceByThread.delete(threadId)
   selectedSessionOverrideByThread.delete(threadId)
@@ -4294,6 +4357,21 @@ function updateInputState(): void {
   document.querySelectorAll<HTMLButtonElement>('.composer-attachment__remove').forEach(button => {
     button.disabled = disableComposerActions
   })
+  document.querySelectorAll<HTMLButtonElement>('.git-branch-trigger').forEach(triggerEl => {
+    const gitThreadId = triggerEl.closest<HTMLElement>('.git-branch-picker')?.dataset.threadId?.trim() ?? ''
+    const gitState = gitThreadId ? threadGitState(gitThreadId) : emptyThreadGitState()
+    const disabled = hasThreadStreaming || isSwitchingConfig || isSwitchingSession || gitState.switching || gitState.loading
+    triggerEl.disabled = disabled
+    if (disabled) {
+      closeGitBranchMenu()
+    }
+  })
+  document.querySelectorAll<HTMLButtonElement>('.git-branch-option-item').forEach(button => {
+    const gitThreadId = button.closest<HTMLElement>('.git-branch-picker')?.dataset.threadId?.trim() ?? ''
+    const gitState = gitThreadId ? threadGitState(gitThreadId) : emptyThreadGitState()
+    const isCurrent = button.dataset.current === 'true'
+    button.disabled = isCurrent || hasThreadStreaming || gitState.switching
+  })
   document.querySelectorAll<HTMLButtonElement>('.thread-model-trigger').forEach(triggerEl => {
     const pickerState = triggerEl.dataset.state ?? 'empty'
     const configID = triggerEl.dataset.configId?.trim() ?? ''
@@ -4307,6 +4385,163 @@ function updateInputState(): void {
     }
   })
   updateSlashCommandMenu()
+}
+
+function closeGitBranchMenu(): void {
+  const triggerEl = document.getElementById('git-branch-trigger') as HTMLButtonElement | null
+  const menuEl = document.getElementById('git-branch-menu') as HTMLDivElement | null
+  if (!triggerEl || !menuEl) return
+
+  triggerEl.setAttribute('aria-expanded', 'false')
+  menuEl.hidden = true
+}
+
+function syncThreadGitControl(threadId = store.get().activeThreadId ?? ''): void {
+  const slotEl = document.getElementById('thread-git-slot')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const activeThreadId = store.get().activeThreadId ?? ''
+  if (!activeThreadId || threadId !== activeThreadId) {
+    slotEl.innerHTML = ''
+    return
+  }
+
+  slotEl.innerHTML = renderThreadGitControl(threadId)
+  bindThreadGitControl(threadId)
+  updateInputState()
+}
+
+async function loadThreadGitState(threadId: string, options: { force?: boolean } = {}): Promise<ThreadGitState> {
+  const normalizedThreadID = threadId.trim()
+  if (!normalizedThreadID) return emptyThreadGitState()
+
+  const cachedState = threadGitState(normalizedThreadID)
+  if (!options.force) {
+    if (cachedState.loading) return cachedState
+    if (cachedState.available !== null) return cachedState
+  }
+
+  threadGitRequestSeq += 1
+  const requestSeq = threadGitRequestSeq
+  threadGitRequestSeqByThread.set(normalizedThreadID, requestSeq)
+  setThreadGitState(normalizedThreadID, { loading: true, error: '' })
+  if (store.get().activeThreadId === normalizedThreadID) {
+    syncThreadGitControl(normalizedThreadID)
+  }
+
+  try {
+    const info = await api.getThreadGitInfo(normalizedThreadID)
+    if (threadGitRequestSeqByThread.get(normalizedThreadID) !== requestSeq) {
+      return threadGitState(normalizedThreadID)
+    }
+    const nextState = applyThreadGitInfo(normalizedThreadID, info)
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncThreadGitControl(normalizedThreadID)
+    }
+    return nextState
+  } catch (err) {
+    if (threadGitRequestSeqByThread.get(normalizedThreadID) !== requestSeq) {
+      return threadGitState(normalizedThreadID)
+    }
+
+    const message = err instanceof Error ? err.message : String(err)
+    const nextState = cachedState.available === true
+      ? setThreadGitState(normalizedThreadID, { loading: false, error: message })
+      : setThreadGitState(normalizedThreadID, {
+        available: false,
+        currentRef: '',
+        currentBranch: '',
+        detached: false,
+        repoRoot: '',
+        branches: [],
+        loading: false,
+        error: message,
+      })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncThreadGitControl(normalizedThreadID)
+    }
+    return nextState
+  }
+}
+
+async function switchThreadGitBranch(threadId: string, branch: string): Promise<void> {
+  const normalizedThreadID = threadId.trim()
+  const nextBranch = branch.trim()
+  if (!normalizedThreadID || !nextBranch) return
+  if (store.get().activeThreadId !== normalizedThreadID) return
+  if (hasThreadStream(normalizedThreadID)) return
+
+  const state = threadGitState(normalizedThreadID)
+  if (state.switching) return
+  if (state.currentBranch && state.currentBranch === nextBranch) return
+
+  threadGitRequestSeq += 1
+  const requestSeq = threadGitRequestSeq
+  threadGitRequestSeqByThread.set(normalizedThreadID, requestSeq)
+  setThreadGitState(normalizedThreadID, { switching: true, error: '' })
+  syncThreadGitControl(normalizedThreadID)
+
+  try {
+    const info = await api.switchThreadGitBranch(normalizedThreadID, nextBranch)
+    if (threadGitRequestSeqByThread.get(normalizedThreadID) !== requestSeq) return
+    applyThreadGitInfo(normalizedThreadID, info)
+    setThreadGitState(normalizedThreadID, { switching: false })
+    syncThreadGitControl(normalizedThreadID)
+  } catch (err) {
+    if (threadGitRequestSeqByThread.get(normalizedThreadID) !== requestSeq) return
+    const message = err instanceof Error ? err.message : String(err)
+    setThreadGitState(normalizedThreadID, { switching: false, loading: false, error: message })
+    syncThreadGitControl(normalizedThreadID)
+    window.alert(`Failed to switch git branch: ${message}`)
+  }
+}
+
+function bindThreadGitControl(threadId: string): void {
+  const pickerEl = document.getElementById('git-branch-picker') as HTMLDivElement | null
+  const triggerEl = document.getElementById('git-branch-trigger') as HTMLButtonElement | null
+  const menuEl = document.getElementById('git-branch-menu') as HTMLDivElement | null
+  if (!pickerEl || !triggerEl || !menuEl) return
+
+  const toggleMenu = (): void => {
+    if (triggerEl.disabled) return
+    const expanded = triggerEl.getAttribute('aria-expanded') === 'true'
+    if (expanded) {
+      closeGitBranchMenu()
+      return
+    }
+    triggerEl.setAttribute('aria-expanded', 'true')
+    menuEl.hidden = false
+  }
+
+  triggerEl.addEventListener('click', event => {
+    event.preventDefault()
+    toggleMenu()
+  })
+
+  menuEl.addEventListener('click', event => {
+    const target = event.target as HTMLElement | null
+    const optionBtn = target?.closest('.git-branch-option-item[data-branch-name]') as HTMLButtonElement | null
+    if (!optionBtn || optionBtn.disabled) return
+    const branch = optionBtn.dataset.branchName?.trim() ?? ''
+    closeGitBranchMenu()
+    void switchThreadGitBranch(threadId, branch)
+  })
+
+  pickerEl.addEventListener('focusout', event => {
+    const related = event.relatedTarget as Node | null
+    if (!related || !pickerEl.contains(related)) {
+      closeGitBranchMenu()
+    }
+  })
+
+  const onEsc = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    closeGitBranchMenu()
+    triggerEl.focus()
+  }
+  triggerEl.addEventListener('keydown', onEsc)
+  menuEl.addEventListener('keydown', onEsc)
 }
 
 function closeSlashCommandMenu(): void {
@@ -4591,6 +4826,58 @@ function getCurrentSessionTitle(t: Thread): string {
   return 'New Session'
 }
 
+function renderThreadGitControl(threadId: string): string {
+  const state = threadGitState(threadId)
+  if (state.available !== true) return ''
+
+  const currentLabel = state.currentRef.trim() || state.currentBranch.trim() || 'Detached HEAD'
+  const branchItems = state.branches.length
+    ? state.branches.map(branch => {
+      const isCurrent = !!branch.current || (!!state.currentBranch && branch.name === state.currentBranch)
+      return `
+        <button
+          class="git-branch-option-item${isCurrent ? ' git-branch-option-item--current' : ''}"
+          type="button"
+          data-branch-name="${escHtml(branch.name)}"
+          data-current="${isCurrent ? 'true' : 'false'}"
+          ${isCurrent ? 'disabled' : ''}
+        >
+          <span class="git-branch-option-copy">
+            <span class="git-branch-option-name" title="${escHtml(branch.name)}">${escHtml(branch.name)}</span>
+            <span class="git-branch-option-hint">${isCurrent ? 'Current branch' : 'Checkout branch'}</span>
+          </span>
+          ${isCurrent ? `<span class="git-branch-option-indicator" aria-hidden="true">${iconCheck}</span>` : ''}
+        </button>`
+    }).join('')
+    : `<div class="git-branch-empty">No local branches</div>`
+
+  return `
+    <div
+      class="git-branch-picker${state.switching ? ' git-branch-picker--busy' : ''}${state.loading ? ' git-branch-picker--loading' : ''}"
+      id="git-branch-picker"
+      data-thread-id="${escHtml(threadId)}"
+    >
+      <button
+        class="git-branch-trigger"
+        id="git-branch-trigger"
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded="false"
+        title="${escHtml(currentLabel)}"
+      >
+        <span class="git-branch-trigger-icon" aria-hidden="true">${iconGitBranch}</span>
+        <span class="git-branch-trigger-label">${escHtml(currentLabel)}</span>
+        <span class="git-branch-trigger-arrow" aria-hidden="true">▾</span>
+      </button>
+      <div class="git-branch-menu" id="git-branch-menu" role="listbox" hidden>
+        <div class="git-branch-menu-head">
+          <span class="git-branch-menu-title">Local branches</span>
+        </div>
+        <div class="git-branch-menu-list">${branchItems}</div>
+      </div>
+    </div>`
+}
+
 function renderChatThread(t: Thread): string {
   const sessionTitleLabel = getCurrentSessionTitle(t)
   const scopeKey = threadChatScopeKey(t)
@@ -4694,7 +4981,10 @@ function renderChatThread(t: Thread): string {
           </button>
         </div>
       </div>
-      <div class="input-hint">Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
+      <div class="input-meta-row">
+        <div class="input-hint">Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
+        <div class="input-meta-actions" id="thread-git-slot">${renderThreadGitControl(t.threadId)}</div>
+      </div>
     </div>`
 }
 
@@ -4804,6 +5094,8 @@ function updateChatArea(): void {
   bindSendHandler()
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
+  syncThreadGitControl(thread.threadId)
+  void loadThreadGitState(thread.threadId)
 
   // Always reload history from server (keeps view fresh; guards against overwrites during streaming)
   void loadHistory(thread.threadId)
@@ -5561,6 +5853,7 @@ async function handleSend(): Promise<void> {
       markThreadCompletionBadge(capturedThreadID)
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
+      void loadThreadGitState(capturedThreadID, { force: true })
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {
@@ -5598,6 +5891,7 @@ async function handleSend(): Promise<void> {
       clearPendingPermissions(capturedScopeKey)
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
+      void loadThreadGitState(capturedThreadID, { force: true })
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {
@@ -5636,6 +5930,7 @@ async function handleSend(): Promise<void> {
       clearPendingPermissions(capturedScopeKey)
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
+      void loadThreadGitState(capturedThreadID, { force: true })
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {
@@ -5784,14 +6079,21 @@ function bindGlobalShortcuts(): void {
         closeSlashCommandMenu()
         return
       }
-      // (4) close session info popover if open
+      // (4) close git branch menu if open
+      const gitBranchMenu = document.getElementById('git-branch-menu') as HTMLDivElement | null
+      if (gitBranchMenu && !gitBranchMenu.hidden) {
+        e.preventDefault()
+        closeGitBranchMenu()
+        return
+      }
+      // (5) close session info popover if open
       const sessionInfoPanel = document.getElementById('session-info-panel')
       if (sessionInfoPanel && !sessionInfoPanel.hidden) {
         e.preventDefault()
         closeSessionInfoPopover()
         return
       }
-      // (5) cancel active stream
+      // (6) cancel active stream
       const streamState = getActiveChatStreamState()
       if (streamState?.turnId) {
         void handleCancel()
@@ -5822,6 +6124,9 @@ async function init(): Promise<void> {
     }
     if (!target?.closest('.session-info')) {
       closeSessionInfoPopover()
+    }
+    if (!target?.closest('.git-branch-picker')) {
+      closeGitBranchMenu()
     }
 
     if (!openThreadActionMenuId) return

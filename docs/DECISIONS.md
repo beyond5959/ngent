@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-066: Surface thread-scoped git branch state in the Web UI composer. (Accepted)
 - ADR-065: Recast the embedded Web UI as a restrained desktop workbench. (Accepted)
 - ADR-064: Share threads and sessions across browser-scoped client IDs on the same ngent instance. (Accepted)
 - ADR-058: Render bracketed inline base64 user-image placeholders as safe Web UI previews. (Accepted)
@@ -57,6 +58,41 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-066: Surface Thread-Scoped Git Branch State In The Web UI Composer
+
+- Status: Accepted
+- Date: 2026-03-30
+- Context:
+  - users wanted the embedded Web UI to show the active repository branch near the composer, similar to Codex App, and to allow fast local branch switching from that same surface.
+  - ngent threads already carry one validated `cwd`, so git state needs to be resolved per thread rather than globally for the whole server.
+  - the feature must stay optional:
+    - if the host does not have `git`, do not show anything.
+    - if the thread `cwd` is not inside a repository, do not show anything.
+  - branch checkout mutates the shared worktree for the thread, so it must respect ngent's existing whole-thread shared-state locking model instead of racing active turns.
+- Decision:
+  - add `internal/gitutil` as the small host-integration layer that:
+    - detects `git` availability via `exec.LookPath("git")`.
+    - inspects repository root, current ref, detached-head state, and local branches for one `cwd`.
+    - checks out only existing local branches.
+  - expose thread-scoped HTTP APIs:
+    - `GET /v1/threads/{threadId}/git`
+    - `POST /v1/threads/{threadId}/git` with `{branch}`
+  - make the git capability fail-soft for inspection:
+    - missing git binary or non-repository cwd returns `200` with `available=false`.
+    - the Web UI uses that as a signal to hide the branch control entirely.
+  - make branch checkout a thread-exclusive operation:
+    - `POST /git` acquires the runtime's thread-wide exclusive guard.
+    - if any turn is active on that thread, return `409 CONFLICT`.
+  - render the control in the composer footer only when `available=true`, list only local branches, and refresh git state when the thread is opened and after turns settle.
+- Consequences:
+  - repository-aware threads now expose one compact branch affordance without adding noise to non-git or gitless environments.
+  - branch switching honors the same concurrency guarantees as delete/compact and other shared-state thread operations.
+  - the server API surface now owns git worktree introspection, so the browser does not need direct filesystem or shell access.
+- Alternatives considered:
+  - resolve git state entirely in the browser or via shell-side hacks (rejected: the browser cannot safely inspect host repositories directly).
+  - make missing git / non-repository states hard API errors (rejected: the UI should quietly omit the optional affordance).
+  - allow free-form checkout targets including remotes or revision expressions (rejected: the requested UX is specifically local-branch switching and the narrower contract is safer).
 
 ## ADR-065: Recast The Embedded Web UI As A Restrained Desktop Workbench
 

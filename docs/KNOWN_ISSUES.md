@@ -15,6 +15,19 @@
 
 ## Open Issues
 
+- ID: KI-045
+- Title: Web UI git branch badge can lag behind out-of-band repository changes
+- Status: Open
+- Severity: Low
+- Affects: repository-backed threads when the worktree branch changes outside ngent while the same thread remains open and idle
+- Symptom:
+  - the composer footer branch pill refreshes on thread open, after ngent turn completion, and after in-UI branch switches, but it does not continuously poll the filesystem.
+  - if another terminal or tool checks out a different branch while the thread stays open, the visible badge can remain stale until the next refresh point.
+- Workaround:
+  - reload the page, switch away and back to the thread, or let the next turn complete to refresh the displayed branch state.
+- Follow-up plan:
+  - evaluate an explicit refresh affordance or low-cost polling strategy if out-of-band branch switching becomes common in real usage.
+
 - ID: KI-043
 - Title: `X-Client-ID` no longer isolates data between callers on the same ngent instance
 - Status: Open

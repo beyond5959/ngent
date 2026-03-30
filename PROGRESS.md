@@ -13,6 +13,18 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-03-30)
 
+- `Post-M8` Web UI git-branch footer and checkout switcher completed:
+  - added thread-scoped git inspection/switch support through new `GET/POST /v1/threads/{threadId}/git` endpoints backed by `internal/gitutil`.
+  - the backend now treats branch checkout as a thread-wide shared-state mutation: if any session on the thread is actively streaming, branch switching returns `409 CONFLICT`.
+  - missing `git` binaries and non-repository working directories are handled as optional capability absence, so the API returns `available=false` and the frontend hides the control instead of surfacing a hard error.
+  - the embedded Web UI composer now shows a Codex-style branch pill at the bottom-right only when the active thread's `cwd` is inside a local git repository; expanding it reveals local branches and clicking a branch checks it out immediately.
+  - after each turn settles, the Web UI refreshes git state so agent-driven branch changes are reflected without requiring a full page reload.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-03-30)
+
 - `Post-M8` restrained desktop-workbench Web UI redesign completed:
   - Phase 0 baseline completed:
     - reviewed the embedded SPA implementation and captured before screenshots for the home empty state, `New Agent` modal, and chat workspace.

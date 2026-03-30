@@ -5042,8 +5042,8 @@ button:active:not(:disabled),
 }
 
 .chat-session-toggle-btn {
-  top: 18px;
-  left: 4px;
+  top: 50%;
+  left: 6px;
   width: 30px;
   height: 40px;
   border-radius: 8px;
@@ -5052,6 +5052,12 @@ button:active:not(:disabled),
   color: var(--text-2);
   box-shadow: none;
   backdrop-filter: none;
+  transform: translate(-6px, -50%);
+}
+
+.chat-session-toggle-zone:hover .chat-session-toggle-btn,
+.chat-session-toggle-zone:focus-within .chat-session-toggle-btn {
+  transform: translate(0, -50%);
 }
 
 .chat-session-toggle-btn:hover:not(:disabled) {

@@ -7,7 +7,9 @@ ACP protocol reference: <https://agentclientprotocol.com/>
 ## Mandatory Rules
 
 - MUST use Go 1.24.
-- MUST keep `go test ./...` passing for every change.
+- MUST use scope-appropriate validation:
+  - frontend-only changes limited to `internal/webui/web/**` (plus optional docs updates) MUST pass `cd internal/webui/web && npm run build`; local `go test ./...` is not required.
+  - any backend change, mixed frontend/backend change, or change outside `internal/webui/web/**` that can affect runtime behavior MUST keep `go test ./...` passing.
 - MUST default to local-only bind (`127.0.0.1:8686`); require `--allow-public=true` for LAN-accessible binds.
 - MUST support local-only mode when `--allow-public=false` (loopback-only binds).
 - MUST validate inputs:
@@ -125,7 +127,7 @@ store.subscribe(() => {
 - To cut a release: `git tag v0.x.y && git push origin v0.x.y`.
 
 - MUST run `npm run build` (i.e. `tsc -b && vite build`) and confirm zero TypeScript errors before committing.
-- MUST run `go test ./...` after any change (including frontend-only changes that affect `web/dist`).
+- MUST run `go test ./...` after any backend or mixed frontend/backend change. Frontend-only changes limited to `internal/webui/web/**` (plus optional docs updates) do not require local `go test ./...`; CI still runs the full suite on push/PR.
 - MUST NOT add a JS framework (React, Vue, Svelte, etc.).
 - MUST NOT use `EventSource` for SSE — it does not support POST or custom headers. Use `TurnStream` (`fetch` + `ReadableStream`).
 - MUST set `activeStreamMsgId` before calling `setScopeStreamState(...)` to prevent the subscribe handler from wiping the streaming bubble.

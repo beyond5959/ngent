@@ -62,6 +62,21 @@ export interface SlashCommand {
   inputHint?: string
 }
 
+export interface GitBranchInfo {
+  name: string
+  current: boolean
+}
+
+export interface ThreadGitInfo {
+  threadId: string
+  available: boolean
+  repoRoot?: string
+  currentRef?: string
+  currentBranch?: string
+  detached?: boolean
+  branches: GitBranchInfo[]
+}
+
 export interface TurnEvent {
   eventId: number
   seq: number

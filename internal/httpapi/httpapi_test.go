@@ -2353,6 +2353,181 @@ func TestThreadConfigOptionsUnsupportedManager(t *testing.T) {
 	}
 }
 
+func TestThreadGitUnavailableForNonRepository(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		ThreadID  string `json:"threadId"`
+		Available bool   `json:"available"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := body.ThreadID, threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if body.Available {
+		t.Fatal("available = true, want false")
+	}
+}
+
+func TestThreadGitStatusAndSwitchBranch(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", repo)
+
+	getStatus, getBody := doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID+"/git",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if getStatus != http.StatusOK {
+		t.Fatalf("get status = %d, want %d, body=%s", getStatus, http.StatusOK, getBody)
+	}
+
+	var getResp struct {
+		ThreadID      string `json:"threadId"`
+		Available     bool   `json:"available"`
+		CurrentRef    string `json:"currentRef"`
+		CurrentBranch string `json:"currentBranch"`
+		Detached      bool   `json:"detached"`
+		Branches      []struct {
+			Name    string `json:"name"`
+			Current bool   `json:"current"`
+		} `json:"branches"`
+	}
+	if err := json.Unmarshal([]byte(getBody), &getResp); err != nil {
+		t.Fatalf("unmarshal get response: %v", err)
+	}
+	if !getResp.Available {
+		t.Fatal("available = false, want true")
+	}
+	if got, want := getResp.CurrentRef, "main"; got != want {
+		t.Fatalf("currentRef = %q, want %q", got, want)
+	}
+	if got, want := getResp.CurrentBranch, "main"; got != want {
+		t.Fatalf("currentBranch = %q, want %q", got, want)
+	}
+	if getResp.Detached {
+		t.Fatal("detached = true, want false")
+	}
+	if len(getResp.Branches) != 2 {
+		t.Fatalf("len(branches) = %d, want 2", len(getResp.Branches))
+	}
+	if !getResp.Branches[0].Current || getResp.Branches[0].Name != "main" {
+		t.Fatalf("branches[0] = %#v, want current main", getResp.Branches[0])
+	}
+
+	switchStatus, switchBody := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/git",
+		map[string]any{"branch": "feature/demo"},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if switchStatus != http.StatusOK {
+		t.Fatalf("switch status = %d, want %d, body=%s", switchStatus, http.StatusOK, switchBody)
+	}
+
+	var switchResp struct {
+		Available     bool   `json:"available"`
+		CurrentRef    string `json:"currentRef"`
+		CurrentBranch string `json:"currentBranch"`
+		Branches      []struct {
+			Name    string `json:"name"`
+			Current bool   `json:"current"`
+		} `json:"branches"`
+	}
+	if err := json.Unmarshal([]byte(switchBody), &switchResp); err != nil {
+		t.Fatalf("unmarshal switch response: %v", err)
+	}
+	if !switchResp.Available {
+		t.Fatal("available after switch = false, want true")
+	}
+	if got, want := switchResp.CurrentRef, "feature/demo"; got != want {
+		t.Fatalf("currentRef after switch = %q, want %q", got, want)
+	}
+	if got, want := switchResp.CurrentBranch, "feature/demo"; got != want {
+		t.Fatalf("currentBranch after switch = %q, want %q", got, want)
+	}
+	if !switchResp.Branches[0].Current || switchResp.Branches[0].Name != "feature/demo" {
+		t.Fatalf("branches[0] after switch = %#v, want current feature/demo", switchResp.Branches[0])
+	}
+
+	if got, want := gitCurrentBranch(t, repo), "feature/demo"; got != want {
+		t.Fatalf("git current branch = %q, want %q", got, want)
+	}
+}
+
+func TestThreadGitSwitchConflictsWithActiveTurn(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	release := make(chan struct{})
+	streamer := newConfigOptionStreamer("gpt-5.3-codex", []agents.ConfigOptionValue{
+		{Value: "gpt-5.3-codex", Name: "gpt-5.3-codex"},
+	})
+	streamer.block = true
+	streamer.release = release
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{repo},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", repo)
+
+	streamResultCh := make(chan httpTurnStreamResult, 1)
+	go func() {
+		streamResultCh <- runTurnStreamRequest(t, ts.URL, "client-a", threadID, "block branch switch")
+	}()
+
+	turnID := waitForTurnID(t, ts.URL, "client-a", threadID, 4*time.Second)
+	if turnID == "" {
+		t.Fatal("failed to observe running turn before timeout")
+	}
+
+	conflictStatus, conflictBody := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/git",
+		map[string]any{"branch": "feature/demo"},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if conflictStatus != http.StatusConflict {
+		t.Fatalf("switch status = %d, want %d, body=%s", conflictStatus, http.StatusConflict, conflictBody)
+	}
+	assertErrorCode(t, []byte(conflictBody), "CONFLICT")
+
+	close(release)
+	streamResult := <-streamResultCh
+	if streamResult.StatusCode != http.StatusOK {
+		t.Fatalf("turn status = %d, want %d, body=%s", streamResult.StatusCode, http.StatusOK, streamResult.Body)
+	}
+}
+
 func TestTurnsSSEAndHistory(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
@@ -5545,4 +5720,52 @@ func doRawRequest(t *testing.T, method, url string, body io.Reader, headers map[
 		t.Fatalf("io.ReadAll: %v", err)
 	}
 	return resp.StatusCode, string(raw)
+}
+
+func newGitRepoForHTTPTest(t *testing.T) string {
+	t.Helper()
+
+	requireGitBinary(t)
+
+	repo := t.TempDir()
+	runGitInRepo(t, repo, "init", "--quiet")
+	runGitInRepo(t, repo, "config", "user.name", "Ngent HTTP Test")
+	runGitInRepo(t, repo, "config", "user.email", "ngent-http-test@example.com")
+	runGitInRepo(t, repo, "checkout", "--quiet", "-b", "main")
+
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(): %v", err)
+	}
+	runGitInRepo(t, repo, "add", "README.md")
+	runGitInRepo(t, repo, "commit", "--quiet", "-m", "initial")
+	runGitInRepo(t, repo, "branch", "feature/demo")
+
+	return repo
+}
+
+func gitCurrentBranch(t *testing.T, repo string) string {
+	t.Helper()
+
+	output := runGitInRepo(t, repo, "rev-parse", "--abbrev-ref", "HEAD")
+	return strings.TrimSpace(output)
+}
+
+func requireGitBinary(t *testing.T) {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is not available")
+	}
+}
+
+func runGitInRepo(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repo
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+	return string(output)
 }

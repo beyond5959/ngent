@@ -280,6 +280,24 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
 
+## Requirement 19A: Thread Git Branch Visibility and Switching
+
+- Operation:
+  - open a thread whose `cwd` is inside a git repository and query `GET /v1/threads/{threadId}/git`.
+  - open a thread whose `cwd` is not in a git repository and verify the same endpoint reports the capability as unavailable instead of hard-failing.
+  - from the Web UI composer footer, open the branch menu, inspect the current branch label plus local branch list, and switch to another local branch.
+  - attempt the same branch switch while the thread has an active turn.
+- Expected:
+  - repository-backed threads return `available=true`, current ref metadata, and the local branch list.
+  - non-git threads or hosts without a `git` binary return `available=false`, and the Web UI hides the branch pill entirely.
+  - the composer footer shows the branch pill only for repository-backed threads.
+  - branch switching is limited to local branches and returns the refreshed current branch after success.
+  - switching while any turn on that thread is active returns `409 CONFLICT`.
+- Verification commands (executed 2026-03-30):
+  - `go test ./internal/gitutil -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadGitUnavailableForNonRepository|TestThreadGitStatusAndSwitchBranch|TestThreadGitSwitchConflictsWithActiveTurn' -count=1`
+  - `cd internal/webui/web && npm run build`
+
 ## Requirement 20: Thread Drawer Actions and Rename
 
 - Operation:

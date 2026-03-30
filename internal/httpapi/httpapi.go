@@ -25,6 +25,7 @@ import (
 
 	"github.com/beyond5959/ngent/internal/agents"
 	"github.com/beyond5959/ngent/internal/agents/acpmodel"
+	"github.com/beyond5959/ngent/internal/gitutil"
 	"github.com/beyond5959/ngent/internal/observability"
 	"github.com/beyond5959/ngent/internal/runtime"
 	"github.com/beyond5959/ngent/internal/sse"
@@ -556,6 +557,8 @@ func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, cl
 		s.handleThreadConfigOptions(w, r, clientID, threadID)
 	case "slash-commands":
 		s.handleThreadSlashCommands(w, r, clientID, threadID)
+	case "git":
+		s.handleThreadGit(w, r, clientID, threadID)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found", map[string]any{"path": r.URL.Path})
 	}
@@ -2254,6 +2257,102 @@ func (s *Server) handleThreadSlashCommands(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (s *Server) handleThreadGit(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
+	thread, ok := s.getAccessibleThread(r.Context(), threadID)
+	if !ok {
+		writeError(w, http.StatusNotFound, codeNotFound, "thread not found", map[string]any{})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetThreadGit(w, r, thread)
+	case http.MethodPost:
+		s.handleSwitchThreadGitBranch(w, r, thread)
+	default:
+		writeMethodNotAllowed(w, r)
+	}
+}
+
+func (s *Server) handleGetThreadGit(w http.ResponseWriter, r *http.Request, thread storage.Thread) {
+	status, err := gitutil.Inspect(r.Context(), thread.CWD)
+	if err != nil {
+		if errors.Is(err, gitutil.ErrGitUnavailable) || errors.Is(err, gitutil.ErrNotRepository) {
+			writeJSON(w, http.StatusOK, unavailableThreadGitResponse(thread.ThreadID))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to inspect git state", map[string]any{
+			"threadId": thread.ThreadID,
+			"cwd":      thread.CWD,
+			"reason":   err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, threadGitResponseForStatus(thread.ThreadID, status))
+}
+
+func (s *Server) handleSwitchThreadGitBranch(w http.ResponseWriter, r *http.Request, thread storage.Thread) {
+	var req struct {
+		Branch string `json:"branch"`
+	}
+
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, codeInvalidArgument, "invalid JSON body", map[string]any{"reason": err.Error()})
+		return
+	}
+
+	req.Branch = strings.TrimSpace(req.Branch)
+	if req.Branch == "" {
+		writeError(w, http.StatusBadRequest, codeInvalidArgument, "branch is required", map[string]any{"field": "branch"})
+		return
+	}
+
+	guardTurnID := "git-checkout-" + newTurnID()
+	switchCtx, cancelSwitch := context.WithCancel(r.Context())
+	if err := s.turns.ActivateThreadExclusive(thread.ThreadID, guardTurnID, cancelSwitch); err != nil {
+		cancelSwitch()
+		if errors.Is(err, runtime.ErrActiveTurnExists) {
+			writeError(w, http.StatusConflict, codeConflict, "thread has an active turn", map[string]any{"threadId": thread.ThreadID})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to lock thread for git checkout", map[string]any{
+			"threadId": thread.ThreadID,
+			"reason":   err.Error(),
+		})
+		return
+	}
+	defer func() {
+		cancelSwitch()
+		s.turns.ReleaseThreadExclusive(thread.ThreadID, guardTurnID)
+	}()
+
+	status, err := gitutil.Checkout(switchCtx, thread.CWD, req.Branch)
+	if err != nil {
+		switch {
+		case errors.Is(err, gitutil.ErrGitUnavailable), errors.Is(err, gitutil.ErrNotRepository):
+			writeJSON(w, http.StatusOK, unavailableThreadGitResponse(thread.ThreadID))
+			return
+		case errors.Is(err, gitutil.ErrBranchNotFound):
+			writeError(w, http.StatusBadRequest, codeInvalidArgument, "git branch does not exist locally", map[string]any{
+				"field":    "branch",
+				"branch":   req.Branch,
+				"threadId": thread.ThreadID,
+			})
+			return
+		default:
+			writeError(w, http.StatusConflict, codeConflict, "failed to switch git branch", map[string]any{
+				"threadId": thread.ThreadID,
+				"branch":   req.Branch,
+				"reason":   err.Error(),
+			})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, threadGitResponseForStatus(thread.ThreadID, status))
+}
+
 func (s *Server) finalizeTurnWithBestEffort(ctx context.Context, turnID, status, stopReason, responseText, errorMessage string) {
 	_ = s.store.FinalizeTurn(ctx, storage.FinalizeTurnParams{
 		TurnID:       turnID,
@@ -2768,6 +2867,21 @@ type threadResponse struct {
 	UpdatedAt    string          `json:"updatedAt"`
 }
 
+type threadGitResponse struct {
+	ThreadID      string            `json:"threadId"`
+	Available     bool              `json:"available"`
+	RepoRoot      string            `json:"repoRoot,omitempty"`
+	CurrentRef    string            `json:"currentRef,omitempty"`
+	CurrentBranch string            `json:"currentBranch,omitempty"`
+	Detached      bool              `json:"detached,omitempty"`
+	Branches      []threadGitBranch `json:"branches,omitempty"`
+}
+
+type threadGitBranch struct {
+	Name    string `json:"name"`
+	Current bool   `json:"current"`
+}
+
 type turnHistoryResponse struct {
 	TurnID       string                 `json:"turnId"`
 	RequestText  string                 `json:"requestText"`
@@ -2883,6 +2997,37 @@ func toThreadResponse(thread storage.Thread) (threadResponse, error) {
 		CreatedAt:    thread.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:    thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func unavailableThreadGitResponse(threadID string) threadGitResponse {
+	return threadGitResponse{
+		ThreadID:  threadID,
+		Available: false,
+	}
+}
+
+func threadGitResponseForStatus(threadID string, status gitutil.Status) threadGitResponse {
+	branches := make([]threadGitBranch, 0, len(status.Branches))
+	for _, branch := range status.Branches {
+		name := strings.TrimSpace(branch.Name)
+		if name == "" {
+			continue
+		}
+		branches = append(branches, threadGitBranch{
+			Name:    name,
+			Current: branch.Current,
+		})
+	}
+
+	return threadGitResponse{
+		ThreadID:      threadID,
+		Available:     true,
+		RepoRoot:      status.RepoRoot,
+		CurrentRef:    status.CurrentRef,
+		CurrentBranch: status.CurrentBranch,
+		Detached:      status.Detached,
+		Branches:      branches,
+	}
 }
 
 func parseThreadPath(path string) (threadID, subresource string, ok bool) {

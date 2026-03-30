@@ -200,7 +200,7 @@ All errors use:
   - when `agentOptions` is present, updates persisted `thread.agentOptions` and `updatedAt`.
   - if the update changes shared thread state (`title`, `modelId`, `configOverrides`, or other non-session fields) while any session on the thread is active, returns `409 CONFLICT`.
   - session-only `agentOptions.sessionId` updates are allowed while a different session on the same thread is active.
-  - closes cached thread-scoped agent providers only when the update changes non-session agent options, so the next turn uses updated shared options.
+ - closes cached thread-scoped agent providers only when the update changes non-session agent options, so the next turn uses updated shared options.
 - Response `200`:
 
 ```json
@@ -219,6 +219,54 @@ All errors use:
   }
 }
 ```
+
+5.2 `GET /v1/threads/{threadId}/git`
+- Headers: `X-Client-ID` (required), optional bearer auth if enabled.
+- Behavior:
+  - inspects git state for the thread `cwd`.
+  - if the host does not have `git`, or the `cwd` is not inside a git repository, returns `200` with `available=false`.
+  - otherwise returns repository root, current ref metadata, and local branches.
+- Response `200` (repository-backed thread):
+
+```json
+{
+  "threadId": "th_...",
+  "available": true,
+  "repoRoot": "/abs/path/to/repo",
+  "currentRef": "main",
+  "currentBranch": "main",
+  "detached": false,
+  "branches": [
+    {"name": "main", "current": true},
+    {"name": "feature/demo", "current": false}
+  ]
+}
+```
+
+- Response `200` (non-git or gitless host):
+
+```json
+{
+  "threadId": "th_...",
+  "available": false
+}
+```
+
+5.3 `POST /v1/threads/{threadId}/git`
+- Headers: `X-Client-ID` (required), optional bearer auth if enabled.
+- Request:
+
+```json
+{
+  "branch": "feature/demo"
+}
+```
+
+- Behavior:
+  - only existing local branches are accepted.
+  - branch checkout uses the thread-wide exclusive guard.
+  - if any turn on the thread is active, returns `409 CONFLICT`.
+  - success response reuses the same payload shape as `GET /v1/threads/{threadId}/git`.
 
 5.2 `DELETE /v1/threads/{threadId}`
 - Headers: `X-Client-ID` (required), optional bearer auth if enabled.

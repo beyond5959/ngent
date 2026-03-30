@@ -23,9 +23,11 @@ Modules:
 - `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
 - `internal/sse`: event formatting, stream fanout, resume helpers.
 - `internal/storage`: SQLite repository and migration management.
+- `internal/gitutil`: host-side git capability checks, repository inspection, and local-branch checkout helpers for one validated thread `cwd`.
 - `internal/observability`: human-readable stderr logging, access-log formatting, ANSI-color helpers, and redaction helpers.
 - `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; Web UI visual redesigns must remain presentation-only and must not change API/runtime behavior.
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
+  - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
 
 ## 3. Concurrency Model
 
@@ -33,7 +35,7 @@ Modules:
 - the Web UI may further split one empty-session thread into client-only fresh-session scopes while the user is explicitly iterating on `New session` before ACP emits a real `session_bound`.
 - Each thread/session scope has at most one active turn.
 - New turn requests on an active scope return conflict error, while different sessions on the same thread may run concurrently.
-- Thread-level destructive or shared-state operations (for example delete/compact and thread-wide config changes) remain whole-thread guarded.
+- Thread-level destructive or shared-state operations (for example delete/compact, thread-wide config changes, and manual git branch checkout for a thread `cwd`) remain whole-thread guarded.
 - Cancel request transitions turn state immediately and propagates cancellation token to provider.
 - Permission requests suspend the turn until a client decision arrives or timeout occurs.
 
@@ -106,6 +108,7 @@ On restart:
 
 - health and server metadata
 - thread CRUD (create/list/get/update/delete)
+- thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
 - turn create/cancel
 - thread compact (`POST /v1/threads/{threadId}/compact`)
 - SSE stream for real-time events

@@ -61,7 +61,6 @@ interface ModalState {
 
 function renderAgentCard(agent: AgentInfo, selected: boolean): string {
   const disabled = agent.status === 'unavailable'
-  const stateLabel = disabled ? 'Unavailable' : (selected ? 'Selected' : 'Ready')
   return `
     <label class="agent-card ${selected ? 'agent-card--selected' : ''} ${disabled ? 'agent-card--disabled' : ''}">
       <input
@@ -77,9 +76,7 @@ function renderAgentCard(agent: AgentInfo, selected: boolean): string {
       </div>
       <div class="agent-card-copy">
         <span class="agent-card-name">${escHtml(agent.name)}</span>
-        <span class="agent-card-meta">${escHtml(agent.id)}</span>
       </div>
-      <span class="agent-card-status">${escHtml(stateLabel)}</span>
     </label>`
 }
 
@@ -165,7 +162,7 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
               </div>
             </section>
 
-            <section class="form-section">
+            <section class="form-section form-section--agent">
               <div class="form-section-head">
                 <h3 class="form-section-title">Agent</h3>
                 <p class="form-section-desc">Choose the runtime that will own this thread.</p>

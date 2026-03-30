@@ -159,10 +159,10 @@ const iconChevronRight = `<svg width="12" height="12" viewBox="0 0 24 24" fill="
   <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
-const iconDotsHorizontal = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-  <circle cx="3" cy="7" r="1.15" fill="currentColor"/>
-  <circle cx="7" cy="7" r="1.15" fill="currentColor"/>
-  <circle cx="11" cy="7" r="1.15" fill="currentColor"/>
+const iconDotsHorizontal = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <circle cx="3.2" cy="8" r="1.5" fill="currentColor"/>
+  <circle cx="8" cy="8" r="1.5" fill="currentColor"/>
+  <circle cx="12.8" cy="8" r="1.5" fill="currentColor"/>
 </svg>`
 
 const threadConfigCache = new Map<string, ConfigOption[]>()
@@ -667,6 +667,13 @@ function hasReasoningText(value: string | null | undefined): value is string {
 
 function normalizeAgentKey(agentId: string): string {
   return agentId.trim().toLowerCase()
+}
+
+function agentDisplayName(agentId: string): string {
+  const key = normalizeAgentKey(agentId)
+  if (!key) return ''
+  const match = store.get().agents.find(agent => normalizeAgentKey(agent.id) === key)
+  return match?.name?.trim() || agentId.trim()
 }
 
 function cloneSlashCommands(commands: SlashCommand[] | null | undefined): SlashCommand[] {
@@ -2065,7 +2072,7 @@ function renderSessionPanel(): string {
             <h3 class="session-panel-title" title="${escHtml(threadTitle(thread))}">
               <span class="session-panel-title__text">${escHtml(threadTitle(thread))}</span>
             </h3>
-            <span class="session-panel-agent">${escHtml(thread.agent ?? '')}</span>
+            <span class="session-panel-agent">${escHtml(agentDisplayName(thread.agent ?? ''))}</span>
           </div>
           <div class="session-panel-subtitle" title="${escHtml(thread.cwd)}">
             <span class="session-panel-subtitle__text">${escHtml(thread.cwd)}</span>
@@ -2628,6 +2635,7 @@ function renderThreadItem(
   const hasIconAvatar = hasAgentAvatarIcon(t.agent ?? '')
   const avatar = renderAgentAvatar(t.agent ?? '', 'thread')
   const displayTitle = threadTitle(t)
+  const displayAgent = agentDisplayName(t.agent ?? '')
   const relTime = t.updatedAt ? formatRelativeTime(t.updatedAt) : ''
 
   return `
@@ -2646,7 +2654,7 @@ function renderThreadItem(
             ${relTime ? `<span class="thread-item-time">${escHtml(relTime)}</span>` : ''}
           </div>
           <div class="thread-item-meta">
-            <span class="thread-item-agent">${escHtml(t.agent ?? '')}</span>
+            <span class="thread-item-agent">${escHtml(displayAgent)}</span>
             ${renderThreadStatusIndicator(activityIndicator)}
           </div>
         </div>
@@ -4225,7 +4233,7 @@ function updateMessageList(): void {
   if (!msgs.length) {
     listEl.innerHTML = renderEmptyState(
       'Start the conversation',
-      `Send the first message to begin working with ${thread?.agent ?? 'the agent'}.`,
+      `Send the first message to begin working with ${agentDisplayName(thread?.agent ?? '') || 'the agent'}.`,
       'conversation',
     )
     return
@@ -4630,7 +4638,7 @@ function renderChatThread(t: Thread): string {
           <div class="chat-header-kicker-row">
             <span class="chat-header-kicker">Session</span>
             <span class="chat-header-divider" aria-hidden="true">/</span>
-            <span class="chat-header-context">${escHtml(t.agent ?? 'agent')}</span>
+            <span class="chat-header-context">${escHtml(agentDisplayName(t.agent ?? '') || 'agent')}</span>
           </div>
           <div class="chat-header-title-row">
             <h2 class="chat-title" title="${escHtml(sessionTitleLabel)}">${escHtml(sessionTitleLabel)}</h2>

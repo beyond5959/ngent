@@ -1964,12 +1964,19 @@ async function syncSelectedSessionSelection(
 function renderSessionItem(item: SessionInfo, active: boolean, loading: boolean): string {
   const title = item.title?.trim() || item.sessionId
   const updatedLabel = item.updatedAt ? formatRelativeTime(item.updatedAt) : ''
+  const sideHTML = updatedLabel
+    ? `
+        <div class="session-item-side">
+          <div class="session-item-meta">${escHtml(updatedLabel)}</div>
+        </div>`
+    : ''
   return `
     <button
       class="session-item ${active ? 'session-item--active' : ''}"
       type="button"
       data-session-id="${escHtml(item.sessionId)}"
       aria-pressed="${active ? 'true' : 'false'}"
+      ${active ? 'aria-current="true"' : ''}
       title="${escHtml(title)}"
     >
       <div class="session-item-main">
@@ -1977,7 +1984,7 @@ function renderSessionItem(item: SessionInfo, active: boolean, loading: boolean)
           ${renderSessionStatusIndicator(loading)}
           <div class="session-item-title">${escHtml(title)}</div>
         </div>
-        ${updatedLabel ? `<div class="session-item-meta">${escHtml(updatedLabel)}</div>` : ''}
+        ${sideHTML}
       </div>
     </button>`
 }
@@ -4679,7 +4686,7 @@ function renderChatThread(t: Thread): string {
           </button>
         </div>
       </div>
-      <div class="input-hint"><span class="input-hint-label">Workflow</span> Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
+      <div class="input-hint">Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
     </div>`
 }
 

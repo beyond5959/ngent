@@ -529,7 +529,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - on desktop, collapse/expand is triggered from a hover-revealed button on the chat panel's left edge instead of from a persistent control inside the session panel header.
   - loads the first page automatically when a thread becomes active and the session panel is expanded.
   - shows `Show more` when `nextCursor` is present.
-  - highlights the currently selected `sessionId`.
+  - highlights the currently selected `sessionId` with a stronger active surface and accent-tinted text hierarchy so the active row remains obvious in the compact workbench list styling without needing a separate badge.
   - offers `New session` to clear `sessionId`.
   - when the active thread is already unbound, `New session` still rotates into a fresh client-side scope so the composer starts blank instead of reusing the previous anonymous buffer.
   - refreshes after turns complete so newly created/bound sessions appear in the list.

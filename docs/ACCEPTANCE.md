@@ -103,12 +103,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 13: Embedded Web UI
 
 - Operation: start server; open browser at `http://127.0.0.1:8686/`.
-- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the refreshed premium workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, and its collapse/expand affordance is revealed from the chat panel's left edge. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming.
+- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the current restrained desktop-workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, and its collapse/expand affordance is revealed from the chat panel's left edge. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming.
 - Verification command:
   - `go test ./internal/webui -count=1` (checks `GET /` returns 200 with `text/html` content-type and SPA fallback)
   - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
   - `cd internal/webui/web && npm run build`
-  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the refreshed glass-panel shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, settings/new-agent overlays remain polished and usable, in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, and unsent textarea content survives both session/agent switches and turn completion rebuilds
+  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, settings/new-agent overlays remain polished and usable, in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, and unsent textarea content survives both session/agent switches and turn completion rebuilds
 
 ## Global Gate
 
@@ -353,7 +353,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - when no agent/thread is selected yet, the session panel stays hidden and does not reserve layout width.
   - when collapsed, the session panel fully retracts and does not leave behind a visible strip.
   - on desktop, the session panel collapse/expand affordance is exposed from a hover-revealed control on the chat panel's left edge instead of from the panel header.
-  - the expanded session panel shows the active thread title, provider badge, project path, and a `New session` entry above the session list.
+  - the expanded session panel shows the active thread title, agent metadata, project path, and a `New session` entry above the session list.
   - the agent rail exposes the thread list plus a `New agent` button below it.
   - first-page session load happens when an active thread is selected and the session panel is expanded.
   - `Show more` pagination appears when `nextCursor` is present.
@@ -612,18 +612,15 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
 
-## Requirement 33: Startup Banner And Web UI Share The Same ASCII NGENT Brand
+## Requirement 33: Startup Banner Keeps The ASCII NGENT Mark
 
 - Operation:
   - start ngent from an interactive terminal and observe the startup banner on stderr.
-  - open the Web UI and inspect the top-left sidebar brand block.
   - optionally redirect stderr to a file or buffer and inspect the captured startup output.
 - Expected:
-  - the startup banner begins with the existing ASCII `NGENT` logo rendered in the same ink-green family used by the Web UI accent.
+  - the startup banner begins with the existing ASCII `NGENT` logo.
   - ANSI color is applied only for interactive TTY output; redirected/non-TTY startup output remains plain text without raw escape sequences.
-  - the Web UI sidebar no longer shows the separate `N` monogram plus `Ngent` label and instead renders the same multi-line block `NGENT` art used by the startup banner.
-  - the Web UI logo is rendered directly in the sidebar header, not inside an extra white/framed card.
-  - the browser and terminal marks use the same glyphs; the only intended difference is rendered size.
+  - the surrounding startup metadata remains readable and free of stray escape sequences when output is redirected or buffered.
 - Verification commands (executed 2026-03-26):
   - `cd internal/webui/web && npm run build`
   - `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`

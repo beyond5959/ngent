@@ -29,14 +29,27 @@
 - Follow-up plan:
   - evaluate whether ngent should eventually add an explicit optional namespace/project isolation flag instead of relying on browser-local identifiers.
 
+- ID: KI-044
+- Title: Session history rail can still become dense on threads with very large provider catalogs
+- Status: Open
+- Severity: Low
+- Affects: Web UI threads whose providers return long session lists for the current working directory
+- Symptom:
+  - the redesign makes session rows more compact, but the left session rail is still a straight scrollable list with truncation and no in-rail filtering/search.
+  - on threads with many historical sessions, scanning the rail can still feel dense even though the panel now recedes visually.
+- Workaround:
+  - collapse the session rail when it is not needed, or rely on the provider's recent-session ordering near the top of the list.
+- Follow-up plan:
+  - evaluate adding optional session search/grouping if large-history threads remain common in real usage.
+
 - ID: KI-035
-- Title: Premium Web UI visuals vary slightly by host browser/font stack
+- Title: Desktop-workbench Web UI visuals vary slightly by host browser/font stack
 - Status: Open
 - Severity: Low
 - Affects: the embedded Web UI on different desktop/mobile browsers and operating systems
-- Symptom: typography, glass effects, and spacing can look slightly different depending on available local system fonts and browser support for `backdrop-filter` / compositing
-- Workaround: use a modern browser with backdrop-filter support for the intended presentation; functional behavior remains unchanged even when the visual treatment degrades
-- Follow-up plan: consider adding lightweight visual regression snapshots and/or optional bundled local fonts if exact cross-platform visual parity becomes a product requirement
+- Symptom: typography, subtle contrast steps, and spacing can look slightly different depending on locally available system fonts, font rendering, and display calibration
+- Workaround: use a modern browser with good system-font rendering; functional behavior remains unchanged even when the exact presentation shifts slightly
+- Follow-up plan: consider lightweight visual regression snapshots and/or optional bundled local fonts if exact cross-platform visual parity becomes a product requirement
 
 - ID: KI-034
 - Title: Human-readable stderr logs are less machine-friendly than JSON logs

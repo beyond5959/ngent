@@ -50,7 +50,7 @@ export function mountPermissionCard(
   const actions = permissionActions(event)
 
   const wrapper = document.createElement('div')
-  wrapper.className = 'message message--agent'
+  wrapper.className = 'message message--agent message--permission'
   wrapper.innerHTML = buildHtml(event, timeoutMs, actions)
   listEl.appendChild(wrapper)
   listEl.scrollTop = listEl.scrollHeight
@@ -69,21 +69,27 @@ function buildHtml(
   const { permissionId: pid, approval, command } = event
 
   return `
-    <div class="message-avatar perm-avatar">!</div>
     <div class="message-group message-group--permission">
       <div class="permission-card" id="perm-card-${pid}">
 
         <div class="permission-card-header">
-          <span class="permission-badge permission-badge--${escHtml(approval)}">${escHtml(approval)}</span>
-          <span class="permission-card-title">Permission Required</span>
+          <div class="permission-card-header-top">
+            <span class="permission-badge permission-badge--${escHtml(approval)}">${escHtml(approval)}</span>
+            <span class="permission-card-kicker">Review request</span>
+          </div>
+          <span class="permission-card-title">Permission required</span>
         </div>
 
         <div class="permission-card-body">
+          <div class="permission-card-label">Requested command</div>
           <code class="permission-command">${escHtml(command)}</code>
         </div>
 
         <div class="permission-card-footer">
-          <span class="permission-countdown" id="perm-cd-${pid}">${formatRemaining(timeoutMs)}</span>
+          <div class="permission-card-timer">
+            <span class="permission-card-label">Decision window</span>
+            <span class="permission-countdown" id="perm-cd-${pid}">${formatRemaining(timeoutMs)}</span>
+          </div>
           <div class="permission-actions" id="perm-actions-${pid}">
             ${actions.map(action => buildActionButton(action)).join('')}
           </div>

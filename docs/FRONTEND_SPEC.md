@@ -2,200 +2,89 @@
 
 ## 1. 目标
 
-为 Ngent Server 提供内嵌的 Web 前端，通过 Go `embed` 包随服务二进制分发。
-前端提供类 IM 的会话界面，让用户无需 CLI 或独立客户端即可与 Agent 交互。
+Ngent 的 Web UI 是随 Go 二进制分发的内嵌 no-framework Vite + TypeScript SPA。
+当前目标不是做“聊天 SaaS 外壳”，而是提供一个冷静、专业、桌面工作台式的本地 Agent 操作界面，同时保持协议、SSE、权限、session/history 语义不变。
 
-## 2. UI 布局
+## 2. 当前界面骨架
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  ┌──────────────┐  ┌───────────────────────────────────────────┐│
-│  │ Ngent        │  │ Thread: My Project  [Codex] /home/proj    ││
-│  │           [+]│  │                    [Compact] [Cancel]     ││
-│  ├──────────────┤  ├───────────────────────────────────────────┤│
-│  │ ● Thread A   │  │                                           ││
-│  │   Codex · 2m │  │  [user]  hello                      12:01 ││
-│  │──────────────│  │                                           ││
-│  │ ○ Thread B   │  │  [agent] Hello! How can I help?     12:01 ││
-│  │   Codex · 1h │  │          ```go                            ││
-│  │──────────────│  │          fmt.Println("hi")                ││
-│  │ ○ Thread C   │  │          ```                       [copy] ││
-│  │   Codex · 3h │  │                                           ││
-│  │              │  │  [perm]  ⚠ Run: ls /home                 ││
-│  │              │  │          [Allow once][Allow always]      ││
-│  │              │  │          [Reject once][Reject always]    ││
-│  │              │  │          Timeout in 12s                   ││
-│  │              │  │                                           ││
-│  │              │  │  ···  (streaming)                         ││
-│  ├──────────────┤  ├───────────────────────────────────────────┤│
-│  │  [⚙ Settings]│  │  ┌──────────────────────────────────────┐ ││
-│  └──────────────┘  │  │ Type a message...            [Send ↵] │ ││
-│                    │  └──────────────────────────────────────┘ ││
-│                    └───────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
-```
+- 桌面端采用三段式工作区：
+  - 左侧 `Threads` 导航栏，负责线程切换和创建入口。
+  - 中间可收起的 `Session History` 辅助栏，负责会话浏览与 `New session`。
+  - 右侧主聊天工作区，承担头部元信息、消息流、输入区和流式状态。
+- 无活跃线程时，主区展示一个锚定式空态面板，只保留一个主操作 `New Agent`。
+- `New Agent` 弹窗采用 working-directory-first 流程：先选绝对路径，再选 Agent，`Advanced options` 折叠显示。
+- `Settings` 为浏览器级抽屉，只负责 `Server URL`、`Bearer Token`、`Theme`。
+- 移动端会折叠侧栏，但保持同一套信息层级，不靠“单纯隐藏桌面元素”维持布局。
 
-## 3. 功能清单
+## 3. 行为约束
 
-### 3.1 必须实现（Must Have）
+- 不允许改后端协议或运行时行为；前端重设计必须是 presentation-only。
+- 必须保留 `activeStreamMsgId` 哨兵逻辑，避免订阅回流把流式气泡冲掉。
+- 必须保留 history load guards，避免线程或 session 切换后把旧请求写回当前视图。
+- 必须继续使用 POST SSE：
+  - `fetch` + `ReadableStream`
+  - 不能退回 `EventSource`
+- 只有 finalized agent 文本才走 Markdown 渲染；流式中的消息气泡只能写入 `textContent`。
+- 任何通过 `innerHTML` 注入的 Markdown 结果都必须继续调用 `bindMarkdownControls(...)`。
+- 如果调整 DOM 结构，必须同步迁移现有查询选择器与事件绑定，不能破坏线程切换、session 浏览、发送、取消、权限审批、附件、设置面板等交互。
 
-| 功能 | 说明 |
+## 4. 技术架构
+
+| 层次 | 当前实现 |
 |---|---|
-| IM 布局 | 左侧会话列表 + 右侧消息区，固定布局 |
-| 会话列表 | 显示 agent 类型、标题、最后消息预览、时间 |
-| 切换会话 | 点击侧边栏会话加载历史并切换焦点 |
-| 新建会话 | Modal 弹窗：选择 Agent、填写 CWD（绝对路径）、可选标题 |
-| SSE 流式显示 | 实时追加 `message_delta`，有打字指示动画 |
-| 消息气泡 | 用户消息靠右，Agent 消息靠左，时间戳显示 |
-| 取消 Turn | 流式进行中显示 Cancel 按钮，调用 cancel 接口 |
-| 权限请求 UI | 内联卡片显示权限详情，按 agent 返回的选项动态渲染按钮，并显示倒计时 |
-| 历史加载 | 切换会话时调用 `/history` 还原完整消息列表 |
-| 错误展示 | API 错误和 SSE error 事件以醒目方式内联显示 |
-| Client ID | 自动生成 UUID，存 localStorage，所有请求携带 |
+| 构建 | Vite 6 + TypeScript 5.6 |
+| 渲染 | 原生 DOM，单入口 `main.ts` 驱动，禁止引入 React/Vue/Svelte |
+| 样式 | 单文件 `style.css` + CSS 自定义属性；light/dark 独立调校 |
+| 状态 | 轻量 `AppStore` 发布订阅；仅持久化浏览器设置 |
+| API | `api.ts` 封装 HTTP/JSON，请求头固定带兼容性 `X-Client-ID: ngent-web-ui` |
+| 流式 | `sse.ts` 中 `TurnStream` 通过 `fetch` + `ReadableStream` 解析 `event:/data:` 块 |
+| Markdown | `marked` + `highlight.js`；代码块复制/展开控件通过 `bindMarkdownControls(...)` 绑定 |
+| 嵌入 | `internal/webui/webui.go` 用 `//go:embed web/dist` 提供 SPA fallback handler |
 
-### 3.2 应该实现（Should Have）
+## 5. 关键源码映射
 
-| 功能 | 说明 |
+| 文件 | 角色 |
 |---|---|
-| Markdown 渲染 | Agent 回复支持 Markdown（标题、列表、代码块、链接） |
-| 代码高亮 + 复制 | 代码块语法高亮，右上角 Copy 按钮 |
-| 深色 / 浅色主题 | 系统主题跟随，可手动切换，偏好存 localStorage |
-| 键盘快捷键 | `Cmd/Ctrl+Enter` 发送；`Escape` 关闭 Modal |
-| 自动滚动 | 新消息时滚动到底部；用户向上滚动时暂停自动滚动 |
-| 未读标记 | 非活跃会话有新消息时侧边栏显示小圆点 |
-| 连接状态 | 顶部/底部指示器显示 SSE 连接状态 |
-| Auth Token 配置 | Settings 面板中输入 Bearer Token，存 localStorage |
-| Agent 状态展示 | 新建会话时 Agent 选项显示 available / unavailable |
+| `internal/webui/web/src/main.ts` | 应用入口、Shell 渲染、线程/session/消息/输入区 DOM 绑定、流式生命周期协调 |
+| `internal/webui/web/src/style.css` | 视觉 token、布局、主题、组件样式、Markdown/代码块排版 |
+| `internal/webui/web/src/api.ts` | `/v1/*` API 调用、错误归一化、兼容性请求头 |
+| `internal/webui/web/src/sse.ts` | POST SSE 解析、turn 事件分发、断开/终止处理 |
+| `internal/webui/web/src/store.ts` | 浏览器内状态容器；只持久化 `authToken`、`serverUrl`、`theme` |
+| `internal/webui/web/src/markdown.ts` | Markdown 安全渲染、高亮、代码块复制/展开按钮绑定 |
+| `internal/webui/web/src/components/new-thread-modal.ts` | `New Agent` 弹窗、绝对路径校验、Agent 选择、Advanced options 折叠 |
+| `internal/webui/web/src/components/settings-panel.ts` | 浏览器级设置抽屉 |
+| `internal/webui/web/src/components/permission-card.ts` | 权限审批卡片与倒计时 |
 
-### 3.3 锦上添花（Nice to Have）
+## 6. 状态与持久化
 
-| 功能 | 说明 |
+- `localStorage` 只保存：
+  - `ngent:authToken`
+  - `ngent:serverUrl`
+  - `ngent:theme`
+- 历史消息、线程列表、session 列表、流式状态、输入草稿、附件草稿都不持久化到 `localStorage`。
+- 启动时会清理旧的 `ngent:clientId` 遗留值；浏览器不再暴露可编辑的 Client ID 设置。
+
+## 7. API 映射
+
+| 前端操作 | API |
 |---|---|
-| 会话搜索 / 过滤 | 侧边栏上方搜索框，实时过滤标题和内容预览 |
-| Compact 触发 | 会话头部"压缩摘要"按钮，调用 compact 接口 |
-| 消息复制 | 单条消息右键 / hover 菜单中复制文本 |
-| 会话重命名 | 侧边栏双击 / 右键菜单修改标题 |
-| 跳转到底部 | 右下角悬浮箭头，点击滚动到最新消息 |
-| Server URL 配置 | Settings 中可修改 API 基础地址（适配反代场景） |
-| 移动端适应 | 侧边栏折叠，响应式布局（768px 断点） |
+| 初始化 | `GET /v1/agents`、`GET /v1/threads` |
+| 新建线程 | `POST /v1/threads` |
+| 更新线程标题 / agent options | `PATCH /v1/threads/{threadId}` |
+| 读取线程历史 | `GET /v1/threads/{threadId}/history?includeEvents=1` |
+| 读取 session 列表 | `GET /v1/threads/{threadId}/sessions` |
+| 读取 provider transcript replay | `GET /v1/threads/{threadId}/session-history?sessionId=...` |
+| 读取 slash commands | `GET /v1/threads/{threadId}/slash-commands` |
+| 读取/设置 config options | `GET/POST /v1/threads/{threadId}/config-options` |
+| 发起 turn | `POST /v1/threads/{threadId}/turns`（POST SSE） |
+| 取消 turn | `POST /v1/turns/{turnId}/cancel` |
+| 权限审批 | `POST /v1/permissions/{permissionId}` |
 
-## 4. 技术选型
+## 8. 视觉与交互原则
 
-| 层次 | 选型 | 理由 |
-|---|---|---|
-| 构建工具 | Vite | 快速、零配置、输出小体积 |
-| 语言 | TypeScript（无框架） | 类型安全，无运行时框架，bundle 更小 |
-| 样式 | 纯 CSS + CSS 变量 | 无依赖，主题切换靠 `data-theme` 属性 |
-| Markdown | marked.js (CDN bundle 打包进 dist) | 轻量，支持 GFM |
-| 代码高亮 | highlight.js (子集构建) | 与 marked.js 配合，只打包常用语言 |
-| SSE 客户端 | 原生 `EventSource` API | 浏览器内置，无需额外依赖 |
-| 状态管理 | 自实现轻量 store（发布订阅） | 避免引入 Redux/Zustand 等框架依赖 |
-| Go 内嵌 | `//go:embed web/dist` | 单二进制分发，无外部文件依赖 |
-
-## 5. 文件结构
-
-```
-web/                          # 前端源码根目录
-  src/
-    main.ts                   # 应用入口，初始化和路由
-    api.ts                    # 所有 HTTP API 调用封装
-    sse.ts                    # SSE 流式连接管理
-    store.ts                  # 客户端状态（threads、active thread、settings）
-    types.ts                  # TypeScript 接口定义（Thread、Turn、Message 等）
-    utils.ts                  # 工具函数（时间格式化、UUID、路径校验）
-    components/
-      sidebar.ts              # 侧边栏：会话列表 + 新建按钮
-      chat.ts                 # 消息区：历史 + 流式消息渲染
-      input.ts                # 输入框组件，发送逻辑
-      permission-card.ts      # 权限请求内联卡片
-      new-thread-modal.ts     # 新建会话 Modal
-      settings-panel.ts       # Settings 侧滑面板
-    markdown.ts               # marked.js + highlight.js 封装
-  index.html                  # SPA 入口 HTML
-  style.css                   # 全局 CSS（变量 + 布局）
-  package.json
-  tsconfig.json
-  vite.config.ts
-web/dist/                     # Vite 构建输出（由 make build-web 生成）
-
-internal/webui/
-  webui.go                    # //go:embed web/dist + ServeHTTP handler
-```
-
-## 6. Go 集成方式
-
-### 6.1 embed 包方案
-
-```go
-// internal/webui/webui.go
-package webui
-
-import (
-    "embed"
-    "net/http"
-)
-
-//go:embed web/dist
-var staticFiles embed.FS
-
-// Handler 返回服务前端静态资源的 http.Handler。
-// SPA 路由：所有非 /v1/ /healthz 请求回退到 index.html。
-func Handler() http.Handler { ... }
-```
-
-### 6.2 路由集成
-
-在 `internal/httpapi/httpapi.go` 的 `serveHTTP` 中增加：
-
-```
-GET /          → serve index.html
-GET /assets/*  → serve Vite 打包的 JS/CSS/font 资源
-```
-
-所有 `/v1/*` 和 `/healthz` 优先匹配，其余回退 SPA。
-
-### 6.3 启动摘要更新
-
-`printStartupSummary` 增加 `Web` 行：
-
-```
-Ngent Server started
-  [QR Code]
-Port: 8686
-URL:  http://192.168.1.10:8686/
-On your local network, scan the QR code above or open the URL.
-```
-
-### 6.4 Makefile 更新
-
-```makefile
-build-web:
-	cd web && npm ci && npm run build
-
-build: build-web
-	go build ./...
-
-run: build-web
-	go run ./cmd/ngent
-```
-
-## 7. API 使用映射
-
-| 前端操作 | API 调用 |
-|---|---|
-| 应用初始化 | `GET /v1/agents`（获取 agent 列表和状态） |
-| 打开应用 | `GET /v1/threads`（加载会话列表） |
-| 新建会话 | `POST /v1/threads` |
-| 切换会话 | `GET /v1/threads/{threadId}/history` |
-| 发送消息 | `POST /v1/threads/{threadId}/turns`（SSE） |
-| 取消 Turn | `POST /v1/turns/{turnId}/cancel` |
-| 响应权限 | `POST /v1/permissions/{permissionId}`（提交 `outcome` 和/或 `optionId`） |
-| 触发 Compact | `POST /v1/threads/{threadId}/compact` |
-
-## 8. 设计原则
-
-- **协议优先**：前端不存储任何对话内容到 localStorage，历史从 API 加载。
-- **单向数据流**：store → UI 单向，事件（SSE、用户操作）→ store → 重渲染。
-- **降级友好**：SSE 断开时显示 Reconnecting 状态，不静默丢失事件。
-- **离线能力**：CDN 依赖全部打包进 dist，无运行时外部请求。
-- **安全**：Markdown 渲染使用 `marked` 的 sanitize 模式；不 eval 任何 agent 输出。
+- Web UI 使用简洁的 icon + wordmark，不复用 CLI 的 ASCII `NGENT` 品牌块。
+- 去除背景网格、装饰性 orb、重玻璃感、普遍悬浮 hover、过度胶囊化 badge。
+- 主聊天区是视觉中心；线程栏和 session 栏退后为辅助信息层。
+- 线程与 session 使用工具型列表，而不是整屏卡片堆叠。
+- 输入区更接近编辑器工作面板，而不是大圆角聊天气泡。
+- reasoning / plan / tool call / permission / markdown 采用统一的文档式分区语言，用排版和边界区分，不靠一堆不一致的卡片外观。

@@ -102,7 +102,7 @@
 - Severity: Medium
 - Affects: slow/offline client decision path
 - Symptom: pending permission expires and turn is fail-closed (`outcome=declined`), typically ending with `stopReason=cancelled`
-- Workaround: increase server-side permission timeout and respond quickly to `permission_required`
+- Workaround: respond quickly to `permission_required`; custom permission integrations should keep any adapter-side timeout aligned with the hub timeout.
 - Follow-up plan: expose timeout metadata in SSE payload and add client-side countdown UX
 
 - ID: KI-003

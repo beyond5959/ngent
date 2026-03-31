@@ -17,11 +17,10 @@ import (
 	"github.com/beyond5959/ngent/internal/agents/agentutil"
 )
 
-const defaultPermissionTimeout = 15 * time.Second
 const methodSessionSetConfigOption = "session/set_config_option"
 const authMethodCursorLogin = "cursor_login"
 
-var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(defaultPermissionTimeout)
+var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(acpcli.DefaultPermissionTimeout)
 
 // Config configures the Cursor CLI ACP stdio provider.
 type Config = agentutil.Config

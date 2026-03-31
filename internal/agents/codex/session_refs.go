@@ -82,3 +82,40 @@ func codexSessionMatchesID(session agents.SessionInfo, requestedID string) bool 
 	return requestedID == strings.TrimSpace(session.SessionID) ||
 		requestedID == codexLoadSessionID(session)
 }
+
+func normalizeCodexSessionID(
+	sessionID string,
+	stableSessionID string,
+	rawSessionID string,
+) string {
+	sessionID = strings.TrimSpace(sessionID)
+	stableSessionID = strings.TrimSpace(stableSessionID)
+	rawSessionID = strings.TrimSpace(rawSessionID)
+	if sessionID == "" {
+		return ""
+	}
+	if stableSessionID != "" && rawSessionID != "" && sessionID == rawSessionID {
+		return stableSessionID
+	}
+	return sessionID
+}
+
+func normalizeCodexSessionInfoUpdate(
+	update agents.SessionInfoUpdate,
+	stableSessionID string,
+	rawSessionID string,
+) agents.SessionInfoUpdate {
+	update.SessionID = normalizeCodexSessionID(update.SessionID, stableSessionID, rawSessionID)
+	update.Title = strings.TrimSpace(update.Title)
+	return update
+}
+
+func normalizeCodexSessionUsageUpdate(
+	update agents.SessionUsageUpdate,
+	stableSessionID string,
+	rawSessionID string,
+) agents.SessionUsageUpdate {
+	update = agents.CloneSessionUsageUpdate(update)
+	update.SessionID = normalizeCodexSessionID(update.SessionID, stableSessionID, rawSessionID)
+	return update
+}

@@ -24,7 +24,7 @@ func TestConsumeCodexReplayUpdate(t *testing.T) {
 		},
 	}
 	for _, update := range updates {
-		if err := consumeCodexReplayUpdate(context.Background(), collector, update); err != nil {
+		if err := consumeCodexReplayUpdate(context.Background(), collector, update, "", ""); err != nil {
 			t.Fatalf("consumeCodexReplayUpdate() error = %v", err)
 		}
 	}
@@ -55,7 +55,7 @@ func TestDrainCodexReplayUpdates(t *testing.T) {
 		Params: json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" and two"}}}`),
 	}
 
-	if err := drainCodexReplayUpdates(context.Background(), collector, updates); err != nil {
+	if err := drainCodexReplayUpdates(context.Background(), collector, updates, "", ""); err != nil {
 		t.Fatalf("drainCodexReplayUpdates() error = %v", err)
 	}
 
@@ -65,5 +65,38 @@ func TestDrainCodexReplayUpdates(t *testing.T) {
 	}
 	if got := result.Messages[0].Content; got != "chunk one and two" {
 		t.Fatalf("messages[0].Content = %q, want %q", got, "chunk one and two")
+	}
+}
+
+func TestConsumeCodexReplayUpdateNormalizesSessionUsageID(t *testing.T) {
+	t.Parallel()
+
+	collector := agents.NewACPTranscriptCollector()
+	var captured agents.SessionUsageUpdate
+	ctx := agents.WithSessionUsageHandler(context.Background(), func(_ context.Context, update agents.SessionUsageUpdate) error {
+		captured = agents.CloneSessionUsageUpdate(update)
+		return nil
+	})
+
+	msg := codexacp.RPCMessage{
+		Method: methodSessionUpdate,
+		Params: json.RawMessage(`{
+			"sessionId":"session-1",
+			"update":{"sessionUpdate":"usage_update","used":53000,"size":200000}
+		}`),
+	}
+
+	if err := consumeCodexReplayUpdate(ctx, collector, msg, "thread-123", "session-1"); err != nil {
+		t.Fatalf("consumeCodexReplayUpdate() error = %v", err)
+	}
+
+	if got, want := captured.SessionID, "thread-123"; got != want {
+		t.Fatalf("reported sessionId = %q, want %q", got, want)
+	}
+	if got, want := *captured.ContextUsed, int64(53000); got != want {
+		t.Fatalf("contextUsed = %d, want %d", got, want)
+	}
+	if got, want := *captured.ContextSize, int64(200000); got != want {
+		t.Fatalf("contextSize = %d, want %d", got, want)
 	}
 }

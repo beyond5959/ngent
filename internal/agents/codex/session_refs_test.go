@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"testing"
 
 	"github.com/beyond5959/ngent/internal/agents"
@@ -69,4 +70,60 @@ func TestCodexShouldDeferInitialSessionBinding(t *testing.T) {
 	if codexShouldDeferInitialSessionBinding("", "session-1", "thread-123") {
 		t.Fatalf("did not expect stable session binding to defer")
 	}
+}
+
+func TestNormalizeCodexSessionUsageUpdateUsesStableID(t *testing.T) {
+	update := normalizeCodexSessionUsageUpdate(agents.SessionUsageUpdate{
+		SessionID:   "session-1",
+		TotalTokens: int64Ptr(42),
+	}, "thread-123", "session-1")
+
+	if got, want := update.SessionID, "thread-123"; got != want {
+		t.Fatalf("sessionId = %q, want %q", got, want)
+	}
+	if got, want := *update.TotalTokens, int64(42); got != want {
+		t.Fatalf("totalTokens = %d, want %d", got, want)
+	}
+}
+
+func TestNotifyCachedSessionUsagePromotesRawID(t *testing.T) {
+	client := &Client{
+		sessionUsageByID: map[string]agents.SessionUsageUpdate{
+			"session-1": {
+				SessionID:   "session-1",
+				ContextUsed: int64Ptr(53000),
+				ContextSize: int64Ptr(200000),
+			},
+		},
+	}
+
+	var captured agents.SessionUsageUpdate
+	ctx := agents.WithSessionUsageHandler(context.Background(), func(_ context.Context, update agents.SessionUsageUpdate) error {
+		captured = agents.CloneSessionUsageUpdate(update)
+		return nil
+	})
+
+	if err := client.notifyCachedSessionUsage(ctx, "thread-123", "session-1"); err != nil {
+		t.Fatalf("notifyCachedSessionUsage() error = %v", err)
+	}
+
+	if got, want := captured.SessionID, "thread-123"; got != want {
+		t.Fatalf("reported sessionId = %q, want %q", got, want)
+	}
+	if got, want := *captured.ContextUsed, int64(53000); got != want {
+		t.Fatalf("contextUsed = %d, want %d", got, want)
+	}
+	if got, want := *captured.ContextSize, int64(200000); got != want {
+		t.Fatalf("contextSize = %d, want %d", got, want)
+	}
+	if _, ok := client.sessionUsageByID["session-1"]; ok {
+		t.Fatalf("raw session usage cache entry still present")
+	}
+	if got := client.sessionUsageByID["thread-123"].SessionID; got != "thread-123" {
+		t.Fatalf("stable cache entry sessionId = %q, want %q", got, "thread-123")
+	}
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }

@@ -3,7 +3,7 @@ module github.com/beyond5959/ngent
 go 1.24
 
 require (
-	github.com/beyond5959/acp-adapter v0.3.6-0.20260330154520-5214b42c3ed7
+	github.com/beyond5959/acp-adapter v0.3.6
 	github.com/mattn/go-isatty v0.0.16
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	modernc.org/sqlite v1.18.2

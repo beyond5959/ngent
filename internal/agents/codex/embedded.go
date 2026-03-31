@@ -419,11 +419,16 @@ func (c *Client) StreamPrompt(ctx context.Context, prompt agents.Prompt, onDelta
 			return agents.StopReasonEndTurn, fmt.Errorf("codex: report cached session usage: %w", err)
 		}
 
-		stopReason, streamErr := c.streamOnce(ctx, runtime, sessionID, prompt, onDelta)
+		stopReason, streamErr := c.streamOnce(ctx, runtime, sessionID, prompt, onDelta, deferInitialBinding)
 		if streamErr == nil {
 			if c.supportsLoadSession() && requestedSessionID == "" {
 				resolvedSessionID := c.resolveStableSessionIDAfterPrompt(ctx, runtime, sessionID, stableSessionID)
 				c.setStableSessionID(resolvedSessionID)
+				if deferInitialBinding || resolvedSessionID != stableSessionID {
+					if err := c.notifyCachedSessionUsage(ctx, resolvedSessionID, sessionID); err != nil {
+						return agents.StopReasonEndTurn, fmt.Errorf("codex: report cached session usage: %w", err)
+					}
+				}
 				if deferInitialBinding || resolvedSessionID != stableSessionID {
 					if err := agents.NotifySessionBound(ctx, resolvedSessionID); err != nil {
 						return agents.StopReasonEndTurn, fmt.Errorf("codex: report session bound: %w", err)
@@ -448,6 +453,7 @@ func (c *Client) streamOnce(
 	sessionID string,
 	prompt agents.Prompt,
 	onDelta func(delta string) error,
+	deferSessionUsage bool,
 ) (agents.StopReason, error) {
 	updates, unsubscribe := runtime.SubscribeUpdates(256)
 	defer unsubscribe()
@@ -558,10 +564,14 @@ func (c *Client) streamOnce(
 					usageUpdate.SessionID = strings.TrimSpace(sessionID)
 				}
 			}
-			if err := agents.NotifySessionUsageUpdate(ctx, usageUpdate); err != nil {
-				stopCancelWatcher()
-				stopDrainTimer()
-				return agents.StopReasonEndTurn, fmt.Errorf("codex: report session usage: %w", err)
+			usageUpdate = c.normalizeSessionUsageUpdate(usageUpdate)
+			c.cacheSessionUsage(usageUpdate)
+			if !deferSessionUsage {
+				if err := agents.NotifySessionUsageUpdate(ctx, usageUpdate); err != nil {
+					stopCancelWatcher()
+					stopDrainTimer()
+					return agents.StopReasonEndTurn, fmt.Errorf("codex: report session usage: %w", err)
+				}
 			}
 			if stopReason == "cancelled" {
 				finalStopReason = agents.StopReasonCancelled
@@ -583,7 +593,7 @@ func (c *Client) streamOnce(
 				return agents.StopReasonEndTurn, errors.New("codex: embedded updates channel closed")
 			}
 
-			if err := c.handleUpdate(ctx, runtime, msg, onDelta); err != nil {
+			if err := c.handleUpdate(ctx, runtime, msg, onDelta, deferSessionUsage); err != nil {
 				stopCancelWatcher()
 				stopDrainTimer()
 				return agents.StopReasonEndTurn, err
@@ -645,6 +655,7 @@ func (c *Client) handleUpdate(
 	runtime *codexacp.EmbeddedRuntime,
 	msg codexacp.RPCMessage,
 	onDelta func(delta string) error,
+	deferSessionUsage bool,
 ) error {
 	observability.LogACPMessage(c.Name(), "inbound", msg)
 
@@ -692,7 +703,8 @@ func (c *Client) handleUpdate(
 			if update.SessionInfo == nil {
 				return nil
 			}
-			if err := agents.NotifySessionInfoUpdate(ctx, *update.SessionInfo); err != nil {
+			normalized := c.normalizeSessionInfoUpdate(*update.SessionInfo)
+			if err := agents.NotifySessionInfoUpdate(ctx, normalized); err != nil {
 				c.sendSessionCancel(runtime, c.currentSessionID())
 				return err
 			}
@@ -700,8 +712,12 @@ func (c *Client) handleUpdate(
 			if update.SessionUsage == nil {
 				return nil
 			}
-			c.cacheSessionUsage(*update.SessionUsage)
-			if err := agents.NotifySessionUsageUpdate(ctx, *update.SessionUsage); err != nil {
+			normalized := c.normalizeSessionUsageUpdate(*update.SessionUsage)
+			c.cacheSessionUsage(normalized)
+			if deferSessionUsage {
+				return nil
+			}
+			if err := agents.NotifySessionUsageUpdate(ctx, normalized); err != nil {
 				c.sendSessionCancel(runtime, c.currentSessionID())
 				return err
 			}
@@ -839,10 +855,26 @@ func (c *Client) currentSessionID() string {
 	return c.runtimeSessionID
 }
 
+func (c *Client) sessionIDs() (stableSessionID string, rawSessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.TrimSpace(c.sessionID), strings.TrimSpace(c.runtimeSessionID)
+}
+
 func (c *Client) supportsLoadSession() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.canLoadSession
+}
+
+func (c *Client) normalizeSessionInfoUpdate(update agents.SessionInfoUpdate) agents.SessionInfoUpdate {
+	stableSessionID, rawSessionID := c.sessionIDs()
+	return normalizeCodexSessionInfoUpdate(update, stableSessionID, rawSessionID)
+}
+
+func (c *Client) normalizeSessionUsageUpdate(update agents.SessionUsageUpdate) agents.SessionUsageUpdate {
+	stableSessionID, rawSessionID := c.sessionIDs()
+	return normalizeCodexSessionUsageUpdate(update, stableSessionID, rawSessionID)
 }
 
 func (c *Client) setStableSessionID(sessionID string) {
@@ -1329,26 +1361,64 @@ func (c *Client) cacheSessionUsage(update agents.SessionUsageUpdate) {
 	c.sessionUsageByID[update.SessionID] = agents.MergeSessionUsageUpdate(c.sessionUsageByID[update.SessionID], update)
 }
 
-func (c *Client) notifyCachedSessionUsage(ctx context.Context, sessionIDs ...string) error {
-	c.mu.Lock()
-	if len(c.sessionUsageByID) == 0 {
-		c.mu.Unlock()
-		return nil
-	}
+func (c *Client) cachedSessionUsage(sessionIDs ...string) (agents.SessionUsageUpdate, bool) {
+	normalizedIDs := make([]string, 0, len(sessionIDs))
+	seen := make(map[string]struct{}, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
 		sessionID = strings.TrimSpace(sessionID)
 		if sessionID == "" {
 			continue
 		}
+		if _, ok := seen[sessionID]; ok {
+			continue
+		}
+		seen[sessionID] = struct{}{}
+		normalizedIDs = append(normalizedIDs, sessionID)
+	}
+	if len(normalizedIDs) == 0 {
+		return agents.SessionUsageUpdate{}, false
+	}
+
+	preferredSessionID := normalizedIDs[0]
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.sessionUsageByID) == 0 {
+		return agents.SessionUsageUpdate{}, false
+	}
+
+	merged, found := c.sessionUsageByID[preferredSessionID]
+	if found {
+		merged = agents.CloneSessionUsageUpdate(merged)
+	}
+
+	for _, sessionID := range normalizedIDs[1:] {
 		update, ok := c.sessionUsageByID[sessionID]
 		if !ok {
 			continue
 		}
-		c.mu.Unlock()
-		return agents.NotifySessionUsageUpdate(ctx, update)
+		update = agents.CloneSessionUsageUpdate(update)
+		update.SessionID = preferredSessionID
+		merged = agents.MergeSessionUsageUpdate(merged, update)
+		found = true
+		delete(c.sessionUsageByID, sessionID)
 	}
-	c.mu.Unlock()
-	return nil
+
+	if !found {
+		return agents.SessionUsageUpdate{}, false
+	}
+
+	merged.SessionID = preferredSessionID
+	c.sessionUsageByID[preferredSessionID] = agents.CloneSessionUsageUpdate(merged)
+	return merged, true
+}
+
+func (c *Client) notifyCachedSessionUsage(ctx context.Context, sessionIDs ...string) error {
+	update, ok := c.cachedSessionUsage(sessionIDs...)
+	if !ok {
+		return nil
+	}
+	return agents.NotifySessionUsageUpdate(ctx, update)
 }
 
 func (c *Client) cacheSlashCommands(commands []agents.SlashCommand) {

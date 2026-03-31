@@ -238,6 +238,11 @@ const threadGitRequestSeqByThread = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
+const SESSION_ITEM_HOVER_PREVIEW_DELAY_MS = 120
+const SESSION_ITEM_HOVER_PREVIEW_CLASS = 'session-item--hover-preview'
+let sessionItemHoverPreviewTimer = 0
+let pendingSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
+let activeSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
 
 function cloneConfigOptions(options: ConfigOption[]): ConfigOption[] {
   return options.map(option => ({
@@ -2256,24 +2261,17 @@ function renderSessionItem(item: SessionInfo, active: boolean, loading: boolean)
     </button>`
 }
 
-function prependEphemeralSession(
-  sessions: SessionInfo[],
-  knownIDs: Set<string>,
-  sessionID: string,
-): void {
-  const normalized = sessionID.trim()
-  if (!normalized || knownIDs.has(normalized)) return
-  knownIDs.add(normalized)
-  sessions.unshift({ sessionId: normalized, title: normalized })
+interface SessionPanelRenderData {
+  state: SessionPanelState
+  sessions: SessionInfo[]
+  selectedSessionID: string
+  disabled: boolean
+  refreshDisabled: boolean
+  loadingSessionIDSet: Set<string>
 }
 
-function renderSessionPanel(): string {
-  const { activeThreadId, threads, streamStates } = store.get()
-  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
-  if (!thread) {
-    return ''
-  }
-
+function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
+  const { streamStates } = store.get()
   const state = sessionPanelState(thread.threadId)
   const selectedSessionID = selectedThreadSessionID(thread)
   const switching = sessionSwitchingThreads.has(thread.threadId)
@@ -2293,35 +2291,76 @@ function renderSessionPanel(): string {
   if (selectedSessionID && !knownIDs.has(selectedSessionID)) {
     prependEphemeralSession(sessions, knownIDs, selectedSessionID)
   }
-  const loadingSessionIDSet = new Set(loadingSessionIDs)
 
-  let bodyHTML = ''
-  if (state.loading && !sessions.length) {
-    bodyHTML = `<div class="session-panel-empty">Loading sessions…</div>`
-  } else if (state.error && !sessions.length) {
-    bodyHTML = `<div class="session-panel-empty session-panel-empty--error">${escHtml(state.error)}</div>`
-  } else if (state.supported === false && !sessions.length) {
-    bodyHTML = `<div class="session-panel-empty">This agent does not expose ACP session history.</div>`
-  } else {
-    const itemsHTML = sessions.length
-      ? sessions.map(item => renderSessionItem(
-          item,
-          item.sessionId === selectedSessionID,
-          loadingSessionIDSet.has(item.sessionId),
-        )).join('')
-      : `<div class="session-panel-empty">No previous sessions for this working directory.</div>`
-    const showMoreHTML = state.nextCursor
-      ? `<button class="btn btn-ghost session-show-more-btn" type="button" ${state.loadingMore || disabled ? 'disabled' : ''}>
-          ${state.loadingMore ? 'Loading…' : 'Show more'}
-        </button>`
-      : ''
-    bodyHTML = `
-      <div class="session-list">${itemsHTML}</div>
-      ${showMoreHTML}
-      ${state.error && sessions.length
-        ? `<div class="session-panel-inline-error">${escHtml(state.error)}</div>`
-        : ''}`
+  return {
+    state,
+    sessions,
+    selectedSessionID,
+    disabled,
+    refreshDisabled,
+    loadingSessionIDSet: new Set(loadingSessionIDs),
   }
+}
+
+function renderSessionPanelBody(data: SessionPanelRenderData): string {
+  const { state, sessions, selectedSessionID, disabled, loadingSessionIDSet } = data
+
+  if (state.loading && !sessions.length) {
+    return `<div class="session-panel-empty">Loading sessions…</div>`
+  }
+  if (state.error && !sessions.length) {
+    return `<div class="session-panel-empty session-panel-empty--error">${escHtml(state.error)}</div>`
+  }
+  if (state.supported === false && !sessions.length) {
+    return `<div class="session-panel-empty">This agent does not expose ACP session history.</div>`
+  }
+
+  const itemsHTML = sessions.length
+    ? sessions.map(item => renderSessionItem(
+        item,
+        item.sessionId === selectedSessionID,
+        loadingSessionIDSet.has(item.sessionId),
+      )).join('')
+    : `<div class="session-panel-empty">No previous sessions for this working directory.</div>`
+  const showMoreHTML = state.nextCursor
+    ? `<button class="btn btn-ghost session-show-more-btn" type="button" ${state.loadingMore || disabled ? 'disabled' : ''}>
+        ${state.loadingMore ? 'Loading…' : 'Show more'}
+      </button>`
+    : ''
+
+  return `
+    <div class="session-list">${itemsHTML}</div>
+    ${showMoreHTML}
+    ${state.error && sessions.length
+      ? `<div class="session-panel-inline-error">${escHtml(state.error)}</div>`
+      : ''}`
+}
+
+function sessionPanelBodyRenderKey(data: SessionPanelRenderData): string {
+  const sessionsKey = data.sessions.map(item => [
+    item.sessionId,
+    item.title?.trim() || '',
+    item.updatedAt?.trim() || '',
+  ].join('\u0001')).join('\u0002')
+  const loadingKey = Array.from(data.loadingSessionIDSet).sort().join('\u0001')
+
+  return JSON.stringify({
+    supported: data.state.supported,
+    loading: data.state.loading,
+    loadingMore: data.state.loadingMore,
+    error: data.state.error,
+    nextCursor: data.state.nextCursor,
+    selectedSessionID: data.selectedSessionID,
+    disabled: data.disabled,
+    sessionsKey,
+    loadingKey,
+  })
+}
+
+function renderSessionPanelHeader(thread: Thread, data: SessionPanelRenderData): string {
+  const title = threadTitle(thread)
+  const agentName = agentDisplayName(thread.agent ?? '')
+  const refreshLabel = data.state.loading ? 'Refreshing sessions' : 'Refresh sessions'
 
   return `
     <div class="session-panel-header">
@@ -2329,10 +2368,10 @@ function renderSessionPanel(): string {
       <div class="session-panel-heading-row">
         <div class="session-panel-heading-copy">
           <div class="session-panel-title-row">
-            <h3 class="session-panel-title" title="${escHtml(threadTitle(thread))}">
-              <span class="session-panel-title__text">${escHtml(threadTitle(thread))}</span>
+            <h3 class="session-panel-title" title="${escHtml(title)}">
+              <span class="session-panel-title__text">${escHtml(title)}</span>
             </h3>
-            <span class="session-panel-agent">${escHtml(agentDisplayName(thread.agent ?? ''))}</span>
+            <span class="session-panel-agent">${escHtml(agentName)}</span>
           </div>
           <div class="session-panel-subtitle" title="${escHtml(thread.cwd)}">
             ${renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')}
@@ -2340,11 +2379,11 @@ function renderSessionPanel(): string {
         </div>
         <div class="session-panel-actions">
           <button
-            class="btn btn-icon session-refresh-btn ${state.loading ? 'session-refresh-btn--loading' : ''}"
+            class="btn btn-icon session-refresh-btn ${data.state.loading ? 'session-refresh-btn--loading' : ''}"
             type="button"
-            title="${state.loading ? 'Refreshing sessions' : 'Refresh sessions'}"
-            aria-label="${state.loading ? 'Refreshing sessions' : 'Refresh sessions'}"
-            ${refreshDisabled ? 'disabled' : ''}>
+            title="${refreshLabel}"
+            aria-label="${refreshLabel}"
+            ${data.refreshDisabled ? 'disabled' : ''}>
             ${iconRefresh}
           </button>
         </div>
@@ -2354,13 +2393,153 @@ function renderSessionPanel(): string {
         type="button"
         title="New session"
         aria-label="New session"
-        ${disabled ? 'disabled' : ''}>
+        ${data.disabled ? 'disabled' : ''}>
         ${iconPlus}
         <span>New session</span>
       </button>
-    </div>
-    <div class="session-panel-body">
-      ${bodyHTML}
+    </div>`
+}
+
+function clearSessionItemHoverPreviewTimer(): void {
+  if (!sessionItemHoverPreviewTimer) return
+  window.clearTimeout(sessionItemHoverPreviewTimer)
+  sessionItemHoverPreviewTimer = 0
+}
+
+function clearSessionItemHoverPreview(btn: HTMLButtonElement | null = activeSessionItemHoverPreviewBtn): void {
+  clearSessionItemHoverPreviewTimer()
+  if (!btn || pendingSessionItemHoverPreviewBtn === btn) {
+    pendingSessionItemHoverPreviewBtn = null
+  }
+  btn?.classList.remove(SESSION_ITEM_HOVER_PREVIEW_CLASS)
+  if (activeSessionItemHoverPreviewBtn === btn) {
+    activeSessionItemHoverPreviewBtn = null
+  }
+}
+
+function scheduleSessionItemHoverPreview(btn: HTMLButtonElement): void {
+  if (btn.disabled || btn.classList.contains('session-item--active')) return
+
+  clearSessionItemHoverPreviewTimer()
+  if (activeSessionItemHoverPreviewBtn && activeSessionItemHoverPreviewBtn !== btn) {
+    clearSessionItemHoverPreview(activeSessionItemHoverPreviewBtn)
+  }
+
+  pendingSessionItemHoverPreviewBtn = btn
+  sessionItemHoverPreviewTimer = window.setTimeout(() => {
+    sessionItemHoverPreviewTimer = 0
+    if (pendingSessionItemHoverPreviewBtn !== btn) return
+    pendingSessionItemHoverPreviewBtn = null
+    if (!btn.isConnected || btn.disabled || btn.classList.contains('session-item--active')) return
+
+    activeSessionItemHoverPreviewBtn?.classList.remove(SESSION_ITEM_HOVER_PREVIEW_CLASS)
+    activeSessionItemHoverPreviewBtn = btn
+    btn.classList.add(SESSION_ITEM_HOVER_PREVIEW_CLASS)
+  }, SESSION_ITEM_HOVER_PREVIEW_DELAY_MS)
+}
+
+function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
+  const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
+  if (refreshBtn) {
+    refreshBtn.onclick = () => {
+      clearSessionItemHoverPreview()
+      void loadThreadSessions(thread.threadId)
+    }
+  }
+
+  const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
+  if (newSessionBtn) {
+    newSessionBtn.onclick = () => {
+      clearSessionItemHoverPreview()
+      void switchThreadSession(thread, '')
+    }
+  }
+
+  el.querySelectorAll<HTMLButtonElement>('.session-item[data-session-id]').forEach(btn => {
+    btn.onclick = () => {
+      const sessionID = btn.dataset.sessionId?.trim() ?? ''
+      if (!sessionID || sessionID === selectedThreadSessionID(thread)) return
+      clearSessionItemHoverPreview()
+      void switchThreadSession(thread, sessionID)
+    }
+    btn.onmouseenter = () => {
+      scheduleSessionItemHoverPreview(btn)
+    }
+    btn.onmouseleave = () => {
+      clearSessionItemHoverPreview(btn)
+    }
+  })
+
+  const showMoreBtn = el.querySelector<HTMLButtonElement>('.session-show-more-btn')
+  if (showMoreBtn) {
+    showMoreBtn.onclick = () => {
+      clearSessionItemHoverPreview()
+      void loadThreadSessions(thread.threadId, true)
+    }
+  }
+}
+
+function syncSessionPanelHeader(el: HTMLElement, thread: Thread, data: SessionPanelRenderData): void {
+  const title = threadTitle(thread)
+  const titleEl = el.querySelector<HTMLElement>('.session-panel-title')
+  const titleTextEl = titleEl?.querySelector<HTMLElement>('.session-panel-title__text')
+  if (titleEl) titleEl.title = title
+  if (titleTextEl && titleTextEl.textContent !== title) {
+    titleTextEl.textContent = title
+  }
+
+  const agentName = agentDisplayName(thread.agent ?? '')
+  const agentEl = el.querySelector<HTMLElement>('.session-panel-agent')
+  if (agentEl && agentEl.textContent !== agentName) {
+    agentEl.textContent = agentName
+  }
+
+  const subtitleEl = el.querySelector<HTMLElement>('.session-panel-subtitle')
+  if (subtitleEl && subtitleEl.title !== thread.cwd) {
+    subtitleEl.title = thread.cwd
+    subtitleEl.innerHTML = renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')
+  }
+
+  const refreshLabel = data.state.loading ? 'Refreshing sessions' : 'Refresh sessions'
+  const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
+  if (refreshBtn) {
+    refreshBtn.classList.toggle('session-refresh-btn--loading', data.state.loading)
+    refreshBtn.title = refreshLabel
+    refreshBtn.setAttribute('aria-label', refreshLabel)
+    refreshBtn.disabled = data.refreshDisabled
+  }
+
+  const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
+  if (newSessionBtn) {
+    newSessionBtn.disabled = data.disabled
+  }
+}
+
+function prependEphemeralSession(
+  sessions: SessionInfo[],
+  knownIDs: Set<string>,
+  sessionID: string,
+): void {
+  const normalized = sessionID.trim()
+  if (!normalized || knownIDs.has(normalized)) return
+  knownIDs.add(normalized)
+  sessions.unshift({ sessionId: normalized, title: normalized })
+}
+
+function renderSessionPanel(): string {
+  const { activeThreadId, threads } = store.get()
+  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
+  if (!thread) {
+    return ''
+  }
+
+  const data = resolveSessionPanelRenderData(thread)
+  const bodyKey = sessionPanelBodyRenderKey(data)
+
+  return `
+    ${renderSessionPanelHeader(thread, data)}
+    <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
+      ${renderSessionPanelBody(data)}
     </div>`
 }
 
@@ -2374,48 +2553,56 @@ function updateSessionPanel(): void {
     sessionPanelScrollTopByThread.set(renderedThreadID, previousBody.scrollTop)
   }
 
-  el.innerHTML = renderSessionPanel()
-  syncSidebarChrome()
   const { activeThreadId, threads } = store.get()
   const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
 
   if (!thread) {
+    clearSessionItemHoverPreview()
     delete el.dataset.threadId
+    el.innerHTML = ''
+    syncSidebarChrome()
     return
   }
 
-  el.dataset.threadId = thread.threadId
-  const nextBody = el.querySelector<HTMLElement>('.session-panel-body')
-  if (nextBody) {
-    nextBody.scrollTop = sessionPanelScrollTopByThread.get(thread.threadId) ?? 0
+  syncSidebarChrome()
+  const data = resolveSessionPanelRenderData(thread)
+  const state = data.state
+  const bodyKey = sessionPanelBodyRenderKey(data)
+  const canPatchExisting = renderedThreadID === thread.threadId
+    && !!el.querySelector('.session-panel-header')
+    && !!el.querySelector('.session-panel-body')
+
+  if (!canPatchExisting) {
+    clearSessionItemHoverPreview()
+    el.innerHTML = `${renderSessionPanelHeader(thread, data)}
+      <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
+        ${renderSessionPanelBody(data)}
+      </div>`
+    el.dataset.threadId = thread.threadId
+    const nextBody = el.querySelector<HTMLElement>('.session-panel-body')
+    if (nextBody) {
+      nextBody.scrollTop = sessionPanelScrollTopByThread.get(thread.threadId) ?? 0
+    }
+  } else {
+    el.dataset.threadId = thread.threadId
+    syncSessionPanelHeader(el, thread, data)
+    const bodyEl = el.querySelector<HTMLElement>('.session-panel-body')
+    if (bodyEl && bodyEl.dataset.renderKey !== bodyKey) {
+      clearSessionItemHoverPreview()
+      const currentScrollTop = bodyEl.scrollTop
+      bodyEl.innerHTML = renderSessionPanelBody(data)
+      bodyEl.dataset.renderKey = bodyKey
+      bodyEl.scrollTop = currentScrollTop
+    }
   }
 
-  const state = sessionPanelState(thread.threadId)
   if (sessionPanelExpanded && state.supported === null && !state.loading && !state.loadingMore && !state.error) {
     void loadThreadSessions(thread.threadId)
   }
 
   syncSessionPanelTitleOverflow(el)
   syncSessionPanelSubtitleOverflow(el)
-  el.querySelector<HTMLButtonElement>('.session-refresh-btn')?.addEventListener('click', () => {
-    void loadThreadSessions(thread.threadId)
-  })
-
-  el.querySelector<HTMLButtonElement>('.session-new-btn')?.addEventListener('click', () => {
-    void switchThreadSession(thread, '')
-  })
-
-  el.querySelectorAll<HTMLButtonElement>('.session-item[data-session-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const sessionID = btn.dataset.sessionId?.trim() ?? ''
-      if (!sessionID || sessionID === selectedThreadSessionID(thread)) return
-      void switchThreadSession(thread, sessionID)
-    })
-  })
-
-  el.querySelector<HTMLButtonElement>('.session-show-more-btn')?.addEventListener('click', () => {
-    void loadThreadSessions(thread.threadId, true)
-  })
+  bindSessionPanelControls(el, thread)
 }
 
 // ── Thread list rendering ─────────────────────────────────────────────────
@@ -5121,19 +5308,12 @@ function renderSessionUsageControl(thread: Thread): string {
   if (!hasRenderableSessionUsage(usage)) return ''
 
   const ratio = sessionUsageProgressRatio(usage)
-  const percent = Math.round(ratio * 100)
   const circumference = 2 * Math.PI * 18
   const dashOffset = circumference * (1 - ratio)
-  let toneClass = ''
-  if (percent >= 90) {
-    toneClass = ' session-usage-indicator--danger'
-  } else if (percent >= 75) {
-    toneClass = ' session-usage-indicator--warn'
-  }
 
   return `
     <div
-      class="session-usage-indicator${toneClass}"
+      class="session-usage-indicator"
       title="${escHtml(sessionUsageTooltip(usage))}"
       aria-label="${escHtml(sessionUsageTooltip(usage))}"
     >

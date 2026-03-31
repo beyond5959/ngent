@@ -29,7 +29,7 @@ Modules:
 - `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; Web UI visual redesigns must remain presentation-only and must not change API/runtime behavior.
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
-  - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a ring-only circular context-pressure badge to the right of the branch control; sessions with no usage data omit the badge entirely.
+  - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
 
 ## 3. Concurrency Model
 

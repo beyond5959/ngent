@@ -934,19 +934,24 @@ body {
   transition: transform var(--t-base), background var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
 }
 
-.session-item:hover:not(:disabled) {
+.session-item:not(.session-item--active):not(.session-item--hover-preview):hover:not(:disabled) {
   background: var(--bg-panel-strong);
   border-color: var(--border);
   transform: translateY(-1px);
 }
 
-.session-item--active {
+.session-item--active,
+.session-item--hover-preview {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, var(--bg-panel-strong)) 0%, color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong)) 100%);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent),
     var(--shadow-sm);
+}
+
+.session-item--hover-preview {
+  transform: translateY(-1px);
 }
 
 .session-item-main {
@@ -994,11 +999,13 @@ body {
   white-space: nowrap;
 }
 
-.session-item--active .session-item-title {
+.session-item--active .session-item-title,
+.session-item--hover-preview .session-item-title {
   color: color-mix(in srgb, var(--accent) 76%, var(--text-1));
 }
 
-.session-item--active .session-item-meta {
+.session-item--active .session-item-meta,
+.session-item--hover-preview .session-item-meta {
   color: color-mix(in srgb, var(--accent) 56%, var(--text-2));
 }
 
@@ -2895,50 +2902,20 @@ body {
 }
 
 .session-usage-indicator {
-  --usage-indicator-tone: var(--accent);
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  position: relative;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  color: var(--text-1);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--bg-panel-strong) 95%, transparent) 0%,
-    color-mix(in srgb, var(--bg-panel-strong) 80%, var(--bg-inset) 20%) 100%
-  );
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 26%, transparent),
-    0 10px 20px -18px color-mix(in srgb, var(--usage-indicator-tone) 68%, transparent);
-  transition:
-    transform var(--t-fast),
-    border-color var(--t-fast),
-    box-shadow var(--t-fast);
-}
-
-.session-usage-indicator:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--usage-indicator-tone) 22%, var(--border));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 30%, transparent),
-    0 12px 24px -18px color-mix(in srgb, var(--usage-indicator-tone) 78%, transparent);
-}
-
-.session-usage-indicator--warn {
-  --usage-indicator-tone: #d97706;
-}
-
-.session-usage-indicator--danger {
-  --usage-indicator-tone: #dc2626;
+  color: color-mix(in srgb, var(--text-2) 72%, var(--border-strong) 28%);
+  opacity: 0.92;
 }
 
 .session-usage-indicator__ring {
-  width: 34px;
-  height: 34px;
+  display: block;
+  width: 16px;
+  height: 16px;
   transform: rotate(-90deg);
 }
 
@@ -2949,13 +2926,13 @@ body {
 }
 
 .session-usage-indicator__ring-track {
-  stroke: color-mix(in srgb, var(--border-strong) 86%, transparent);
+  stroke: color-mix(in srgb, var(--border-strong) 62%, transparent);
 }
 
 .session-usage-indicator__ring-value {
-  stroke: var(--usage-indicator-tone);
+  stroke: currentColor;
   stroke-linecap: round;
-  transition: stroke-dashoffset var(--t-base), stroke var(--t-fast);
+  transition: stroke-dashoffset var(--t-base);
 }
 
 kbd {
@@ -4998,13 +4975,14 @@ button:active:not(:disabled),
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
 }
 
-.session-item:hover:not(:disabled) {
+.session-item:not(.session-item--active):not(.session-item--hover-preview):hover:not(:disabled) {
   background: var(--bg-inset);
   border-color: transparent;
   transform: none;
 }
 
-.session-item--active {
+.session-item--active,
+.session-item--hover-preview {
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 13%, var(--bg-panel-strong)) 0%, color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong)) 100%);
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));

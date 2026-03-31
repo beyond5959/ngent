@@ -5180,6 +5180,12 @@ function renderSessionInfoField(label: string, value: string, copyLabel: string,
 function renderSessionInfoPopover(thread: Thread): string {
   const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) return ''
+  const createdAt = thread.createdAt.trim()
+  const fields = [
+    renderSessionInfoField('Session ID', sessionID, 'Copy session ID'),
+    createdAt ? renderSessionInfoField('Created', formatTimestamp(createdAt), 'Copy created time') : '',
+    renderSessionInfoField('Working Directory', thread.cwd, 'Copy working directory', true),
+  ].filter(Boolean).join('')
 
   return `
     <div class="session-info" id="session-info">
@@ -5196,8 +5202,7 @@ function renderSessionInfoPopover(thread: Thread): string {
       </button>
       <div class="session-info-popover" id="session-info-panel" role="dialog" aria-label="Session Info" hidden>
         <div class="session-info-heading">Session Info</div>
-        ${renderSessionInfoField('Session ID', sessionID, 'Copy session ID')}
-        ${renderSessionInfoField('Working Directory', thread.cwd, 'Copy working directory', true)}
+        ${fields}
       </div>
     </div>`
 }
@@ -5334,7 +5339,6 @@ function renderChatThread(t: Thread): string {
   const sessionTitleLabel = getCurrentSessionTitle(t)
   const scopeKey = threadChatScopeKey(t)
   const draft = composerDraft(scopeKey)
-  const createdLabel = t.createdAt ? `Created ${formatTimestamp(t.createdAt)}` : ''
   const attachmentCount = threadComposerAttachments(t.threadId).length
   const selectedModelID = fallbackThreadModelID(t)
   const catalogKey = normalizeAgentConfigCatalogKey(t.agent ?? '', selectedModelID)
@@ -5382,13 +5386,9 @@ function renderChatThread(t: Thread): string {
           <div class="chat-header-title-row">
             <h2 class="chat-title" title="${escHtml(sessionTitleLabel)}">${escHtml(sessionTitleLabel)}</h2>
           </div>
-          <div class="chat-header-subtitle" title="${escHtml(t.cwd)}">
-            ${renderProjectPathLabel(t.cwd, 'chat-header-path', 'chat-header-path__label')}
-          </div>
         </div>
       </div>
       <div class="chat-header-right">
-        ${createdLabel ? `<span class="chat-header-meta">${escHtml(createdLabel)}</span>` : ''}
         ${renderSessionInfoPopover(t)}
       </div>
     </div>

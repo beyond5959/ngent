@@ -183,6 +183,10 @@ func (c *Client) StreamPrompt(ctx context.Context, prompt agents.Prompt, onDelta
 			if update.SessionInfo != nil {
 				return agents.NotifySessionInfoUpdate(ctx, *update.SessionInfo)
 			}
+		case agents.ACPUpdateTypeUsage:
+			if update.SessionUsage != nil {
+				return agents.NotifySessionUsageUpdate(ctx, *update.SessionUsage)
+			}
 		case agents.ACPUpdateTypeAvailableCommands:
 			return agents.NotifySlashCommands(ctx, update.Commands)
 		case agents.ACPUpdateTypeToolCall, agents.ACPUpdateTypeToolCallUpdate:
@@ -217,6 +221,16 @@ func (c *Client) StreamPrompt(ctx context.Context, prompt agents.Prompt, onDelta
 	}
 
 	reason := parseStopReason(promptResult)
+	usageUpdate, usageErr := agents.ParseACPPromptUsage(promptResult)
+	if usageErr != nil {
+		return agents.StopReasonEndTurn, fmt.Errorf("acp: decode session/prompt usage: %w", usageErr)
+	}
+	if usageUpdate.SessionID == "" {
+		usageUpdate.SessionID = sessionID
+	}
+	if err := agents.NotifySessionUsageUpdate(ctx, usageUpdate); err != nil {
+		return agents.StopReasonEndTurn, fmt.Errorf("acp: report session usage: %w", err)
+	}
 	if reason == "cancelled" {
 		return agents.StopReasonCancelled, nil
 	}

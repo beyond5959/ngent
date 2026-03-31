@@ -17,6 +17,7 @@ import type {
   TurnEvent,
   PlanEntry,
   SessionInfo,
+  SessionUsage,
   SessionTranscriptMessage,
   ToolCall,
   MessageAttachment,
@@ -30,6 +31,7 @@ import type {
   ReasoningDeltaPayload,
   SessionBoundPayload,
   SessionInfoUpdatePayload,
+  SessionUsageUpdatePayload,
   ToolCallPayload,
 } from './sse.ts'
 import { copyText, debounce, escHtml, formatBytes, formatRelativeTime, formatTimestamp, generateUUID } from './utils.ts'
@@ -174,6 +176,10 @@ const iconGitBranch = `<svg width="13" height="13" viewBox="0 0 16 16" fill="non
   <path d="M4 6.15v1.05A1.8 1.8 0 0 0 5.8 9h4.85" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
+const iconFolder = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`
+
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -215,6 +221,11 @@ interface ComposerAttachmentDraft {
   previewUrl?: string
 }
 
+interface RenderableSessionUsage extends SessionUsage {
+  contextUsed: number
+  contextSize: number
+}
+
 const sessionPanelStateByThread = new Map<string, SessionPanelState>()
 const sessionPanelRequestSeqByThread = new Map<string, number>()
 const sessionPanelScrollTopByThread = new Map<string, number>()
@@ -222,10 +233,16 @@ const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 const composerDraftByScope = new Map<string, string>()
 const threadGitStateByThread = new Map<string, ThreadGitState>()
+const sessionUsageByScope = new Map<string, SessionUsage>()
 const threadGitRequestSeqByThread = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
+const SESSION_ITEM_HOVER_PREVIEW_DELAY_MS = 120
+const SESSION_ITEM_HOVER_PREVIEW_CLASS = 'session-item--hover-preview'
+let sessionItemHoverPreviewTimer = 0
+let pendingSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
+let activeSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
 
 function cloneConfigOptions(options: ConfigOption[]): ConfigOption[] {
   return options.map(option => ({
@@ -326,6 +343,118 @@ function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitSta
     loading: false,
     error: '',
   })
+}
+
+function sanitizeUsageNumber(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined
+  return value
+}
+
+function cloneSessionUsage(usage: SessionUsage | null | undefined): SessionUsage | null {
+  if (!usage) return null
+
+  const sessionId = usage.sessionId?.trim() ?? ''
+  if (!sessionId) return null
+
+  const cloned: SessionUsage = { sessionId }
+  const updatedAt = usage.updatedAt?.trim() ?? ''
+  const totalTokens = sanitizeUsageNumber(usage.totalTokens)
+  const inputTokens = sanitizeUsageNumber(usage.inputTokens)
+  const outputTokens = sanitizeUsageNumber(usage.outputTokens)
+  const thoughtTokens = sanitizeUsageNumber(usage.thoughtTokens)
+  const cachedReadTokens = sanitizeUsageNumber(usage.cachedReadTokens)
+  const cachedWriteTokens = sanitizeUsageNumber(usage.cachedWriteTokens)
+  const contextUsed = sanitizeUsageNumber(usage.contextUsed)
+  const contextSize = sanitizeUsageNumber(usage.contextSize)
+  const costAmount = sanitizeUsageNumber(usage.costAmount)
+  const costCurrency = usage.costCurrency?.trim() ?? ''
+
+  if (updatedAt) cloned.updatedAt = updatedAt
+  if (totalTokens !== undefined) cloned.totalTokens = totalTokens
+  if (inputTokens !== undefined) cloned.inputTokens = inputTokens
+  if (outputTokens !== undefined) cloned.outputTokens = outputTokens
+  if (thoughtTokens !== undefined) cloned.thoughtTokens = thoughtTokens
+  if (cachedReadTokens !== undefined) cloned.cachedReadTokens = cachedReadTokens
+  if (cachedWriteTokens !== undefined) cloned.cachedWriteTokens = cachedWriteTokens
+  if (contextUsed !== undefined) cloned.contextUsed = contextUsed
+  if (contextSize !== undefined) cloned.contextSize = contextSize
+  if (costAmount !== undefined && costCurrency) {
+    cloned.costAmount = costAmount
+    cloned.costCurrency = costCurrency
+  }
+  return cloned
+}
+
+function mergeSessionUsage(
+  base: SessionUsage | null | undefined,
+  patch: SessionUsage | null | undefined,
+): SessionUsage | null {
+  const nextBase = cloneSessionUsage(base)
+  const nextPatch = cloneSessionUsage(patch)
+  if (!nextPatch) return nextBase
+
+  const merged: SessionUsage = nextBase ? { ...nextBase } : { sessionId: nextPatch.sessionId }
+  merged.sessionId = nextPatch.sessionId || merged.sessionId
+
+  if (nextPatch.updatedAt) merged.updatedAt = nextPatch.updatedAt
+  if (nextPatch.totalTokens !== undefined) merged.totalTokens = nextPatch.totalTokens
+  if (nextPatch.inputTokens !== undefined) merged.inputTokens = nextPatch.inputTokens
+  if (nextPatch.outputTokens !== undefined) merged.outputTokens = nextPatch.outputTokens
+  if (nextPatch.thoughtTokens !== undefined) merged.thoughtTokens = nextPatch.thoughtTokens
+  if (nextPatch.cachedReadTokens !== undefined) merged.cachedReadTokens = nextPatch.cachedReadTokens
+  if (nextPatch.cachedWriteTokens !== undefined) merged.cachedWriteTokens = nextPatch.cachedWriteTokens
+  if (nextPatch.contextUsed !== undefined) merged.contextUsed = nextPatch.contextUsed
+  if (nextPatch.contextSize !== undefined) merged.contextSize = nextPatch.contextSize
+  if (nextPatch.costAmount !== undefined && nextPatch.costCurrency) {
+    merged.costAmount = nextPatch.costAmount
+    merged.costCurrency = nextPatch.costCurrency
+  }
+  return cloneSessionUsage(merged)
+}
+
+function scopeSessionUsage(scopeKey: string): SessionUsage | null {
+  return cloneSessionUsage(sessionUsageByScope.get(scopeKey))
+}
+
+function mergeScopeSessionUsage(scopeKey: string, patch: SessionUsage | null | undefined): SessionUsage | null {
+  scopeKey = scopeKey.trim()
+  if (!scopeKey) return null
+
+  const merged = mergeSessionUsage(sessionUsageByScope.get(scopeKey), patch)
+  if (merged) {
+    sessionUsageByScope.set(scopeKey, merged)
+  } else {
+    sessionUsageByScope.delete(scopeKey)
+  }
+  return merged
+}
+
+function hasRenderableSessionUsage(usage: SessionUsage | null | undefined): usage is RenderableSessionUsage {
+  return !!usage
+    && typeof usage.contextUsed === 'number'
+    && Number.isFinite(usage.contextUsed)
+    && typeof usage.contextSize === 'number'
+    && Number.isFinite(usage.contextSize)
+    && usage.contextSize > 0
+}
+
+function sessionUsageProgressRatio(usage: RenderableSessionUsage): number {
+  return Math.max(0, Math.min(1, usage.contextUsed / usage.contextSize))
+}
+
+function formatTokenValue(value: number): string {
+  return new Intl.NumberFormat().format(Math.max(0, Math.round(value)))
+}
+
+function sessionUsageTooltip(usage: RenderableSessionUsage): string {
+  const percent = Math.round(sessionUsageProgressRatio(usage) * 100)
+  const parts = [
+    `Context ${formatTokenValue(usage.contextUsed ?? 0)} / ${formatTokenValue(usage.contextSize ?? 0)} tokens (${percent}%)`,
+  ]
+  if (usage.totalTokens !== undefined) {
+    parts.push(`Total tokens used ${formatTokenValue(usage.totalTokens)}`)
+  }
+  return parts.join(' · ')
 }
 
 function clonePlanEntries(entries: PlanEntry[] | null | undefined): PlanEntry[] | undefined {
@@ -1674,6 +1803,13 @@ function rebindScopeRuntime(oldScopeKey: string, nextScopeKey: string, nextSessi
     loadedHistoryScopeKeys.delete(oldScopeKey)
     loadedHistoryScopeKeys.add(nextScopeKey)
   }
+  if (sessionUsageByScope.has(oldScopeKey)) {
+    const mergedUsage = mergeSessionUsage(sessionUsageByScope.get(nextScopeKey), sessionUsageByScope.get(oldScopeKey))
+    sessionUsageByScope.delete(oldScopeKey)
+    if (mergedUsage) {
+      sessionUsageByScope.set(nextScopeKey, mergedUsage)
+    }
+  }
   moveComposerDraft(oldScopeKey, nextScopeKey)
   if (activeStreamScopeKey === oldScopeKey) {
     activeStreamScopeKey = nextScopeKey
@@ -1898,6 +2034,74 @@ function applySessionTitleUpdate(threadId: string, sessionID: string, title: str
   }
 }
 
+async function loadSessionUsageForScope(threadId: string, scopeKey: string, sessionID: string): Promise<void> {
+  const normalizedThreadID = threadId.trim()
+  const normalizedScopeKey = scopeKey.trim()
+  const normalizedSessionID = sessionID.trim()
+  if (!normalizedThreadID || !normalizedSessionID) {
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncSessionUsageControl(normalizedThreadID)
+    }
+    return
+  }
+
+  try {
+    const usage = await api.getThreadSessionUsage(normalizedThreadID, normalizedSessionID)
+    if (!usage) return
+
+    const stableScopeKey = threadSessionScopeKey(normalizedThreadID, normalizedSessionID)
+    mergeScopeSessionUsage(stableScopeKey, usage)
+    if (
+      normalizedScopeKey
+      && normalizedScopeKey !== stableScopeKey
+      && activeChatScopeKey() === normalizedScopeKey
+    ) {
+      mergeScopeSessionUsage(normalizedScopeKey, usage)
+    }
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncSessionUsageControl(normalizedThreadID)
+    }
+  } catch {
+    // Ignore cached session-usage load failures.
+  }
+}
+
+function loadThreadSessionUsage(thread: Thread): Promise<void> {
+  return loadSessionUsageForScope(thread.threadId, threadChatScopeKey(thread), selectedThreadSessionID(thread))
+}
+
+function applySessionUsageUpdate(
+  threadId: string,
+  scopeKey: string,
+  event: SessionUsageUpdatePayload,
+): void {
+  const sessionId = event.sessionId?.trim() ?? ''
+  if (!sessionId) return
+
+  const usage: SessionUsage = {
+    sessionId,
+    totalTokens: sanitizeUsageNumber(event.totalTokens),
+    inputTokens: sanitizeUsageNumber(event.inputTokens),
+    outputTokens: sanitizeUsageNumber(event.outputTokens),
+    thoughtTokens: sanitizeUsageNumber(event.thoughtTokens),
+    cachedReadTokens: sanitizeUsageNumber(event.cachedReadTokens),
+    cachedWriteTokens: sanitizeUsageNumber(event.cachedWriteTokens),
+    contextUsed: sanitizeUsageNumber(event.contextUsed),
+    contextSize: sanitizeUsageNumber(event.contextSize),
+    costAmount: sanitizeUsageNumber(event.costAmount),
+    costCurrency: event.costCurrency?.trim() || undefined,
+  }
+
+  mergeScopeSessionUsage(scopeKey, usage)
+  const stableScopeKey = threadSessionScopeKey(threadId, sessionId)
+  if (stableScopeKey !== scopeKey) {
+    mergeScopeSessionUsage(stableScopeKey, usage)
+  }
+  if (store.get().activeThreadId === threadId) {
+    syncSessionUsageControl(threadId)
+  }
+}
+
 async function loadThreadSessions(threadId: string, append = false): Promise<void> {
   const thread = store.get().threads.find(item => item.threadId === threadId)
   if (!thread) return
@@ -2057,24 +2261,17 @@ function renderSessionItem(item: SessionInfo, active: boolean, loading: boolean)
     </button>`
 }
 
-function prependEphemeralSession(
-  sessions: SessionInfo[],
-  knownIDs: Set<string>,
-  sessionID: string,
-): void {
-  const normalized = sessionID.trim()
-  if (!normalized || knownIDs.has(normalized)) return
-  knownIDs.add(normalized)
-  sessions.unshift({ sessionId: normalized, title: normalized })
+interface SessionPanelRenderData {
+  state: SessionPanelState
+  sessions: SessionInfo[]
+  selectedSessionID: string
+  disabled: boolean
+  refreshDisabled: boolean
+  loadingSessionIDSet: Set<string>
 }
 
-function renderSessionPanel(): string {
-  const { activeThreadId, threads, streamStates } = store.get()
-  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
-  if (!thread) {
-    return ''
-  }
-
+function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
+  const { streamStates } = store.get()
   const state = sessionPanelState(thread.threadId)
   const selectedSessionID = selectedThreadSessionID(thread)
   const switching = sessionSwitchingThreads.has(thread.threadId)
@@ -2094,35 +2291,76 @@ function renderSessionPanel(): string {
   if (selectedSessionID && !knownIDs.has(selectedSessionID)) {
     prependEphemeralSession(sessions, knownIDs, selectedSessionID)
   }
-  const loadingSessionIDSet = new Set(loadingSessionIDs)
 
-  let bodyHTML = ''
-  if (state.loading && !sessions.length) {
-    bodyHTML = `<div class="session-panel-empty">Loading sessions…</div>`
-  } else if (state.error && !sessions.length) {
-    bodyHTML = `<div class="session-panel-empty session-panel-empty--error">${escHtml(state.error)}</div>`
-  } else if (state.supported === false && !sessions.length) {
-    bodyHTML = `<div class="session-panel-empty">This agent does not expose ACP session history.</div>`
-  } else {
-    const itemsHTML = sessions.length
-      ? sessions.map(item => renderSessionItem(
-          item,
-          item.sessionId === selectedSessionID,
-          loadingSessionIDSet.has(item.sessionId),
-        )).join('')
-      : `<div class="session-panel-empty">No previous sessions for this working directory.</div>`
-    const showMoreHTML = state.nextCursor
-      ? `<button class="btn btn-ghost session-show-more-btn" type="button" ${state.loadingMore || disabled ? 'disabled' : ''}>
-          ${state.loadingMore ? 'Loading…' : 'Show more'}
-        </button>`
-      : ''
-    bodyHTML = `
-      <div class="session-list">${itemsHTML}</div>
-      ${showMoreHTML}
-      ${state.error && sessions.length
-        ? `<div class="session-panel-inline-error">${escHtml(state.error)}</div>`
-        : ''}`
+  return {
+    state,
+    sessions,
+    selectedSessionID,
+    disabled,
+    refreshDisabled,
+    loadingSessionIDSet: new Set(loadingSessionIDs),
   }
+}
+
+function renderSessionPanelBody(data: SessionPanelRenderData): string {
+  const { state, sessions, selectedSessionID, disabled, loadingSessionIDSet } = data
+
+  if (state.loading && !sessions.length) {
+    return `<div class="session-panel-empty">Loading sessions…</div>`
+  }
+  if (state.error && !sessions.length) {
+    return `<div class="session-panel-empty session-panel-empty--error">${escHtml(state.error)}</div>`
+  }
+  if (state.supported === false && !sessions.length) {
+    return `<div class="session-panel-empty">This agent does not expose ACP session history.</div>`
+  }
+
+  const itemsHTML = sessions.length
+    ? sessions.map(item => renderSessionItem(
+        item,
+        item.sessionId === selectedSessionID,
+        loadingSessionIDSet.has(item.sessionId),
+      )).join('')
+    : `<div class="session-panel-empty">No previous sessions for this working directory.</div>`
+  const showMoreHTML = state.nextCursor
+    ? `<button class="btn btn-ghost session-show-more-btn" type="button" ${state.loadingMore || disabled ? 'disabled' : ''}>
+        ${state.loadingMore ? 'Loading…' : 'Show more'}
+      </button>`
+    : ''
+
+  return `
+    <div class="session-list">${itemsHTML}</div>
+    ${showMoreHTML}
+    ${state.error && sessions.length
+      ? `<div class="session-panel-inline-error">${escHtml(state.error)}</div>`
+      : ''}`
+}
+
+function sessionPanelBodyRenderKey(data: SessionPanelRenderData): string {
+  const sessionsKey = data.sessions.map(item => [
+    item.sessionId,
+    item.title?.trim() || '',
+    item.updatedAt?.trim() || '',
+  ].join('\u0001')).join('\u0002')
+  const loadingKey = Array.from(data.loadingSessionIDSet).sort().join('\u0001')
+
+  return JSON.stringify({
+    supported: data.state.supported,
+    loading: data.state.loading,
+    loadingMore: data.state.loadingMore,
+    error: data.state.error,
+    nextCursor: data.state.nextCursor,
+    selectedSessionID: data.selectedSessionID,
+    disabled: data.disabled,
+    sessionsKey,
+    loadingKey,
+  })
+}
+
+function renderSessionPanelHeader(thread: Thread, data: SessionPanelRenderData): string {
+  const title = threadTitle(thread)
+  const agentName = agentDisplayName(thread.agent ?? '')
+  const refreshLabel = data.state.loading ? 'Refreshing sessions' : 'Refresh sessions'
 
   return `
     <div class="session-panel-header">
@@ -2130,22 +2368,22 @@ function renderSessionPanel(): string {
       <div class="session-panel-heading-row">
         <div class="session-panel-heading-copy">
           <div class="session-panel-title-row">
-            <h3 class="session-panel-title" title="${escHtml(threadTitle(thread))}">
-              <span class="session-panel-title__text">${escHtml(threadTitle(thread))}</span>
+            <h3 class="session-panel-title" title="${escHtml(title)}">
+              <span class="session-panel-title__text">${escHtml(title)}</span>
             </h3>
-            <span class="session-panel-agent">${escHtml(agentDisplayName(thread.agent ?? ''))}</span>
+            <span class="session-panel-agent">${escHtml(agentName)}</span>
           </div>
           <div class="session-panel-subtitle" title="${escHtml(thread.cwd)}">
-            <span class="session-panel-subtitle__text">${escHtml(thread.cwd)}</span>
+            ${renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')}
           </div>
         </div>
         <div class="session-panel-actions">
           <button
-            class="btn btn-icon session-refresh-btn ${state.loading ? 'session-refresh-btn--loading' : ''}"
+            class="btn btn-icon session-refresh-btn ${data.state.loading ? 'session-refresh-btn--loading' : ''}"
             type="button"
-            title="${state.loading ? 'Refreshing sessions' : 'Refresh sessions'}"
-            aria-label="${state.loading ? 'Refreshing sessions' : 'Refresh sessions'}"
-            ${refreshDisabled ? 'disabled' : ''}>
+            title="${refreshLabel}"
+            aria-label="${refreshLabel}"
+            ${data.refreshDisabled ? 'disabled' : ''}>
             ${iconRefresh}
           </button>
         </div>
@@ -2155,13 +2393,153 @@ function renderSessionPanel(): string {
         type="button"
         title="New session"
         aria-label="New session"
-        ${disabled ? 'disabled' : ''}>
+        ${data.disabled ? 'disabled' : ''}>
         ${iconPlus}
         <span>New session</span>
       </button>
-    </div>
-    <div class="session-panel-body">
-      ${bodyHTML}
+    </div>`
+}
+
+function clearSessionItemHoverPreviewTimer(): void {
+  if (!sessionItemHoverPreviewTimer) return
+  window.clearTimeout(sessionItemHoverPreviewTimer)
+  sessionItemHoverPreviewTimer = 0
+}
+
+function clearSessionItemHoverPreview(btn: HTMLButtonElement | null = activeSessionItemHoverPreviewBtn): void {
+  clearSessionItemHoverPreviewTimer()
+  if (!btn || pendingSessionItemHoverPreviewBtn === btn) {
+    pendingSessionItemHoverPreviewBtn = null
+  }
+  btn?.classList.remove(SESSION_ITEM_HOVER_PREVIEW_CLASS)
+  if (activeSessionItemHoverPreviewBtn === btn) {
+    activeSessionItemHoverPreviewBtn = null
+  }
+}
+
+function scheduleSessionItemHoverPreview(btn: HTMLButtonElement): void {
+  if (btn.disabled || btn.classList.contains('session-item--active')) return
+
+  clearSessionItemHoverPreviewTimer()
+  if (activeSessionItemHoverPreviewBtn && activeSessionItemHoverPreviewBtn !== btn) {
+    clearSessionItemHoverPreview(activeSessionItemHoverPreviewBtn)
+  }
+
+  pendingSessionItemHoverPreviewBtn = btn
+  sessionItemHoverPreviewTimer = window.setTimeout(() => {
+    sessionItemHoverPreviewTimer = 0
+    if (pendingSessionItemHoverPreviewBtn !== btn) return
+    pendingSessionItemHoverPreviewBtn = null
+    if (!btn.isConnected || btn.disabled || btn.classList.contains('session-item--active')) return
+
+    activeSessionItemHoverPreviewBtn?.classList.remove(SESSION_ITEM_HOVER_PREVIEW_CLASS)
+    activeSessionItemHoverPreviewBtn = btn
+    btn.classList.add(SESSION_ITEM_HOVER_PREVIEW_CLASS)
+  }, SESSION_ITEM_HOVER_PREVIEW_DELAY_MS)
+}
+
+function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
+  const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
+  if (refreshBtn) {
+    refreshBtn.onclick = () => {
+      clearSessionItemHoverPreview()
+      void loadThreadSessions(thread.threadId)
+    }
+  }
+
+  const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
+  if (newSessionBtn) {
+    newSessionBtn.onclick = () => {
+      clearSessionItemHoverPreview()
+      void switchThreadSession(thread, '')
+    }
+  }
+
+  el.querySelectorAll<HTMLButtonElement>('.session-item[data-session-id]').forEach(btn => {
+    btn.onclick = () => {
+      const sessionID = btn.dataset.sessionId?.trim() ?? ''
+      if (!sessionID || sessionID === selectedThreadSessionID(thread)) return
+      clearSessionItemHoverPreview()
+      void switchThreadSession(thread, sessionID)
+    }
+    btn.onmouseenter = () => {
+      scheduleSessionItemHoverPreview(btn)
+    }
+    btn.onmouseleave = () => {
+      clearSessionItemHoverPreview(btn)
+    }
+  })
+
+  const showMoreBtn = el.querySelector<HTMLButtonElement>('.session-show-more-btn')
+  if (showMoreBtn) {
+    showMoreBtn.onclick = () => {
+      clearSessionItemHoverPreview()
+      void loadThreadSessions(thread.threadId, true)
+    }
+  }
+}
+
+function syncSessionPanelHeader(el: HTMLElement, thread: Thread, data: SessionPanelRenderData): void {
+  const title = threadTitle(thread)
+  const titleEl = el.querySelector<HTMLElement>('.session-panel-title')
+  const titleTextEl = titleEl?.querySelector<HTMLElement>('.session-panel-title__text')
+  if (titleEl) titleEl.title = title
+  if (titleTextEl && titleTextEl.textContent !== title) {
+    titleTextEl.textContent = title
+  }
+
+  const agentName = agentDisplayName(thread.agent ?? '')
+  const agentEl = el.querySelector<HTMLElement>('.session-panel-agent')
+  if (agentEl && agentEl.textContent !== agentName) {
+    agentEl.textContent = agentName
+  }
+
+  const subtitleEl = el.querySelector<HTMLElement>('.session-panel-subtitle')
+  if (subtitleEl && subtitleEl.title !== thread.cwd) {
+    subtitleEl.title = thread.cwd
+    subtitleEl.innerHTML = renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')
+  }
+
+  const refreshLabel = data.state.loading ? 'Refreshing sessions' : 'Refresh sessions'
+  const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
+  if (refreshBtn) {
+    refreshBtn.classList.toggle('session-refresh-btn--loading', data.state.loading)
+    refreshBtn.title = refreshLabel
+    refreshBtn.setAttribute('aria-label', refreshLabel)
+    refreshBtn.disabled = data.refreshDisabled
+  }
+
+  const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
+  if (newSessionBtn) {
+    newSessionBtn.disabled = data.disabled
+  }
+}
+
+function prependEphemeralSession(
+  sessions: SessionInfo[],
+  knownIDs: Set<string>,
+  sessionID: string,
+): void {
+  const normalized = sessionID.trim()
+  if (!normalized || knownIDs.has(normalized)) return
+  knownIDs.add(normalized)
+  sessions.unshift({ sessionId: normalized, title: normalized })
+}
+
+function renderSessionPanel(): string {
+  const { activeThreadId, threads } = store.get()
+  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
+  if (!thread) {
+    return ''
+  }
+
+  const data = resolveSessionPanelRenderData(thread)
+  const bodyKey = sessionPanelBodyRenderKey(data)
+
+  return `
+    ${renderSessionPanelHeader(thread, data)}
+    <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
+      ${renderSessionPanelBody(data)}
     </div>`
 }
 
@@ -2175,48 +2553,56 @@ function updateSessionPanel(): void {
     sessionPanelScrollTopByThread.set(renderedThreadID, previousBody.scrollTop)
   }
 
-  el.innerHTML = renderSessionPanel()
-  syncSidebarChrome()
   const { activeThreadId, threads } = store.get()
   const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
 
   if (!thread) {
+    clearSessionItemHoverPreview()
     delete el.dataset.threadId
+    el.innerHTML = ''
+    syncSidebarChrome()
     return
   }
 
-  el.dataset.threadId = thread.threadId
-  const nextBody = el.querySelector<HTMLElement>('.session-panel-body')
-  if (nextBody) {
-    nextBody.scrollTop = sessionPanelScrollTopByThread.get(thread.threadId) ?? 0
+  syncSidebarChrome()
+  const data = resolveSessionPanelRenderData(thread)
+  const state = data.state
+  const bodyKey = sessionPanelBodyRenderKey(data)
+  const canPatchExisting = renderedThreadID === thread.threadId
+    && !!el.querySelector('.session-panel-header')
+    && !!el.querySelector('.session-panel-body')
+
+  if (!canPatchExisting) {
+    clearSessionItemHoverPreview()
+    el.innerHTML = `${renderSessionPanelHeader(thread, data)}
+      <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
+        ${renderSessionPanelBody(data)}
+      </div>`
+    el.dataset.threadId = thread.threadId
+    const nextBody = el.querySelector<HTMLElement>('.session-panel-body')
+    if (nextBody) {
+      nextBody.scrollTop = sessionPanelScrollTopByThread.get(thread.threadId) ?? 0
+    }
+  } else {
+    el.dataset.threadId = thread.threadId
+    syncSessionPanelHeader(el, thread, data)
+    const bodyEl = el.querySelector<HTMLElement>('.session-panel-body')
+    if (bodyEl && bodyEl.dataset.renderKey !== bodyKey) {
+      clearSessionItemHoverPreview()
+      const currentScrollTop = bodyEl.scrollTop
+      bodyEl.innerHTML = renderSessionPanelBody(data)
+      bodyEl.dataset.renderKey = bodyKey
+      bodyEl.scrollTop = currentScrollTop
+    }
   }
 
-  const state = sessionPanelState(thread.threadId)
   if (sessionPanelExpanded && state.supported === null && !state.loading && !state.loadingMore && !state.error) {
     void loadThreadSessions(thread.threadId)
   }
 
   syncSessionPanelTitleOverflow(el)
   syncSessionPanelSubtitleOverflow(el)
-  el.querySelector<HTMLButtonElement>('.session-refresh-btn')?.addEventListener('click', () => {
-    void loadThreadSessions(thread.threadId)
-  })
-
-  el.querySelector<HTMLButtonElement>('.session-new-btn')?.addEventListener('click', () => {
-    void switchThreadSession(thread, '')
-  })
-
-  el.querySelectorAll<HTMLButtonElement>('.session-item[data-session-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const sessionID = btn.dataset.sessionId?.trim() ?? ''
-      if (!sessionID || sessionID === selectedThreadSessionID(thread)) return
-      void switchThreadSession(thread, sessionID)
-    })
-  })
-
-  el.querySelector<HTMLButtonElement>('.session-show-more-btn')?.addEventListener('click', () => {
-    void loadThreadSessions(thread.threadId, true)
-  })
+  bindSessionPanelControls(el, thread)
 }
 
 // ── Thread list rendering ─────────────────────────────────────────────────
@@ -2890,6 +3276,11 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   sessionSwitchingThreads.delete(threadId)
   freshSessionNonceByThread.delete(threadId)
   selectedSessionOverrideByThread.delete(threadId)
+  Array.from(sessionUsageByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      sessionUsageByScope.delete(scopeKey)
+    }
+  })
   clearThreadComposerAttachments(threadId)
   let nextThreadCompletionBadges = omitThreadCompletionBadge(state.threadCompletionBadges, threadId)
   if (nextActiveThreadId) {
@@ -4411,6 +4802,25 @@ function syncThreadGitControl(threadId = store.get().activeThreadId ?? ''): void
   updateInputState()
 }
 
+function syncSessionUsageControl(threadId = store.get().activeThreadId ?? ''): void {
+  const slotEl = document.getElementById('session-usage-slot')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const activeThreadId = store.get().activeThreadId ?? ''
+  if (!activeThreadId || threadId !== activeThreadId) {
+    slotEl.innerHTML = ''
+    return
+  }
+
+  const thread = store.get().threads.find(item => item.threadId === activeThreadId)
+  if (!thread) {
+    slotEl.innerHTML = ''
+    return
+  }
+
+  slotEl.innerHTML = renderSessionUsageControl(thread)
+}
+
 async function loadThreadGitState(threadId: string, options: { force?: boolean } = {}): Promise<ThreadGitState> {
   const normalizedThreadID = threadId.trim()
   if (!normalizedThreadID) return emptyThreadGitState()
@@ -4733,12 +5143,27 @@ function renderChatEmpty(): string {
     </div>`
 }
 
-function renderSessionInfoField(label: string, value: string, copyLabel: string): string {
+function renderProjectPathLabel(value: string, rootClass: string, labelClass = ''): string {
+  const labelClassName = labelClass ? ` ${labelClass}` : ''
+  return `
+    <span class="project-path ${rootClass}">
+      <span class="project-path__icon" aria-hidden="true">${iconFolder}</span>
+      <span class="project-path__label${labelClassName}">${escHtml(value)}</span>
+    </span>`
+}
+
+function renderSessionInfoField(label: string, value: string, copyLabel: string, renderAsProjectPath = false): string {
+  const valueHTML = renderAsProjectPath
+    ? `<div class="session-info-value session-info-value--path" title="${escHtml(value)}">
+        ${renderProjectPathLabel(value, 'session-info-value__content', 'session-info-value__label')}
+      </div>`
+    : `<div class="session-info-value" title="${escHtml(value)}">${escHtml(value)}</div>`
+
   return `
     <div class="session-info-field">
       <div class="session-info-label">${label}</div>
       <div class="session-info-row">
-        <div class="session-info-value" title="${escHtml(value)}">${escHtml(value)}</div>
+        ${valueHTML}
         <button
           class="btn btn-icon session-info-copy-btn"
           type="button"
@@ -4755,6 +5180,12 @@ function renderSessionInfoField(label: string, value: string, copyLabel: string)
 function renderSessionInfoPopover(thread: Thread): string {
   const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) return ''
+  const createdAt = thread.createdAt.trim()
+  const fields = [
+    renderSessionInfoField('Session ID', sessionID, 'Copy session ID'),
+    createdAt ? renderSessionInfoField('Created', formatTimestamp(createdAt), 'Copy created time') : '',
+    renderSessionInfoField('Working Directory', thread.cwd, 'Copy working directory', true),
+  ].filter(Boolean).join('')
 
   return `
     <div class="session-info" id="session-info">
@@ -4771,8 +5202,7 @@ function renderSessionInfoPopover(thread: Thread): string {
       </button>
       <div class="session-info-popover" id="session-info-panel" role="dialog" aria-label="Session Info" hidden>
         <div class="session-info-heading">Session Info</div>
-        ${renderSessionInfoField('Session ID', sessionID, 'Copy session ID')}
-        ${renderSessionInfoField('Working Directory', thread.cwd, 'Copy working directory')}
+        ${fields}
       </div>
     </div>`
 }
@@ -4878,11 +5308,37 @@ function renderThreadGitControl(threadId: string): string {
     </div>`
 }
 
+function renderSessionUsageControl(thread: Thread): string {
+  const usage = scopeSessionUsage(threadChatScopeKey(thread))
+  if (!hasRenderableSessionUsage(usage)) return ''
+
+  const ratio = sessionUsageProgressRatio(usage)
+  const circumference = 2 * Math.PI * 18
+  const dashOffset = circumference * (1 - ratio)
+
+  return `
+    <div
+      class="session-usage-indicator"
+      title="${escHtml(sessionUsageTooltip(usage))}"
+      aria-label="${escHtml(sessionUsageTooltip(usage))}"
+    >
+      <svg class="session-usage-indicator__ring" viewBox="0 0 44 44" aria-hidden="true">
+        <circle class="session-usage-indicator__ring-track" cx="22" cy="22" r="18"></circle>
+        <circle
+          class="session-usage-indicator__ring-value"
+          cx="22"
+          cy="22"
+          r="18"
+          style="stroke-dasharray:${circumference.toFixed(2)};stroke-dashoffset:${dashOffset.toFixed(2)}"
+        ></circle>
+      </svg>
+    </div>`
+}
+
 function renderChatThread(t: Thread): string {
   const sessionTitleLabel = getCurrentSessionTitle(t)
   const scopeKey = threadChatScopeKey(t)
   const draft = composerDraft(scopeKey)
-  const createdLabel = t.createdAt ? `Created ${formatTimestamp(t.createdAt)}` : ''
   const attachmentCount = threadComposerAttachments(t.threadId).length
   const selectedModelID = fallbackThreadModelID(t)
   const catalogKey = normalizeAgentConfigCatalogKey(t.agent ?? '', selectedModelID)
@@ -4930,13 +5386,9 @@ function renderChatThread(t: Thread): string {
           <div class="chat-header-title-row">
             <h2 class="chat-title" title="${escHtml(sessionTitleLabel)}">${escHtml(sessionTitleLabel)}</h2>
           </div>
-          <div class="chat-header-subtitle" title="${escHtml(t.cwd)}">
-            <span class="chat-header-path">${escHtml(t.cwd)}</span>
-          </div>
         </div>
       </div>
       <div class="chat-header-right">
-        ${createdLabel ? `<span class="chat-header-meta">${escHtml(createdLabel)}</span>` : ''}
         ${renderSessionInfoPopover(t)}
       </div>
     </div>
@@ -4983,7 +5435,10 @@ function renderChatThread(t: Thread): string {
       </div>
       <div class="input-meta-row">
         <div class="input-hint">Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
-        <div class="input-meta-actions" id="thread-git-slot">${renderThreadGitControl(t.threadId)}</div>
+        <div class="input-meta-actions">
+          <div class="input-meta-slot" id="thread-git-slot">${renderThreadGitControl(t.threadId)}</div>
+          <div class="input-meta-slot" id="session-usage-slot">${renderSessionUsageControl(t)}</div>
+        </div>
       </div>
     </div>`
 }
@@ -5095,7 +5550,9 @@ function updateChatArea(): void {
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
   syncThreadGitControl(thread.threadId)
+  syncSessionUsageControl(thread.threadId)
   void loadThreadGitState(thread.threadId)
+  void loadThreadSessionUsage(thread)
 
   // Always reload history from server (keeps view fresh; guards against overwrites during streaming)
   void loadHistory(thread.threadId)
@@ -5826,10 +6283,16 @@ async function handleSend(): Promise<void> {
       capturedScopeKey = threadSessionScopeKey(capturedThreadID, capturedSessionID)
       rebindScopeRuntime(previousScopeKey, capturedScopeKey, capturedSessionID)
       updateThreadSessionID(capturedThreadID, sessionId)
+      syncSessionUsageControl(capturedThreadID)
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
     },
 
     onSessionInfoUpdate({ sessionId, title }: SessionInfoUpdatePayload) {
       applySessionTitleUpdate(capturedThreadID, sessionId, title)
+    },
+
+    onSessionUsageUpdate(event: SessionUsageUpdatePayload) {
+      applySessionUsageUpdate(capturedThreadID, capturedScopeKey, event)
     },
 
     onPermissionRequired(event) {
@@ -5854,6 +6317,7 @@ async function handleSend(): Promise<void> {
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
       void loadThreadGitState(capturedThreadID, { force: true })
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {
@@ -5892,6 +6356,7 @@ async function handleSend(): Promise<void> {
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
       void loadThreadGitState(capturedThreadID, { force: true })
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {
@@ -5931,6 +6396,7 @@ async function handleSend(): Promise<void> {
       void loadThreadSessions(capturedThreadID)
       void loadThreadSlashCommands(capturedThreadID, true)
       void loadThreadGitState(capturedThreadID, { force: true })
+      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
       void syncSelectedSessionSelection(capturedThreadID)
 
       addMessageToStore(capturedScopeKey, {

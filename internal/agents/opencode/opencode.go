@@ -16,10 +16,9 @@ import (
 	"github.com/beyond5959/ngent/internal/agents/agentutil"
 )
 
-const defaultPermissionTimeout = 15 * time.Second
 const methodSessionSetModel = "session/set_model"
 
-var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(defaultPermissionTimeout)
+var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(acpcli.DefaultPermissionTimeout)
 
 // Config configures the OpenCode ACP stdio provider.
 type Config = agentutil.Config

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/beyond5959/ngent/internal/agents"
 	"github.com/beyond5959/ngent/internal/agents/acpcli"
@@ -15,9 +14,7 @@ import (
 	"github.com/beyond5959/ngent/internal/agents/agentutil"
 )
 
-const defaultPermissionTimeout = 15 * time.Second
-
-var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(defaultPermissionTimeout)
+var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(acpcli.DefaultPermissionTimeout)
 
 // Config configures the Kimi CLI ACP stdio provider.
 type Config = agentutil.Config

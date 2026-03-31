@@ -199,4 +199,27 @@ var migrations = []migration{
 			`DROP TABLE IF EXISTS clients;`,
 		},
 	},
+	{
+		version: 13,
+		name:    "create_session_usage_cache",
+		sql: []string{
+			`CREATE TABLE IF NOT EXISTS session_usage_cache (
+				agent_id TEXT NOT NULL,
+				cwd TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				total_tokens INTEGER,
+				input_tokens INTEGER,
+				output_tokens INTEGER,
+				thought_tokens INTEGER,
+				cached_read_tokens INTEGER,
+				cached_write_tokens INTEGER,
+				context_used INTEGER,
+				context_size INTEGER,
+				cost_amount REAL,
+				cost_currency TEXT,
+				updated_at TEXT NOT NULL,
+				PRIMARY KEY (agent_id, cwd, session_id)
+			);`,
+		},
+	},
 }

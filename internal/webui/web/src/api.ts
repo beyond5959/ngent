@@ -4,6 +4,7 @@ import type {
   ConfigOption,
   ModelOption,
   SessionInfo,
+  SessionUsage,
   SessionTranscriptMessage,
   SlashCommand,
   Thread,
@@ -61,6 +62,11 @@ interface ThreadSessionHistoryResponse {
   sessionId: string
   supported: boolean
   messages: SessionTranscriptMessage[]
+}
+interface ThreadSessionUsageResponse {
+  threadId: string
+  sessionId: string
+  usage?: SessionUsage
 }
 interface ThreadSlashCommandsResponse {
   threadId: string
@@ -205,6 +211,16 @@ class ApiClient {
       supported: !!data.supported,
       messages: data.messages ?? [],
     }
+  }
+
+  /** GET /v1/threads/{threadId}/session-usage */
+  async getThreadSessionUsage(threadId: string, sessionId: string): Promise<SessionUsage | null> {
+    const params = new URLSearchParams({ sessionId: sessionId.trim() })
+    const data = await this.request<ThreadSessionUsageResponse>(
+      'GET',
+      `/v1/threads/${encodeURIComponent(threadId)}/session-usage?${params.toString()}`,
+    )
+    return data.usage ?? null
   }
 
   /** GET /v1/threads/{threadId}/slash-commands */

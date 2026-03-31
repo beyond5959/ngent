@@ -112,6 +112,41 @@ type UpsertSessionConfigCacheParams struct {
 	ConfigOptionsJSON string
 }
 
+// SessionUsageCache stores one persisted provider session usage snapshot.
+type SessionUsageCache struct {
+	AgentID           string
+	CWD               string
+	SessionID         string
+	TotalTokens       *int64
+	InputTokens       *int64
+	OutputTokens      *int64
+	ThoughtTokens     *int64
+	CachedReadTokens  *int64
+	CachedWriteTokens *int64
+	ContextUsed       *int64
+	ContextSize       *int64
+	CostAmount        *float64
+	CostCurrency      string
+	UpdatedAt         time.Time
+}
+
+// UpsertSessionUsageCacheParams contains input for UpsertSessionUsageCache.
+type UpsertSessionUsageCacheParams struct {
+	AgentID           string
+	CWD               string
+	SessionID         string
+	TotalTokens       *int64
+	InputTokens       *int64
+	OutputTokens      *int64
+	ThoughtTokens     *int64
+	CachedReadTokens  *int64
+	CachedWriteTokens *int64
+	ContextUsed       *int64
+	ContextSize       *int64
+	CostAmount        *float64
+	CostCurrency      string
+}
+
 // Turn stores one persisted turn row.
 type Turn struct {
 	TurnID       string
@@ -892,6 +927,160 @@ func (s *Store) UpsertSessionConfigCache(
 	return nil
 }
 
+// GetSessionUsageCache returns one persisted provider session usage snapshot.
+func (s *Store) GetSessionUsageCache(
+	ctx context.Context,
+	agentID, cwd, sessionID string,
+) (SessionUsageCache, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT
+			agent_id,
+			cwd,
+			session_id,
+			total_tokens,
+			input_tokens,
+			output_tokens,
+			thought_tokens,
+			cached_read_tokens,
+			cached_write_tokens,
+			context_used,
+			context_size,
+			cost_amount,
+			cost_currency,
+			updated_at
+		FROM session_usage_cache
+		WHERE agent_id = ? AND cwd = ? AND session_id = ?;
+	`, strings.TrimSpace(agentID), strings.TrimSpace(cwd), strings.TrimSpace(sessionID))
+
+	var (
+		cache             SessionUsageCache
+		totalTokens       sql.NullInt64
+		inputTokens       sql.NullInt64
+		outputTokens      sql.NullInt64
+		thoughtTokens     sql.NullInt64
+		cachedReadTokens  sql.NullInt64
+		cachedWriteTokens sql.NullInt64
+		contextUsed       sql.NullInt64
+		contextSize       sql.NullInt64
+		costAmount        sql.NullFloat64
+		costCurrency      sql.NullString
+		updatedAtDB       string
+	)
+	if err := row.Scan(
+		&cache.AgentID,
+		&cache.CWD,
+		&cache.SessionID,
+		&totalTokens,
+		&inputTokens,
+		&outputTokens,
+		&thoughtTokens,
+		&cachedReadTokens,
+		&cachedWriteTokens,
+		&contextUsed,
+		&contextSize,
+		&costAmount,
+		&costCurrency,
+		&updatedAtDB,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionUsageCache{}, ErrNotFound
+		}
+		return SessionUsageCache{}, fmt.Errorf("storage: get session usage cache: %w", err)
+	}
+
+	updatedAt, err := parseTime(updatedAtDB)
+	if err != nil {
+		return SessionUsageCache{}, fmt.Errorf("storage: parse session usage cache.updated_at: %w", err)
+	}
+
+	cache.TotalTokens = nullableInt64ToPtr(totalTokens)
+	cache.InputTokens = nullableInt64ToPtr(inputTokens)
+	cache.OutputTokens = nullableInt64ToPtr(outputTokens)
+	cache.ThoughtTokens = nullableInt64ToPtr(thoughtTokens)
+	cache.CachedReadTokens = nullableInt64ToPtr(cachedReadTokens)
+	cache.CachedWriteTokens = nullableInt64ToPtr(cachedWriteTokens)
+	cache.ContextUsed = nullableInt64ToPtr(contextUsed)
+	cache.ContextSize = nullableInt64ToPtr(contextSize)
+	cache.CostAmount = nullableFloat64ToPtr(costAmount)
+	if costCurrency.Valid {
+		cache.CostCurrency = strings.TrimSpace(costCurrency.String)
+	}
+	cache.UpdatedAt = updatedAt
+	return cache, nil
+}
+
+// UpsertSessionUsageCache stores one provider session usage snapshot.
+func (s *Store) UpsertSessionUsageCache(
+	ctx context.Context,
+	params UpsertSessionUsageCacheParams,
+) error {
+	if strings.TrimSpace(params.AgentID) == "" {
+		return errors.New("storage: agentID is required")
+	}
+	if strings.TrimSpace(params.CWD) == "" {
+		return errors.New("storage: cwd is required")
+	}
+	if strings.TrimSpace(params.SessionID) == "" {
+		return errors.New("storage: sessionID is required")
+	}
+
+	costCurrency := strings.TrimSpace(params.CostCurrency)
+	if params.CostAmount == nil || costCurrency == "" {
+		params.CostAmount = nil
+		costCurrency = ""
+	}
+
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO session_usage_cache (
+			agent_id,
+			cwd,
+			session_id,
+			total_tokens,
+			input_tokens,
+			output_tokens,
+			thought_tokens,
+			cached_read_tokens,
+			cached_write_tokens,
+			context_used,
+			context_size,
+			cost_amount,
+			cost_currency,
+			updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(agent_id, cwd, session_id) DO UPDATE SET
+			total_tokens = COALESCE(excluded.total_tokens, session_usage_cache.total_tokens),
+			input_tokens = COALESCE(excluded.input_tokens, session_usage_cache.input_tokens),
+			output_tokens = COALESCE(excluded.output_tokens, session_usage_cache.output_tokens),
+			thought_tokens = COALESCE(excluded.thought_tokens, session_usage_cache.thought_tokens),
+			cached_read_tokens = COALESCE(excluded.cached_read_tokens, session_usage_cache.cached_read_tokens),
+			cached_write_tokens = COALESCE(excluded.cached_write_tokens, session_usage_cache.cached_write_tokens),
+			context_used = COALESCE(excluded.context_used, session_usage_cache.context_used),
+			context_size = COALESCE(excluded.context_size, session_usage_cache.context_size),
+			cost_amount = COALESCE(excluded.cost_amount, session_usage_cache.cost_amount),
+			cost_currency = COALESCE(excluded.cost_currency, session_usage_cache.cost_currency),
+			updated_at = excluded.updated_at;
+	`,
+		strings.TrimSpace(params.AgentID),
+		strings.TrimSpace(params.CWD),
+		strings.TrimSpace(params.SessionID),
+		ptrOrNilInt64(params.TotalTokens),
+		ptrOrNilInt64(params.InputTokens),
+		ptrOrNilInt64(params.OutputTokens),
+		ptrOrNilInt64(params.ThoughtTokens),
+		ptrOrNilInt64(params.CachedReadTokens),
+		ptrOrNilInt64(params.CachedWriteTokens),
+		ptrOrNilInt64(params.ContextUsed),
+		ptrOrNilInt64(params.ContextSize),
+		ptrOrNilFloat64(params.CostAmount),
+		nilIfEmpty(costCurrency),
+		formatTime(s.now()),
+	); err != nil {
+		return fmt.Errorf("storage: upsert session usage cache: %w", err)
+	}
+
+	return nil
+}
+
 // ListThreads returns all persisted threads across clients.
 func (s *Store) ListThreads(ctx context.Context) ([]Thread, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -1610,6 +1799,44 @@ func maxInt64(v int64) int64 {
 
 func sqliteIntToBool(v int) bool {
 	return v != 0
+}
+
+func nullableInt64ToPtr(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	cloned := value.Int64
+	return &cloned
+}
+
+func nullableFloat64ToPtr(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	cloned := value.Float64
+	return &cloned
+}
+
+func ptrOrNilInt64(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func ptrOrNilFloat64(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nilIfEmpty(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // ListRecentDirectories returns the most recently used directories from threads.

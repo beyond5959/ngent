@@ -1000,6 +1000,100 @@ func TestSessionConfigCacheCRUD(t *testing.T) {
 	}
 }
 
+func TestSessionUsageCacheCRUD(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	defer func() {
+		_ = store.Close()
+	}()
+
+	base := time.Date(2026, 3, 30, 9, 0, 0, 0, time.UTC)
+	counter := 0
+	store.now = func() time.Time {
+		counter++
+		return base.Add(time.Duration(counter) * time.Second)
+	}
+
+	if _, err := store.GetSessionUsageCache(ctx, "codex", "/tmp/project", "session-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetSessionUsageCache(missing) err = %v, want ErrNotFound", err)
+	}
+
+	contextUsed := int64(53000)
+	contextSize := int64(200000)
+	if err := store.UpsertSessionUsageCache(ctx, UpsertSessionUsageCacheParams{
+		AgentID:     "codex",
+		CWD:         "/tmp/project",
+		SessionID:   "session-1",
+		ContextUsed: &contextUsed,
+		ContextSize: &contextSize,
+	}); err != nil {
+		t.Fatalf("UpsertSessionUsageCache(first): %v", err)
+	}
+
+	cache, err := store.GetSessionUsageCache(ctx, "codex", "/tmp/project", "session-1")
+	if err != nil {
+		t.Fatalf("GetSessionUsageCache(first): %v", err)
+	}
+	if cache.ContextUsed == nil || *cache.ContextUsed != contextUsed {
+		t.Fatalf("context_used = %#v, want %d", cache.ContextUsed, contextUsed)
+	}
+	if cache.ContextSize == nil || *cache.ContextSize != contextSize {
+		t.Fatalf("context_size = %#v, want %d", cache.ContextSize, contextSize)
+	}
+	if cache.TotalTokens != nil {
+		t.Fatalf("total_tokens = %#v, want nil", cache.TotalTokens)
+	}
+	if got, want := cache.UpdatedAt, base.Add(1*time.Second); !got.Equal(want) {
+		t.Fatalf("updated_at = %s, want %s", got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+
+	totalTokens := int64(81234)
+	inputTokens := int64(64000)
+	outputTokens := int64(17234)
+	costAmount := 0.045
+	if err := store.UpsertSessionUsageCache(ctx, UpsertSessionUsageCacheParams{
+		AgentID:      "codex",
+		CWD:          "/tmp/project",
+		SessionID:    "session-1",
+		TotalTokens:  &totalTokens,
+		InputTokens:  &inputTokens,
+		OutputTokens: &outputTokens,
+		CostAmount:   &costAmount,
+		CostCurrency: "USD",
+	}); err != nil {
+		t.Fatalf("UpsertSessionUsageCache(update): %v", err)
+	}
+
+	updated, err := store.GetSessionUsageCache(ctx, "codex", "/tmp/project", "session-1")
+	if err != nil {
+		t.Fatalf("GetSessionUsageCache(update): %v", err)
+	}
+	if updated.TotalTokens == nil || *updated.TotalTokens != totalTokens {
+		t.Fatalf("total_tokens = %#v, want %d", updated.TotalTokens, totalTokens)
+	}
+	if updated.InputTokens == nil || *updated.InputTokens != inputTokens {
+		t.Fatalf("input_tokens = %#v, want %d", updated.InputTokens, inputTokens)
+	}
+	if updated.OutputTokens == nil || *updated.OutputTokens != outputTokens {
+		t.Fatalf("output_tokens = %#v, want %d", updated.OutputTokens, outputTokens)
+	}
+	if updated.ContextUsed == nil || *updated.ContextUsed != contextUsed {
+		t.Fatalf("merged context_used = %#v, want %d", updated.ContextUsed, contextUsed)
+	}
+	if updated.ContextSize == nil || *updated.ContextSize != contextSize {
+		t.Fatalf("merged context_size = %#v, want %d", updated.ContextSize, contextSize)
+	}
+	if updated.CostAmount == nil || *updated.CostAmount != costAmount {
+		t.Fatalf("cost_amount = %#v, want %f", updated.CostAmount, costAmount)
+	}
+	if got, want := updated.CostCurrency, "USD"; got != want {
+		t.Fatalf("cost_currency = %q, want %q", got, want)
+	}
+	if got, want := updated.UpdatedAt, base.Add(2*time.Second); !got.Equal(want) {
+		t.Fatalf("updated updated_at = %s, want %s", got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+}
+
 func TestAgentSlashCommandsCRUD(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)

@@ -387,6 +387,16 @@ func (c *Client) StreamPrompt(ctx context.Context, prompt agents.Prompt, onDelta
 		}
 		return agents.StopReasonEndTurn, fmt.Errorf("%s: session/prompt: %w", c.nameForError(), err)
 	}
+	usageUpdate, usageErr := agents.ParseACPPromptUsage(promptResult)
+	if usageErr != nil {
+		return agents.StopReasonEndTurn, fmt.Errorf("%s: decode session/prompt usage: %w", c.nameForError(), usageErr)
+	}
+	if usageUpdate.SessionID == "" {
+		usageUpdate.SessionID = sessionID
+	}
+	if err := agents.NotifySessionUsageUpdate(streamCtx, usageUpdate); err != nil {
+		return agents.StopReasonEndTurn, fmt.Errorf("%s: report session usage: %w", c.nameForError(), err)
+	}
 	if acpstdio.ParseStopReason(promptResult) == "cancelled" {
 		return agents.StopReasonCancelled, nil
 	}
@@ -462,7 +472,17 @@ func (c *Client) LoadSessionTranscript(
 		if msg.Method != "session/update" || len(msg.Params) == 0 {
 			return nil
 		}
-		return collector.HandleRawUpdate(msg.Params)
+		update, err := agents.ParseACPUpdate(msg.Params)
+		if err != nil {
+			return err
+		}
+		if update.Type == agents.ACPUpdateTypeUsage && update.SessionUsage != nil {
+			if err := agents.NotifySessionUsageUpdate(ctx, *update.SessionUsage); err != nil {
+				return err
+			}
+		}
+		collector.HandleUpdate(update)
+		return nil
 	})
 
 	loadResult, err := conn.Call(ctx, "session/load", c.hooks.SessionLoadParams(session.SessionID))

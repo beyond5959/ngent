@@ -143,6 +143,88 @@ func TestParseACPUpdateSessionInfoNullTitleIgnored(t *testing.T) {
 	}
 }
 
+func TestParseACPUpdateUsageUpdate(t *testing.T) {
+	t.Parallel()
+
+	update, err := ParseACPUpdate(json.RawMessage(`{
+		"sessionId": "sess-usage-1",
+		"update": {
+			"sessionUpdate": "usage_update",
+			"used": 53000,
+			"size": 200000,
+			"cost": {
+				"amount": 0.045,
+				"currency": "USD"
+			}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseACPUpdate() error = %v", err)
+	}
+	if update.Type != ACPUpdateTypeUsage {
+		t.Fatalf("update.Type = %q, want %q", update.Type, ACPUpdateTypeUsage)
+	}
+	if update.SessionUsage == nil {
+		t.Fatal("update.SessionUsage = nil, want populated usage update")
+	}
+	if got := update.SessionUsage.SessionID; got != "sess-usage-1" {
+		t.Fatalf("update.SessionUsage.SessionID = %q, want %q", got, "sess-usage-1")
+	}
+	if update.SessionUsage.ContextUsed == nil || *update.SessionUsage.ContextUsed != 53000 {
+		t.Fatalf("update.SessionUsage.ContextUsed = %#v, want 53000", update.SessionUsage.ContextUsed)
+	}
+	if update.SessionUsage.ContextSize == nil || *update.SessionUsage.ContextSize != 200000 {
+		t.Fatalf("update.SessionUsage.ContextSize = %#v, want 200000", update.SessionUsage.ContextSize)
+	}
+	if update.SessionUsage.CostAmount == nil || *update.SessionUsage.CostAmount != 0.045 {
+		t.Fatalf("update.SessionUsage.CostAmount = %#v, want 0.045", update.SessionUsage.CostAmount)
+	}
+	if got := update.SessionUsage.CostCurrency; got != "USD" {
+		t.Fatalf("update.SessionUsage.CostCurrency = %q, want %q", got, "USD")
+	}
+}
+
+func TestParseACPPromptUsage(t *testing.T) {
+	t.Parallel()
+
+	update, err := ParseACPPromptUsage(json.RawMessage(`{
+		"sessionId": "sess-prompt-1",
+		"stopReason": "end_turn",
+		"usage": {
+			"total_tokens": 53000,
+			"input_tokens": 35000,
+			"output_tokens": 12000,
+			"thought_tokens": 5000,
+			"cached_read_tokens": 5000,
+			"cached_write_tokens": 1000
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseACPPromptUsage() error = %v", err)
+	}
+	if got := update.SessionID; got != "sess-prompt-1" {
+		t.Fatalf("update.SessionID = %q, want %q", got, "sess-prompt-1")
+	}
+	if update.TotalTokens == nil || *update.TotalTokens != 53000 {
+		t.Fatalf("update.TotalTokens = %#v, want 53000", update.TotalTokens)
+	}
+	if update.InputTokens == nil || *update.InputTokens != 35000 {
+		t.Fatalf("update.InputTokens = %#v, want 35000", update.InputTokens)
+	}
+	if update.OutputTokens == nil || *update.OutputTokens != 12000 {
+		t.Fatalf("update.OutputTokens = %#v, want 12000", update.OutputTokens)
+	}
+	if update.ThoughtTokens == nil || *update.ThoughtTokens != 5000 {
+		t.Fatalf("update.ThoughtTokens = %#v, want 5000", update.ThoughtTokens)
+	}
+	if update.CachedReadTokens == nil || *update.CachedReadTokens != 5000 {
+		t.Fatalf("update.CachedReadTokens = %#v, want 5000", update.CachedReadTokens)
+	}
+	if update.CachedWriteTokens == nil || *update.CachedWriteTokens != 1000 {
+		t.Fatalf("update.CachedWriteTokens = %#v, want 1000", update.CachedWriteTokens)
+	}
+}
+
 func TestParseACPUpdateUserMessageChunk(t *testing.T) {
 	t.Parallel()
 

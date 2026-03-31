@@ -30,6 +30,9 @@ func NewACPNotificationHandler(
 		if update.Type == ACPUpdateTypeSessionInfo && update.SessionInfo != nil {
 			return NotifySessionInfoUpdate(ctx, *update.SessionInfo)
 		}
+		if update.Type == ACPUpdateTypeUsage && update.SessionUsage != nil {
+			return NotifySessionUsageUpdate(ctx, *update.SessionUsage)
+		}
 		if !promptStarted.Load() {
 			return nil
 		}

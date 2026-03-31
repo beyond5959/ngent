@@ -2697,6 +2697,145 @@ func TestTurnSessionInfoUpdateSSEAndHistory(t *testing.T) {
 	}
 }
 
+func TestTurnSessionUsageUpdateSSEHistoryAndCache(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return &sessionUsageUpdateStreamer{
+				sessionID:   "sess-usage-1",
+				totalTokens: 81234,
+				contextUsed: 53000,
+				contextSize: 200000,
+			}, nil
+		},
+	})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+	turnRR := performJSONRequest(t, h, http.MethodPost, "/v1/threads/"+threadID+"/turns", map[string]any{
+		"input":  "report session usage",
+		"stream": true,
+	}, map[string]string{"X-Client-ID": "client-a"})
+	if turnRR.Code != http.StatusOK {
+		t.Fatalf("turn status code = %d, want %d", turnRR.Code, http.StatusOK)
+	}
+
+	events := parseSSEEvents(t, turnRR.Body.String())
+	foundUsageUpdate := false
+	for _, ev := range events {
+		if ev.Event != eventTypeSessionUsageUpdate {
+			continue
+		}
+		foundUsageUpdate = true
+		if got := stringField(ev.Data, "sessionId"); got != "sess-usage-1" {
+			t.Fatalf("session_usage_update.sessionId = %q, want %q", got, "sess-usage-1")
+		}
+		if got := int64Field(ev.Data, "totalTokens"); got != 81234 {
+			t.Fatalf("session_usage_update.totalTokens = %d, want %d", got, 81234)
+		}
+		if got := int64Field(ev.Data, "contextUsed"); got != 53000 {
+			t.Fatalf("session_usage_update.contextUsed = %d, want %d", got, 53000)
+		}
+		if got := int64Field(ev.Data, "contextSize"); got != 200000 {
+			t.Fatalf("session_usage_update.contextSize = %d, want %d", got, 200000)
+		}
+	}
+	if !foundUsageUpdate {
+		t.Fatal("missing session_usage_update SSE event")
+	}
+
+	historyRR := performJSONRequest(t, h, http.MethodGet, "/v1/threads/"+threadID+"/history?includeEvents=true", nil, map[string]string{"X-Client-ID": "client-a"})
+	if historyRR.Code != http.StatusOK {
+		t.Fatalf("history status code = %d, want %d", historyRR.Code, http.StatusOK)
+	}
+
+	var history struct {
+		Turns []struct {
+			Events []struct {
+				Type string         `json:"type"`
+				Data map[string]any `json:"data"`
+			} `json:"events"`
+		} `json:"turns"`
+	}
+	if err := json.Unmarshal(historyRR.Body.Bytes(), &history); err != nil {
+		t.Fatalf("unmarshal history response: %v", err)
+	}
+	if len(history.Turns) != 1 {
+		t.Fatalf("len(history.Turns) = %d, want 1", len(history.Turns))
+	}
+
+	foundPersisted := false
+	for _, event := range history.Turns[0].Events {
+		if event.Type != eventTypeSessionUsageUpdate {
+			continue
+		}
+		foundPersisted = true
+		if got := stringField(event.Data, "sessionId"); got != "sess-usage-1" {
+			t.Fatalf("history session_usage_update.sessionId = %q, want %q", got, "sess-usage-1")
+		}
+		if got := int64Field(event.Data, "totalTokens"); got != 81234 {
+			t.Fatalf("history session_usage_update.totalTokens = %d, want %d", got, 81234)
+		}
+		if got := int64Field(event.Data, "contextUsed"); got != 53000 {
+			t.Fatalf("history session_usage_update.contextUsed = %d, want %d", got, 53000)
+		}
+		if got := int64Field(event.Data, "contextSize"); got != 200000 {
+			t.Fatalf("history session_usage_update.contextSize = %d, want %d", got, 200000)
+		}
+	}
+	if !foundPersisted {
+		t.Fatal("missing persisted session_usage_update history event")
+	}
+
+	usageRR := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/session-usage?sessionId=sess-usage-1",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if usageRR.Code != http.StatusOK {
+		t.Fatalf("session-usage status code = %d, want %d, body=%s", usageRR.Code, http.StatusOK, usageRR.Body.String())
+	}
+
+	var usageResp struct {
+		ThreadID  string `json:"threadId"`
+		SessionID string `json:"sessionId"`
+		Usage     *struct {
+			SessionID   string `json:"sessionId"`
+			TotalTokens *int64 `json:"totalTokens"`
+			ContextUsed *int64 `json:"contextUsed"`
+			ContextSize *int64 `json:"contextSize"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(usageRR.Body.Bytes(), &usageResp); err != nil {
+		t.Fatalf("unmarshal session usage response: %v", err)
+	}
+	if got, want := usageResp.ThreadID, threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if got, want := usageResp.SessionID, "sess-usage-1"; got != want {
+		t.Fatalf("sessionId = %q, want %q", got, want)
+	}
+	if usageResp.Usage == nil {
+		t.Fatal("usage = nil, want populated response")
+	}
+	if got, want := usageResp.Usage.SessionID, "sess-usage-1"; got != want {
+		t.Fatalf("usage.sessionId = %q, want %q", got, want)
+	}
+	if usageResp.Usage.TotalTokens == nil || *usageResp.Usage.TotalTokens != 81234 {
+		t.Fatalf("usage.totalTokens = %#v, want %d", usageResp.Usage.TotalTokens, 81234)
+	}
+	if usageResp.Usage.ContextUsed == nil || *usageResp.Usage.ContextUsed != 53000 {
+		t.Fatalf("usage.contextUsed = %#v, want %d", usageResp.Usage.ContextUsed, 53000)
+	}
+	if usageResp.Usage.ContextSize == nil || *usageResp.Usage.ContextSize != 200000 {
+		t.Fatalf("usage.contextSize = %#v, want %d", usageResp.Usage.ContextSize, 200000)
+	}
+}
+
 func TestThreadHistoryFiltersBySessionID(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{
@@ -4713,6 +4852,20 @@ func stringField(payload map[string]any, key string) string {
 	return s
 }
 
+func int64Field(payload map[string]any, key string) int64 {
+	v, _ := payload[key]
+	switch value := v.(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	default:
+		return 0
+	}
+}
+
 func assertErrorCode(t *testing.T, payload []byte, wantCode string) {
 	t.Helper()
 	var body struct {
@@ -5239,6 +5392,35 @@ func (s *sessionInfoUpdateStreamer) Stream(ctx context.Context, input string, on
 		SessionID: s.sessionID,
 		Title:     s.title,
 		HasTitle:  true,
+	}); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := onDelta(input); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+type sessionUsageUpdateStreamer struct {
+	sessionID   string
+	totalTokens int64
+	contextUsed int64
+	contextSize int64
+}
+
+func (s *sessionUsageUpdateStreamer) Name() string {
+	return "session-usage-update-streamer"
+}
+
+func (s *sessionUsageUpdateStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	if err := agents.NotifySessionBound(ctx, s.sessionID); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := agents.NotifySessionUsageUpdate(ctx, agents.SessionUsageUpdate{
+		SessionID:   s.sessionID,
+		TotalTokens: &s.totalTokens,
+		ContextUsed: &s.contextUsed,
+		ContextSize: &s.contextSize,
 	}); err != nil {
 		return agents.StopReasonEndTurn, err
 	}

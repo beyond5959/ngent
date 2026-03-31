@@ -1,4 +1,4 @@
-import type { PermissionOption, PlanEntry } from './types.ts'
+import type { PermissionOption, PlanEntry, SessionUsage } from './types.ts'
 
 // ── SSE event payloads (mirror server API contract) ───────────────────────
 
@@ -54,6 +54,10 @@ export interface SessionInfoUpdatePayload {
   title: string
 }
 
+export interface SessionUsageUpdatePayload extends SessionUsage {
+  turnId: string
+}
+
 export interface TurnErrorPayload {
   turnId: string
   code: string
@@ -81,6 +85,7 @@ export interface TurnStreamCallbacks {
   onToolCallUpdate?:     (e: ToolCallPayload) => void
   onSessionBound?:       (e: SessionBoundPayload) => void
   onSessionInfoUpdate?:  (e: SessionInfoUpdatePayload) => void
+  onSessionUsageUpdate?: (e: SessionUsageUpdatePayload) => void
   onCompleted?:          (e: TurnCompletedPayload) => void
   onError?:              (e: TurnErrorPayload) => void
   onPermissionRequired?: (e: PermissionRequiredPayload) => void
@@ -219,6 +224,9 @@ export class TurnStream {
         break
       case 'session_info_update':
         this.callbacks.onSessionInfoUpdate?.(payload as unknown as SessionInfoUpdatePayload)
+        break
+      case 'session_usage_update':
+        this.callbacks.onSessionUsageUpdate?.(payload as unknown as SessionUsageUpdatePayload)
         break
       case 'turn_completed':
         this.terminated = true

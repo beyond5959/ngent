@@ -50,7 +50,7 @@ func (c *Client) LoadSessionTranscript(
 		return agents.SessionTranscriptResult{}, agents.ErrSessionNotFound
 	}
 
-	return c.collectSessionReplay(ctx, runtime, loadSessionID)
+	return c.collectSessionReplay(ctx, runtime, session.SessionID, loadSessionID)
 }
 
 func (c *Client) findSessionInRuntime(
@@ -84,7 +84,8 @@ func (c *Client) findSessionInRuntime(
 func (c *Client) collectSessionReplay(
 	ctx context.Context,
 	runtime *codexacp.EmbeddedRuntime,
-	sessionID string,
+	stableSessionID string,
+	rawSessionID string,
 ) (agents.SessionTranscriptResult, error) {
 	if runtime == nil {
 		return agents.SessionTranscriptResult{}, errors.New("codex: embedded runtime is nil")
@@ -101,7 +102,7 @@ func (c *Client) collectSessionReplay(
 	loadDone := make(chan loadResult, 1)
 	go func() {
 		rawResult, err := c.clientRequest(ctx, runtime, "session/load", map[string]any{
-			"sessionId":  sessionID,
+			"sessionId":  rawSessionID,
 			"cwd":        c.Dir(),
 			"mcpServers": []any{},
 		})
@@ -120,7 +121,7 @@ func (c *Client) collectSessionReplay(
 			if result.err != nil {
 				return agents.SessionTranscriptResult{}, result.err
 			}
-			if err := drainCodexReplayUpdates(collector, updates); err != nil {
+			if err := drainCodexReplayUpdates(ctx, collector, updates, stableSessionID, rawSessionID); err != nil {
 				return agents.SessionTranscriptResult{}, err
 			}
 			replay := collector.Result()
@@ -133,7 +134,7 @@ func (c *Client) collectSessionReplay(
 				}
 				return agents.SessionTranscriptResult{}, errors.New("codex: embedded updates channel closed")
 			}
-			if err := consumeCodexReplayUpdate(collector, msg); err != nil {
+			if err := consumeCodexReplayUpdate(ctx, collector, msg, stableSessionID, rawSessionID); err != nil {
 				return agents.SessionTranscriptResult{}, err
 			}
 		}
@@ -141,8 +142,11 @@ func (c *Client) collectSessionReplay(
 }
 
 func drainCodexReplayUpdates(
+	ctx context.Context,
 	collector *agents.ACPTranscriptCollector,
 	updates <-chan codexacp.RPCMessage,
+	stableSessionID string,
+	rawSessionID string,
 ) error {
 	for {
 		select {
@@ -150,7 +154,7 @@ func drainCodexReplayUpdates(
 			if !ok {
 				return nil
 			}
-			if err := consumeCodexReplayUpdate(collector, msg); err != nil {
+			if err := consumeCodexReplayUpdate(ctx, collector, msg, stableSessionID, rawSessionID); err != nil {
 				return err
 			}
 		default:
@@ -160,12 +164,31 @@ func drainCodexReplayUpdates(
 }
 
 func consumeCodexReplayUpdate(
+	ctx context.Context,
 	collector *agents.ACPTranscriptCollector,
 	msg codexacp.RPCMessage,
+	stableSessionID string,
+	rawSessionID string,
 ) error {
 	observability.LogACPMessage("codex-embedded", "inbound", msg)
 	if msg.Method != methodSessionUpdate || len(msg.Params) == 0 {
 		return nil
 	}
-	return collector.HandleRawUpdate(msg.Params)
+	update, err := agents.ParseACPUpdate(msg.Params)
+	if err != nil {
+		return err
+	}
+	if update.SessionInfo != nil {
+		normalized := normalizeCodexSessionInfoUpdate(*update.SessionInfo, stableSessionID, rawSessionID)
+		update.SessionInfo = &normalized
+	}
+	if update.Type == agents.ACPUpdateTypeUsage && update.SessionUsage != nil {
+		normalized := normalizeCodexSessionUsageUpdate(*update.SessionUsage, stableSessionID, rawSessionID)
+		update.SessionUsage = &normalized
+		if err := agents.NotifySessionUsageUpdate(ctx, normalized); err != nil {
+			return err
+		}
+	}
+	collector.HandleUpdate(update)
+	return nil
 }

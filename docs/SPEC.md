@@ -18,6 +18,7 @@ Modules:
 - `internal/httpapi`: routing, request validation, response/error encoding.
 - `internal/runtime`: thread controller, turn state machine, cancellation coordination.
 - `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
+  - the shared agent callback surface also carries ACP session-usage snapshots so HTTP/storage/Web UI code can persist and render them without provider-specific UI wiring.
   - per-turn provider resolution selects implementation by thread metadata (agent id + cwd).
   - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, and `cursor`; provider-specific hooks own command startup, request parameter shaping, permission mapping, auth/model quirks, and cancel behavior.
 - `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
@@ -28,6 +29,7 @@ Modules:
 - `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; Web UI visual redesigns must remain presentation-only and must not change API/runtime behavior.
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
+  - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
 
 ## 3. Concurrency Model
 
@@ -84,6 +86,10 @@ SQLite stores:
 - threads
 - turns
 - events (append-only stream records)
+- per-session caches keyed by `(agent_id, cwd, session_id)` for:
+  - transcript replay snapshots
+  - ACP config-option snapshots
+  - ACP session-usage snapshots (`total/input/output/thought/cached_*`, `context_used/context_size`, optional cost)
 
 Properties:
 
@@ -109,11 +115,12 @@ On restart:
 - health and server metadata
 - thread CRUD (create/list/get/update/delete)
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
+- thread session-usage snapshot lookup (`GET /v1/threads/{threadId}/session-usage?sessionId=...`)
 - turn create/cancel
 - thread compact (`POST /v1/threads/{threadId}/compact`)
 - SSE stream for real-time events
 - permission decision endpoint
-- turn history with optional persisted event replay (`message_delta`, `message_content`, `reasoning_delta`, `plan_update`, terminal/error events)
+- turn history with optional persisted event replay (`message_delta`, `message_content`, `reasoning_delta`, `plan_update`, `session_usage_update`, terminal/error events)
 
 See `docs/API.md` for endpoint and schema contracts.
 

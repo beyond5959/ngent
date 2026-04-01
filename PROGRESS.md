@@ -11,6 +11,18 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
+## Latest Update (2026-04-01)
+
+- `Post-M8` Web UI Simplified Chinese localization and Settings language switch completed:
+  - added a browser-local persisted `language` preference to the embedded Vite + TypeScript SPA, alongside the existing theme/auth/server settings.
+  - first load now defaults to the closest supported browser locale:
+    - `zh-*` browsers default to `zh-CN`.
+    - all other locales default to `en`.
+  - moved language switching into the Settings drawer and wired root-shell re-rendering so changing language updates the sidebar, session rail, composer, empty states, permission cards, markdown controls, and other primary UI chrome immediately.
+  - localized client-owned Web UI strings and relative-time labels for English + Simplified Chinese while keeping provider/server payload text as-is.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
 ## Latest Update (2026-03-30)
 
 - `Post-M8` ACP session-usage persistence and Web UI context-pressure indicator completed:

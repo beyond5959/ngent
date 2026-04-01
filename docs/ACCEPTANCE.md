@@ -2,6 +2,24 @@
 
 This checklist defines executable acceptance checks for requirements 1-16.
 
+## Supplemental Web UI: Language Selection
+
+- Operation:
+  - open the embedded Web UI in a browser/profile with no existing `ngent:language` localStorage key.
+  - verify first-load language follows the browser locale (`zh-*` => Simplified Chinese, otherwise English).
+  - open Settings, switch language, and verify the sidebar, session rail, composer, empty states, and permission/markdown controls update immediately without a full page reload.
+- Expected:
+  - browser default locale is respected on first visit.
+  - explicit Settings language choice persists locally and overrides browser detection on subsequent visits.
+  - build remains clean with no TypeScript errors.
+- Verification command:
+  - `cd internal/webui/web && npm run build`
+  - manual browser check:
+    - clear `localStorage['ngent:language']`
+    - open the UI under an English browser locale
+    - open the UI under a `zh-CN` browser locale
+    - switch languages in Settings and verify immediate UI re-render
+
 ## Requirement 1: HTTP/JSON plus SSE
 
 - Operation: call JSON endpoint and one SSE turn endpoint.

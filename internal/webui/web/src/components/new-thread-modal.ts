@@ -1,5 +1,6 @@
 import { store } from '../store.ts'
 import { api, ApiError } from '../api.ts'
+import { t } from '../i18n.ts'
 import type { AgentInfo } from '../types.ts'
 import { isAbsolutePath, escHtml, debounce } from '../utils.ts'
 
@@ -85,45 +86,45 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
   const canSubmit = !!s.selectedAgent && isAbsolutePath(s.cwd) && !s.submitting
 
   return `
-    <div class="modal-overlay" id="new-thread-overlay" role="dialog" aria-modal="true" aria-label="New agent">
+    <div class="modal-overlay" id="new-thread-overlay" role="dialog" aria-modal="true" aria-label="${escHtml(t('newThreadDialogLabel'))}">
       <div class="modal modal--new-thread" id="new-thread-modal">
 
         <div class="modal-header">
           <div class="modal-header-copy">
-            <div class="modal-kicker">Create Local Thread</div>
-            <h2 class="modal-title">New Agent</h2>
+            <div class="modal-kicker">${escHtml(t('createLocalThread'))}</div>
+            <h2 class="modal-title">${escHtml(t('newAgent'))}</h2>
           </div>
-          <button class="btn btn-icon" id="new-thread-close" aria-label="Close">${iconClose}</button>
+          <button class="btn btn-icon" id="new-thread-close" aria-label="${escHtml(t('close'))}">${iconClose}</button>
         </div>
 
         <div class="modal-body modal-body--new-thread">
-          <p class="modal-lead">Choose a working directory first. Ngent will keep this thread and its future sessions grouped under that path.</p>
+          <p class="modal-lead">${escHtml(t('newThreadLead'))}</p>
 
           ${s.error ? `<div class="form-error-banner" id="modal-error">${escHtml(s.error)}</div>` : ''}
 
           <div class="new-thread-layout">
             <section class="form-section form-section--primary">
               <div class="form-section-head">
-                <h3 class="form-section-title">Working Directory</h3>
-                <p class="form-section-desc">Absolute path inside configured allowed roots.</p>
+                <h3 class="form-section-title">${escHtml(t('workingDirectory'))}</h3>
+                <p class="form-section-desc">${escHtml(t('workingDirectoryDesc'))}</p>
               </div>
               <div class="form-group">
                 <label class="form-label" for="cwd-input">
-                  Working Directory <span class="form-required">*</span>
+                  ${escHtml(t('workingDirectory'))} <span class="form-required">*</span>
                 </label>
                 <div class="path-search-container">
                   <input
                     id="cwd-input"
                     class="settings-input ${cwdInvalid || s.cwdError ? 'settings-input--error' : ''}"
                     type="text"
-                    placeholder="Type to search directories in your home folder..."
+                    placeholder="${escHtml(t('cwdPlaceholder'))}"
                     value="${escHtml(s.cwd)}"
                     autocomplete="off"
                     spellcheck="false"
                   />
                   ${s.showRecentDirectories && s.recentDirectories.length > 0 && !s.pathSearchQuery ? `
                     <div class="path-search-dropdown" id="path-search-dropdown">
-                      <div class="path-search-header">Recent directories</div>
+                      <div class="path-search-header">${escHtml(t('recentDirectories'))}</div>
                       ${s.recentDirectories.map((path, idx) => `
                         <div class="path-search-item ${idx === s.pathSearchSelectedIndex ? 'path-search-item--selected' : ''}" data-path="${escHtml(path)}">
                           ${escHtml(path)}
@@ -140,22 +141,22 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
                       `).join('')}
                     </div>
                   ` : ''}
-                  ${s.pathSearchLoading ? '<div class="path-search-loading">Searching...</div>' : ''}
+                  ${s.pathSearchLoading ? `<div class="path-search-loading">${escHtml(t('searching'))}</div>` : ''}
                 </div>
                 ${s.cwdError
                   ? `<p class="form-hint form-hint--error" id="cwd-hint">${escHtml(s.cwdError)}</p>`
                   : cwdInvalid
-                    ? `<p class="form-hint form-hint--error" id="cwd-hint">Path must be absolute (start with /)</p>`
-                    : `<p class="form-hint" id="cwd-hint">Absolute path to the project directory.</p>`}
+                    ? `<p class="form-hint form-hint--error" id="cwd-hint">${escHtml(t('pathMustBeAbsolute'))}</p>`
+                    : `<p class="form-hint" id="cwd-hint">${escHtml(t('projectDirectoryHint'))}</p>`}
               </div>
 
               <div class="form-group">
-                <label class="form-label" for="title-input">Title <span class="form-optional">(optional)</span></label>
+                <label class="form-label" for="title-input">${escHtml(t('title'))} <span class="form-optional">(${escHtml(t('optional'))})</span></label>
                 <input
                   id="title-input"
                   class="settings-input"
                   type="text"
-                  placeholder="e.g. Refactor payment module"
+                  placeholder="${escHtml(t('titlePlaceholder'))}"
                   value="${escHtml(s.title)}"
                   maxlength="120"
                 />
@@ -164,13 +165,13 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
 
             <section class="form-section form-section--agent">
               <div class="form-section-head">
-                <h3 class="form-section-title">Agent</h3>
-                <p class="form-section-desc">Choose the runtime that will own this thread.</p>
+                <h3 class="form-section-title">${escHtml(t('agent'))}</h3>
+                <p class="form-section-desc">${escHtml(t('agentDesc'))}</p>
               </div>
               <div class="agent-grid" id="agent-grid">
                 ${agents.length
                   ? agents.map(a => renderAgentCard(a, a.id === s.selectedAgent)).join('')
-                  : '<p class="form-hint">Loading agents…</p>'}
+                  : `<p class="form-hint">${escHtml(t('loadingAgents'))}</p>`}
               </div>
             </section>
           </div>
@@ -178,12 +179,12 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
           <div class="collapsible ${s.advancedOpen ? 'collapsible--open' : ''}">
             <button class="collapsible-toggle" id="advanced-toggle" type="button">
               <span class="collapsible-chevron">${iconChevron}</span>
-              Advanced options
+              ${escHtml(t('advancedOptions'))}
             </button>
             <div class="collapsible-body">
               <div class="form-group">
                 <label class="form-label" for="agent-options-input">
-                  Agent Options <span class="form-optional">(JSON)</span>
+                  ${escHtml(t('agentOptions'))} <span class="form-optional">(${escHtml(t('json'))})</span>
                 </label>
                 <textarea
                   id="agent-options-input"
@@ -199,14 +200,14 @@ function renderModal(s: ModalState, agents: AgentInfo[]): string {
         </div>
 
         <div class="modal-footer">
-          <button class="btn btn-ghost" id="new-thread-cancel" type="button">Cancel</button>
+          <button class="btn btn-ghost" id="new-thread-cancel" type="button">${escHtml(t('cancel'))}</button>
           <button
             class="btn btn-primary"
             id="new-thread-submit"
             type="button"
             ${canSubmit ? '' : 'disabled'}
           >
-            ${s.submitting ? '<span class="btn-spinner"></span> Creating…' : 'Create Agent'}
+            ${s.submitting ? `<span class="btn-spinner"></span> ${escHtml(t('creating'))}` : escHtml(t('createAgent'))}
           </button>
         </div>
 
@@ -407,8 +408,8 @@ function refreshCwdHint(): void {
   input.classList.toggle('settings-input--error', invalid)
   hint.className = `form-hint${invalid ? ' form-hint--error' : ''}`
   hint.textContent = invalid
-    ? 'Path must be absolute (start with /)'
-    : 'Absolute path to the project directory.'
+    ? t('pathMustBeAbsolute')
+    : t('projectDirectoryHint')
 }
 
 function refreshSubmitButton(): void {
@@ -424,8 +425,8 @@ function refreshSubmitButtonState(): void {
   const ok = !!modalState.selectedAgent && isAbsolutePath(modalState.cwd) && !modalState.submitting
   btn.disabled = !ok
   btn.innerHTML = modalState.submitting
-    ? '<span class="btn-spinner"></span> Creating…'
-    : 'Create Agent'
+    ? `<span class="btn-spinner"></span> ${escHtml(t('creating'))}`
+    : escHtml(t('createAgent'))
 }
 
 function refreshAgentSelection(): void {
@@ -496,7 +497,7 @@ function refreshPathSearchDropdown(): void {
   if (modalState.pathSearchLoading) {
     const loadingEl = document.createElement('div')
     loadingEl.className = 'path-search-loading'
-    loadingEl.textContent = 'Searching...'
+    loadingEl.textContent = t('searching')
     loadingEl.style.top = `${dropdownTop}px`
     loadingEl.style.left = `${dropdownLeft}px`
     loadingEl.style.width = `${dropdownWidth}px`
@@ -513,7 +514,7 @@ function refreshPathSearchDropdown(): void {
     dropdown.style.left = `${dropdownLeft}px`
     dropdown.style.width = `${dropdownWidth}px`
     dropdown.innerHTML = `
-      <div class="path-search-header">Recent directories</div>
+      <div class="path-search-header">${escHtml(t('recentDirectories'))}</div>
       ${modalState.recentDirectories.map((path, idx) => `
         <div class="path-search-item ${idx === modalState.pathSearchSelectedIndex ? 'path-search-item--selected' : ''}" data-path="${escHtml(path)}">
           ${escHtml(path)}
@@ -598,7 +599,7 @@ async function submit(): Promise<void> {
     try {
       agentOptions = JSON.parse(modalState.agentOptionsRaw) as Record<string, unknown>
     } catch {
-      modalState = { ...modalState, error: 'Agent options must be valid JSON.' }
+      modalState = { ...modalState, error: t('agentOptionsInvalidJSON') }
       rerender()
       return
     }
@@ -673,8 +674,8 @@ function refreshCwdErrorUI(): void {
     const invalid = input.value.length > 0 && !isAbsolutePath(input.value.trim())
     hint.className = `form-hint${invalid ? ' form-hint--error' : ''}`
     hint.textContent = invalid
-      ? 'Path must be absolute (start with /)'
-      : 'Absolute path to the project directory.'
+      ? t('pathMustBeAbsolute')
+      : t('projectDirectoryHint')
   }
 }
 

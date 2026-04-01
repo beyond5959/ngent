@@ -1,4 +1,5 @@
 import { store } from './store.ts'
+import { t } from './i18n.ts'
 import type {
   AgentInfo,
   ConfigOption,
@@ -113,7 +114,7 @@ class ApiClient {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
     } catch (err) {
-      throw new ApiError(`Network error: ${String(err)}`, 'NETWORK_ERROR', 0)
+      throw new ApiError(t('networkError', { error: String(err) }), 'NETWORK_ERROR', 0)
     }
 
     if (!res.ok) {

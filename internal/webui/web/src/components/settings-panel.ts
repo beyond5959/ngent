@@ -1,5 +1,6 @@
+import { setLanguage, t } from '../i18n.ts'
 import { store } from '../store.ts'
-import type { Theme } from '../types.ts'
+import type { Language, Theme } from '../types.ts'
 import { debounce, escHtml } from '../utils.ts'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
@@ -10,8 +11,22 @@ const iconClose = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" a
 
 // ── Render ─────────────────────────────────────────────────────────────────
 
-function renderPanel(): string {
-  const { authToken, serverUrl, theme } = store.get()
+interface SettingsDraftValues {
+  authToken: string
+  serverUrl: string
+}
+
+function readDraftValues(): SettingsDraftValues {
+  const state = store.get()
+  return {
+    authToken: container?.querySelector<HTMLInputElement>('#auth-token-input')?.value ?? state.authToken,
+    serverUrl: container?.querySelector<HTMLInputElement>('#server-url-input')?.value ?? state.serverUrl,
+  }
+}
+
+function renderPanel(drafts: SettingsDraftValues = readDraftValues()): string {
+  const { theme, language } = store.get()
+  const { authToken, serverUrl } = drafts
 
   const themeBtn = (value: Theme, label: string) => `
     <button
@@ -20,32 +35,39 @@ function renderPanel(): string {
       type="button"
     >${label}</button>`
 
+  const languageBtn = (value: Language, label: string) => `
+    <button
+      class="theme-btn ${language === value ? 'theme-btn--active' : ''}"
+      data-language-value="${value}"
+      type="button"
+    >${label}</button>`
+
   return `
-    <div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-label="${escHtml(t('settingsDialogLabel'))}">
       <div class="settings-panel" id="settings-panel">
 
         <div class="settings-header">
           <div class="settings-header-copy">
-            <div class="settings-kicker">Browser Preferences</div>
-            <h2 class="settings-title">Settings</h2>
-            <p class="settings-header-desc">Connection, authentication, and theme controls for this browser only.</p>
+            <div class="settings-kicker">${escHtml(t('browserPreferences'))}</div>
+            <h2 class="settings-title">${escHtml(t('settingsTitle'))}</h2>
+            <p class="settings-header-desc">${escHtml(t('settingsHeaderDesc'))}</p>
           </div>
-          <button class="btn btn-icon" id="settings-close-btn" aria-label="Close settings">
+          <button class="btn btn-icon" id="settings-close-btn" aria-label="${escHtml(t('closeSettings'))}">
             ${iconClose}
           </button>
         </div>
 
         <div class="settings-body">
           <div class="settings-intro">
-            <div class="settings-intro-badge">Stored locally</div>
-            <p class="settings-intro-copy">These values stay in local storage and do not mutate server-side Ngent state.</p>
+            <div class="settings-intro-badge">${escHtml(t('storedLocally'))}</div>
+            <p class="settings-intro-copy">${escHtml(t('settingsIntroCopy'))}</p>
           </div>
 
           <section class="settings-section">
-            <h3 class="settings-section-title">Connection</h3>
-            <label class="settings-label" for="server-url-input">Server URL</label>
+            <h3 class="settings-section-title">${escHtml(t('connection'))}</h3>
+            <label class="settings-label" for="server-url-input">${escHtml(t('serverUrl'))}</label>
             <p class="settings-description">
-              Base URL of the Ngent Server API. Change this only when using a reverse proxy or a different local port.
+              ${escHtml(t('serverUrlDesc'))}
             </p>
             <input
               id="server-url-input"
@@ -59,16 +81,16 @@ function renderPanel(): string {
           </section>
 
           <section class="settings-section">
-            <h3 class="settings-section-title">Security</h3>
-            <label class="settings-label" for="auth-token-input">Bearer Token</label>
+            <h3 class="settings-section-title">${escHtml(t('security'))}</h3>
+            <label class="settings-label" for="auth-token-input">${escHtml(t('bearerToken'))}</label>
             <p class="settings-description">
-              Optional. Set if the server was started with <code>--auth-token</code>.
+              ${escHtml(t('bearerTokenDesc'))}
             </p>
             <input
               id="auth-token-input"
               class="settings-input"
               type="password"
-              placeholder="Leave empty if not required"
+              placeholder="${escHtml(t('bearerTokenPlaceholder'))}"
               value="${escHtml(authToken)}"
               autocomplete="off"
               spellcheck="false"
@@ -76,12 +98,22 @@ function renderPanel(): string {
           </section>
 
           <section class="settings-section">
-            <h3 class="settings-section-title">Appearance</h3>
-            <label class="settings-label">Theme</label>
+            <h3 class="settings-section-title">${escHtml(t('appearance'))}</h3>
+            <label class="settings-label">${escHtml(t('theme'))}</label>
             <div class="theme-btn-group">
-              ${themeBtn('light', 'Light')}
-              ${themeBtn('system', 'System')}
-              ${themeBtn('dark', 'Dark')}
+              ${themeBtn('light', t('light'))}
+              ${themeBtn('system', t('system'))}
+              ${themeBtn('dark', t('dark'))}
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3 class="settings-section-title">${escHtml(t('language'))}</h3>
+            <label class="settings-label">${escHtml(t('language'))}</label>
+            <p class="settings-description">${escHtml(t('languageDesc'))}</p>
+            <div class="theme-btn-group">
+              ${languageBtn('en', t('english'))}
+              ${languageBtn('zh-CN', t('simplifiedChinese'))}
             </div>
           </section>
 
@@ -93,6 +125,13 @@ function renderPanel(): string {
 // ── Mount / Unmount ────────────────────────────────────────────────────────
 
 let container: HTMLDivElement | null = null
+
+function rerender(): void {
+  if (!container) return
+  const drafts = readDraftValues()
+  container.innerHTML = renderPanel(drafts)
+  bindEvents()
+}
 
 function unmount(): void {
   if (container) {
@@ -106,7 +145,7 @@ function mount(): void {
   if (container) return
 
   container = document.createElement('div')
-  container.innerHTML = renderPanel()
+  container.innerHTML = renderPanel(readDraftValues())
   document.body.appendChild(container)
 
   bindEvents()
@@ -147,9 +186,19 @@ function bindEvents(): void {
     const value = btn.dataset.themeValue as Theme
     store.set({ theme: value })
     applyTheme(value)
-    // Update active state
-    container?.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('theme-btn--active'))
-    btn.classList.add('theme-btn--active')
+    rerender()
+  })
+
+  // Language buttons
+  container.querySelectorAll('.theme-btn-group').forEach(group => {
+    group.addEventListener('click', e => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-language-value]')
+      if (!btn) return
+      const value = btn.dataset.languageValue as Language
+      store.set({ language: value })
+      setLanguage(value)
+      rerender()
+    })
   })
 
   // Server URL — save on change (debounced)

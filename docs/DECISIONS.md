@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-068: Add browser-default English/Simplified Chinese localization to the embedded Web UI. (Accepted)
 - ADR-067: Persist ACP session usage snapshots and surface context-window pressure in the Web UI. (Accepted)
 - ADR-066: Surface thread-scoped git branch state in the Web UI composer. (Accepted)
 - ADR-065: Recast the embedded Web UI as a restrained desktop workbench. (Accepted)
@@ -59,6 +60,35 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-068: Add Browser-Default English/Simplified Chinese Localization To The Embedded Web UI
+
+- Status: Accepted
+- Date: 2026-04-01
+- Context:
+  - the embedded Web UI was English-only even though it is now used as the primary local workstation for a broader set of users.
+  - product required one new language immediately: Simplified Chinese.
+  - users also needed an explicit per-browser language override in Settings instead of being locked to the first detected locale forever.
+  - the existing frontend is a no-framework SPA, so the change needed to stay client-local and avoid backend/session contract changes.
+- Decision:
+  - add a persisted browser-local `language` preference to the frontend store with two supported values:
+    - `en`
+    - `zh-CN`
+  - on first load, when no explicit preference is stored yet:
+    - map any browser locale matching `zh-*` to `zh-CN`
+    - fall back to `en` for every other locale
+  - move language selection into the Settings drawer and keep it entirely client-side, alongside theme/auth/server URL preferences.
+  - re-render the Web UI shell when language changes so visible chrome updates immediately without a page reload.
+  - localize client-owned UI strings and relative-time formatting only; pass through backend/provider text unchanged for now.
+- Consequences:
+  - the first visit now feels locale-aware without introducing a third `system/follow browser` mode into long-term settings state.
+  - different browsers/profiles on the same machine can intentionally keep different UI languages because the setting lives in each browser's local storage.
+  - unsupported browser locales degrade safely to English.
+  - mixed-language surfaces are still possible when the backend returns English error text; that remains an accepted limitation for now.
+- Alternatives considered:
+  - add a persistent `system` language mode that tracks browser locale on every visit (rejected: unnecessary complexity for the current two-language scope).
+  - localize on the backend and send translated text over HTTP/SSE (rejected: outside the current UI-only scope and would complicate protocol contracts).
+  - auto-map only exact `zh-CN` and leave other `zh-*` locales in English (rejected: worse default experience for Chinese-language browsers).
 
 ## ADR-067: Persist ACP Session Usage Snapshots And Surface Context-Window Pressure In The Web UI
 

@@ -30,6 +30,7 @@ Modules:
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
+  - the Web UI also owns a browser-local `language` preference (`en` or `zh-CN`); on first load it defaults from browser locale (`zh-*` => `zh-CN`, otherwise `en`), and Settings can override it persistently per browser profile.
 
 ## 3. Concurrency Model
 

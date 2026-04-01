@@ -15,6 +15,19 @@
 
 ## Open Issues
 
+- ID: KI-047
+- Title: Web UI locale switch does not translate server-originated error text
+- Status: Open
+- Severity: Low
+- Affects: browser users viewing HTTP/API/provider error messages inside the localized Web UI
+- Symptom:
+  - Settings, navigation, empty states, composer controls, and other client-owned Web UI strings switch between English and Simplified Chinese.
+  - errors that come straight from the backend or upstream agent/provider can still appear in English because the frontend currently renders those payload strings verbatim.
+- Workaround:
+  - rely on the surrounding localized UI and exact error code/message, or switch to English if a support/debugging workflow expects backend wording unchanged.
+- Follow-up plan:
+  - evaluate a stable frontend error-code translation layer, or backend-side localization, if mixed-language error surfaces become a product problem.
+
 - ID: KI-046
 - Title: ACP session-usage visibility still depends on provider support
 - Status: Open

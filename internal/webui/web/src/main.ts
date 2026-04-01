@@ -1,6 +1,7 @@
 import './style.css'
 import { store } from './store.ts'
 import { api } from './api.ts'
+import { getLanguage, setLanguage, t } from './i18n.ts'
 import { applyTheme, settingsPanel } from './components/settings-panel.ts'
 import { newThreadModal } from './components/new-thread-modal.ts'
 import { mountPermissionCard, PERMISSION_TIMEOUT_MS } from './components/permission-card.ts'
@@ -38,6 +39,7 @@ import { copyText, debounce, escHtml, formatBytes, formatRelativeTime, formatTim
 
 // ── Theme ─────────────────────────────────────────────────────────────────
 
+setLanguage(store.get().language)
 applyTheme(store.get().theme)
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (store.get().theme === 'system') applyTheme('system')
@@ -443,16 +445,20 @@ function sessionUsageProgressRatio(usage: RenderableSessionUsage): number {
 }
 
 function formatTokenValue(value: number): string {
-  return new Intl.NumberFormat().format(Math.max(0, Math.round(value)))
+  return new Intl.NumberFormat(getLanguage()).format(Math.max(0, Math.round(value)))
 }
 
 function sessionUsageTooltip(usage: RenderableSessionUsage): string {
   const percent = Math.round(sessionUsageProgressRatio(usage) * 100)
   const parts = [
-    `Context ${formatTokenValue(usage.contextUsed ?? 0)} / ${formatTokenValue(usage.contextSize ?? 0)} tokens (${percent}%)`,
+    t('contextTokens', {
+      used: formatTokenValue(usage.contextUsed ?? 0),
+      size: formatTokenValue(usage.contextSize ?? 0),
+      percent,
+    }),
   ]
   if (usage.totalTokens !== undefined) {
-    parts.push(`Total tokens used ${formatTokenValue(usage.totalTokens)}`)
+    parts.push(t('totalTokensUsed', { total: formatTokenValue(usage.totalTokens) }))
   }
   return parts.join(' · ')
 }
@@ -951,7 +957,7 @@ function parseTurnUserPromptEvent(event: TurnEvent): {
     const mimeType = recordString(record, 'mimeType') || undefined
     attachments.push({
       attachmentId,
-      name: recordString(record, 'name') || 'Attachment',
+      name: recordString(record, 'name') || t('attachment'),
       uri: recordString(record, 'uri') || undefined,
       mimeType,
       size: typeof sizeValue === 'number' && Number.isFinite(sizeValue) ? sizeValue : undefined,
@@ -1326,6 +1332,8 @@ let slashCommandLookupThreadId: string | null = null
 let lastRenderThreadId: string | null = null
 /** Last (threadId, sessionId) scope rendered into the chat pane. */
 let lastRenderChatScopeKey = ''
+/** Last language used for top-level UI rendering. */
+let lastRenderLanguage = store.get().language
 /** Chat scope keys whose filtered history was loaded. */
 const loadedHistoryScopeKeys = new Set<string>()
 /** Bound session scopes that were promoted from a temporary fresh-session scope. */
@@ -1487,27 +1495,27 @@ function getThreadMenuTrigger(threadId: string): HTMLButtonElement | null {
     .find(btn => btn.dataset.threadId === threadId) ?? null
 }
 
-function renderThreadActionPopover(t: Thread): string {
-  const isOpen = openThreadActionMenuId === t.threadId
+function renderThreadActionPopover(thread: Thread): string {
+  const isOpen = openThreadActionMenuId === thread.threadId
   if (!isOpen) return ''
 
-  if (renamingThreadId === t.threadId) {
+  if (renamingThreadId === thread.threadId) {
     return `
-      <div class="thread-action-popover thread-action-popover--rename" data-thread-id="${escHtml(t.threadId)}">
-        <form class="thread-rename-form" data-thread-id="${escHtml(t.threadId)}">
+      <div class="thread-action-popover thread-action-popover--rename" data-thread-id="${escHtml(thread.threadId)}">
+        <form class="thread-rename-form" data-thread-id="${escHtml(thread.threadId)}">
           <input
             class="thread-rename-input"
-            data-thread-id="${escHtml(t.threadId)}"
+            data-thread-id="${escHtml(thread.threadId)}"
             type="text"
             value="${escHtml(renamingThreadDraft)}"
-            placeholder="Agent name"
+            placeholder="${escHtml(t('renameAgentPlaceholder'))}"
             maxlength="120"
-            aria-label="Rename agent"
+            aria-label="${escHtml(t('renameAgent'))}"
           />
           <div class="thread-rename-actions">
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
-            <button class="btn btn-ghost btn-sm thread-rename-cancel-btn" type="button" data-thread-id="${escHtml(t.threadId)}">
-              Cancel
+            <button class="btn btn-primary btn-sm" type="submit">${escHtml(t('save'))}</button>
+            <button class="btn btn-ghost btn-sm thread-rename-cancel-btn" type="button" data-thread-id="${escHtml(thread.threadId)}">
+              ${escHtml(t('cancel'))}
             </button>
           </div>
         </form>
@@ -1515,18 +1523,18 @@ function renderThreadActionPopover(t: Thread): string {
   }
 
   return `
-    <div class="thread-action-popover thread-action-menu" data-thread-id="${escHtml(t.threadId)}" role="menu" aria-label="Agent actions">
-      <button class="thread-action-menu-item" type="button" data-thread-id="${escHtml(t.threadId)}" data-action="rename" role="menuitem">
-        Rename
+    <div class="thread-action-popover thread-action-menu" data-thread-id="${escHtml(thread.threadId)}" role="menu" aria-label="${escHtml(t('agentActions'))}">
+      <button class="thread-action-menu-item" type="button" data-thread-id="${escHtml(thread.threadId)}" data-action="rename" role="menuitem">
+        ${escHtml(t('rename'))}
       </button>
       <button
         class="thread-action-menu-item thread-action-menu-item--danger"
         type="button"
-        data-thread-id="${escHtml(t.threadId)}"
+        data-thread-id="${escHtml(thread.threadId)}"
         data-action="delete"
         role="menuitem"
       >
-        Delete
+        ${escHtml(t('delete'))}
       </button>
     </div>`
 }
@@ -2222,7 +2230,7 @@ async function syncSelectedSessionSelection(
     })
     clearSelectedSessionOverrideIfSynced(nextThreads.find(item => item.threadId === threadId))
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to update session.'
+    const message = err instanceof Error ? err.message : t('failedToUpdateSession')
     window.alert(message)
   } finally {
     sessionSwitchingThreads.delete(threadId)
@@ -2306,25 +2314,25 @@ function renderSessionPanelBody(data: SessionPanelRenderData): string {
   const { state, sessions, selectedSessionID, disabled, loadingSessionIDSet } = data
 
   if (state.loading && !sessions.length) {
-    return `<div class="session-panel-empty">Loading sessions…</div>`
+    return `<div class="session-panel-empty">${escHtml(t('loadingSessions'))}</div>`
   }
   if (state.error && !sessions.length) {
     return `<div class="session-panel-empty session-panel-empty--error">${escHtml(state.error)}</div>`
   }
   if (state.supported === false && !sessions.length) {
-    return `<div class="session-panel-empty">This agent does not expose ACP session history.</div>`
+    return `<div class="session-panel-empty">${escHtml(t('sessionHistoryUnsupported'))}</div>`
   }
 
   const itemsHTML = sessions.length
-    ? sessions.map(item => renderSessionItem(
+      ? sessions.map(item => renderSessionItem(
         item,
         item.sessionId === selectedSessionID,
         loadingSessionIDSet.has(item.sessionId),
       )).join('')
-    : `<div class="session-panel-empty">No previous sessions for this working directory.</div>`
+    : `<div class="session-panel-empty">${escHtml(t('noPreviousSessions'))}</div>`
   const showMoreHTML = state.nextCursor
     ? `<button class="btn btn-ghost session-show-more-btn" type="button" ${state.loadingMore || disabled ? 'disabled' : ''}>
-        ${state.loadingMore ? 'Loading…' : 'Show more'}
+        ${escHtml(state.loadingMore ? t('loadingEllipsis') : t('showMore'))}
       </button>`
     : ''
 
@@ -2360,11 +2368,11 @@ function sessionPanelBodyRenderKey(data: SessionPanelRenderData): string {
 function renderSessionPanelHeader(thread: Thread, data: SessionPanelRenderData): string {
   const title = threadTitle(thread)
   const agentName = agentDisplayName(thread.agent ?? '')
-  const refreshLabel = data.state.loading ? 'Refreshing sessions' : 'Refresh sessions'
+  const refreshLabel = data.state.loading ? t('refreshingSessions') : t('refreshSessions')
 
   return `
     <div class="session-panel-header">
-      <div class="session-panel-section-label">Session History</div>
+      <div class="session-panel-section-label">${escHtml(t('sessionHistory'))}</div>
       <div class="session-panel-heading-row">
         <div class="session-panel-heading-copy">
           <div class="session-panel-title-row">
@@ -2391,11 +2399,11 @@ function renderSessionPanelHeader(thread: Thread, data: SessionPanelRenderData):
       <button
         class="btn btn-ghost session-new-btn session-new-btn--full"
         type="button"
-        title="New session"
-        aria-label="New session"
+        title="${escHtml(t('newSession'))}"
+        aria-label="${escHtml(t('newSession'))}"
         ${data.disabled ? 'disabled' : ''}>
         ${iconPlus}
-        <span>New session</span>
+        <span>${escHtml(t('newSession'))}</span>
       </button>
     </div>`
 }
@@ -2500,7 +2508,7 @@ function syncSessionPanelHeader(el: HTMLElement, thread: Thread, data: SessionPa
     subtitleEl.innerHTML = renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')
   }
 
-  const refreshLabel = data.state.loading ? 'Refreshing sessions' : 'Refresh sessions'
+  const refreshLabel = data.state.loading ? t('refreshingSessions') : t('refreshSessions')
   const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
   if (refreshBtn) {
     refreshBtn.classList.toggle('session-refresh-btn--loading', data.state.loading)
@@ -2618,9 +2626,9 @@ function skeletonItems(): string {
     </div>`).join('')
 }
 
-function threadTitle(t: Thread): string {
-  if (t.title) return t.title
-  return t.cwd.split('/').filter(Boolean).pop() ?? t.cwd
+function threadTitle(thread: Thread): string {
+  if (thread.title) return thread.title
+  return thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd
 }
 
 function syncSidebarChrome(): void {
@@ -2921,14 +2929,18 @@ function renderComposerConfigSwitch(
     </div>`
 }
 
-const modelPickerLabels: ConfigPickerLabels = {
-  loadingLabel: 'Loading models…',
-  emptyLabel: 'No models available',
+function modelPickerLabels(): ConfigPickerLabels {
+  return {
+    loadingLabel: t('loadingModels'),
+    emptyLabel: t('noModelsAvailable'),
+  }
 }
 
-const reasoningPickerLabels: ConfigPickerLabels = {
-  loadingLabel: 'Loading reasoning…',
-  emptyLabel: 'No reasoning',
+function reasoningPickerLabels(): ConfigPickerLabels {
+  return {
+    loadingLabel: t('loadingReasoning'),
+    emptyLabel: t('noReasoning'),
+  }
 }
 
 function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): string {
@@ -2982,8 +2994,8 @@ function renderThreadStatusIndicator(status: ThreadActivityIndicator): string {
       <span
         class="thread-status-indicator thread-status-indicator--loading"
         role="status"
-        aria-label="Agent is working"
-        title="Agent is working"
+        aria-label="${escHtml(t('agentIsWorking'))}"
+        title="${escHtml(t('agentIsWorking'))}"
       >
         <span class="thread-status-spinner" aria-hidden="true"></span>
       </span>`
@@ -2993,8 +3005,8 @@ function renderThreadStatusIndicator(status: ThreadActivityIndicator): string {
       <span
         class="thread-status-indicator thread-status-indicator--done"
         role="img"
-        aria-label="Latest turn finished"
-        title="Latest turn finished"
+        aria-label="${escHtml(t('latestTurnFinished'))}"
+        title="${escHtml(t('latestTurnFinished'))}"
       >
         ${iconCheck}
       </span>`
@@ -3065,29 +3077,29 @@ function renderSessionStatusIndicator(loading: boolean): string {
       <span
         class="thread-status-indicator session-status-indicator thread-status-indicator--loading"
         role="status"
-        aria-label="Session is working"
-        title="Session is working"
+        aria-label="${escHtml(t('sessionIsWorking'))}"
+        title="${escHtml(t('sessionIsWorking'))}"
       >
         <span class="thread-status-spinner" aria-hidden="true"></span>
       </span>`
 }
 
 function renderThreadItem(
-  t: Thread,
+  thread: Thread,
   activeId: string | null,
   activityIndicator: ThreadActivityIndicator,
 ): string {
-  const isActive = t.threadId === activeId
-  const isMenuOpen = openThreadActionMenuId === t.threadId
-  const hasIconAvatar = hasAgentAvatarIcon(t.agent ?? '')
-  const avatar = renderAgentAvatar(t.agent ?? '', 'thread')
-  const displayTitle = threadTitle(t)
-  const displayAgent = agentDisplayName(t.agent ?? '')
-  const relTime = t.updatedAt ? formatRelativeTime(t.updatedAt) : ''
+  const isActive = thread.threadId === activeId
+  const isMenuOpen = openThreadActionMenuId === thread.threadId
+  const hasIconAvatar = hasAgentAvatarIcon(thread.agent ?? '')
+  const avatar = renderAgentAvatar(thread.agent ?? '', 'thread')
+  const displayTitle = threadTitle(thread)
+  const displayAgent = agentDisplayName(thread.agent ?? '')
+  const relTime = thread.updatedAt ? formatRelativeTime(thread.updatedAt) : ''
 
   return `
     <div class="thread-item ${isActive ? 'thread-item--active' : ''} ${isMenuOpen ? 'thread-item--menu-open' : ''}"
-         data-thread-id="${escHtml(t.threadId)}"
+         data-thread-id="${escHtml(thread.threadId)}"
          role="button"
          tabindex="0"
          aria-label="${escHtml(displayTitle)}">
@@ -3108,9 +3120,9 @@ function renderThreadItem(
       </div>
       <div class="thread-item-actions">
         <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
-                data-thread-id="${escHtml(t.threadId)}"
+                data-thread-id="${escHtml(thread.threadId)}"
                 aria-expanded="${isMenuOpen ? 'true' : 'false'}"
-                aria-label="Agent actions">
+                aria-label="${escHtml(t('agentActions'))}">
           ${iconDotsHorizontal}
         </button>
       </div>
@@ -3121,8 +3133,8 @@ function renderThreadListEmptyState(): string {
   return `
     <div class="thread-list-empty">
       <div class="thread-list-empty__visual" aria-hidden="true">${iconPlus}</div>
-      <div class="thread-list-empty__title">No threads yet</div>
-      <div class="thread-list-empty__desc">Create a working-directory thread to start a local agent session.</div>
+      <div class="thread-list-empty__title">${escHtml(t('noThreadsYet'))}</div>
+      <div class="thread-list-empty__desc">${escHtml(t('noThreadsDesc'))}</div>
     </div>`
 }
 
@@ -3196,8 +3208,8 @@ async function handleRenameThread(threadId: string, nextTitle: string): Promise<
   try {
     updatedThread = await api.updateThread(threadId, { title })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    window.alert(`Failed to rename agent: ${message}`)
+    const message = err instanceof Error ? err.message : t('unknownError')
+    window.alert(t('failedToRenameAgent', { message }))
     return
   }
 
@@ -3217,13 +3229,13 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   if (!thread) return
 
   const label = threadTitle(thread)
-  if (!window.confirm(`Delete agent "${label}"? This will permanently remove its history.`)) return
+  if (!window.confirm(t('deleteAgentConfirm', { label }))) return
 
   try {
     await api.deleteThread(threadId)
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    window.alert(`Failed to delete agent: ${message}`)
+    const message = err instanceof Error ? err.message : t('unknownError')
+    window.alert(t('failedToDeleteAgent', { message }))
     return
   }
 
@@ -3594,7 +3606,7 @@ async function loadHistory(threadId: string): Promise<void> {
     if (!loadedHistoryScopeKeys.has(requestedScopeKey)) {
       const listEl = document.getElementById('message-list')
       if (listEl) {
-        listEl.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">Failed to load history.</div>`
+        listEl.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">${escHtml(t('failedToLoadHistory'))}</div>`
       }
     }
   }
@@ -3614,7 +3626,7 @@ function planStatusClassName(status: string | undefined): string {
 
 function renderPlanInnerHTML(entries: PlanEntry[]): string {
   return `
-    <div class="message-plan__header">Plan</div>
+    <div class="message-plan__header">${escHtml(t('plan'))}</div>
     <ol class="message-plan__list">
       ${entries.map(entry => {
         const status = formatPlanLabel(entry.status)
@@ -3651,7 +3663,7 @@ function toolCallDisplayTitle(toolCall: ToolCall): string {
   if (kind && path) return `${kind} · ${path}`
   if (kind) return kind
   if (title) return title
-  return 'Tool call'
+  return t('toolCall')
 }
 
 function isGenericToolCallTitle(title: string): boolean {
@@ -3700,7 +3712,7 @@ function renderToolCallPreHTML(text: string, collapsible = false): string {
   const preID = nextToolCallPreID()
   const collapsedClass = collapsible ? ' message-tool-call__pre--collapsed' : ''
   const expandBtn = collapsible
-    ? `<button class="message-tool-call__expand-btn" data-target="${preID}" type="button" hidden>Show all</button>`
+    ? `<button class="message-tool-call__expand-btn" data-target="${preID}" type="button" hidden>${escHtml(t('showAll'))}</button>`
     : ''
   return `
     <div class="message-tool-call__pre-wrap">
@@ -3777,8 +3789,8 @@ function renderToolCallContentHTML(item: unknown): string {
     return `
       <div class="message-tool-call__content-item">
         ${heading ? `<div class="message-tool-call__content-label">${escHtml(heading)}</div>` : ''}
-        ${oldText ? `<div class="message-tool-call__diff-block"><div class="message-tool-call__diff-label">Before</div>${renderToolCallPreHTML(oldText, true)}</div>` : ''}
-        ${newText ? `<div class="message-tool-call__diff-block"><div class="message-tool-call__diff-label">After</div>${renderToolCallPreHTML(newText, true)}</div>` : ''}
+        ${oldText ? `<div class="message-tool-call__diff-block"><div class="message-tool-call__diff-label">${escHtml(t('before'))}</div>${renderToolCallPreHTML(oldText, true)}</div>` : ''}
+        ${newText ? `<div class="message-tool-call__diff-block"><div class="message-tool-call__diff-label">${escHtml(t('after'))}</div>${renderToolCallPreHTML(newText, true)}</div>` : ''}
       </div>`
   }
 
@@ -3801,7 +3813,7 @@ function renderToolCallCardHTML(toolCall: ToolCall): string {
   const locationsHTML = toolCall.locations?.length
     ? `
       <div class="message-tool-call__section">
-        <div class="message-tool-call__section-title">Locations</div>
+        <div class="message-tool-call__section-title">${escHtml(t('locations'))}</div>
         <ul class="message-tool-call__location-list">
           ${toolCall.locations.map(renderToolCallLocationHTML).join('')}
         </ul>
@@ -3811,14 +3823,14 @@ function renderToolCallCardHTML(toolCall: ToolCall): string {
     ? ''
     : `
       <div class="message-tool-call__section">
-        <div class="message-tool-call__section-title">Input</div>
+        <div class="message-tool-call__section-title">${escHtml(t('input'))}</div>
         ${renderToolCallJSON(toolCall.rawInput, true)}
       </div>`
   const rawOutputHTML = toolCall.rawOutput === undefined
     ? ''
     : `
       <div class="message-tool-call__section">
-        <div class="message-tool-call__section-title">Output</div>
+        <div class="message-tool-call__section-title">${escHtml(t('output'))}</div>
         ${renderToolCallJSON(toolCall.rawOutput, true)}
       </div>`
 
@@ -3828,7 +3840,7 @@ function renderToolCallCardHTML(toolCall: ToolCall): string {
         <div class="message-tool-call__title" title="${escHtml(title)}">${escHtml(title)}</div>
         ${meta ? `<div class="message-tool-call__meta">${meta}</div>` : ''}
       </div>
-      ${contentHTML ? `<div class="message-tool-call__section"><div class="message-tool-call__section-title">Content</div>${contentHTML}</div>` : ''}
+      ${contentHTML ? `<div class="message-tool-call__section"><div class="message-tool-call__section-title">${escHtml(t('content'))}</div>${contentHTML}</div>` : ''}
       ${locationsHTML}
       ${rawInputHTML}
       ${rawOutputHTML}
@@ -3987,7 +3999,7 @@ function renderUserMessageHTML(content: string): string {
         <img
           class="message-inline-image__img"
           src="${escHtml(image.src)}"
-          alt="User image"
+          alt="${escHtml(t('userImage'))}"
           loading="lazy"
         />
         <figcaption class="message-inline-image__meta">${escHtml(image.mimeType)}</figcaption>
@@ -4039,7 +4051,7 @@ function renderMessageImageContentHTML(item: unknown): string {
   const record = asRecord(item)
   if (!record) return renderToolCallJSON(item, true)
 
-  const title = recordString(record, 'title') || formatToolCallLabel(recordString(record, 'type')) || 'Image'
+  const title = recordString(record, 'title') || formatToolCallLabel(recordString(record, 'type')) || t('image')
   const mimeType = recordString(record, 'mimeType')
   const uri = recordString(record, 'uri') || recordString(record, 'url') || recordString(record, 'href')
   const src = contentImageSource(record)
@@ -4050,14 +4062,14 @@ function renderMessageImageContentHTML(item: unknown): string {
     uri
       ? `
         <div class="message-content-card__section">
-          <div class="message-content-card__label">Source</div>
+          <div class="message-content-card__label">${escHtml(t('source'))}</div>
           <div class="message-content-card__uri">${escHtml(uri)}</div>
         </div>`
       : '',
     !src
       ? `
         <div class="message-content-card__section">
-          <div class="message-content-card__label">Payload</div>
+          <div class="message-content-card__label">${escHtml(t('payload'))}</div>
           ${renderToolCallJSON(item, true)}
         </div>`
       : '',
@@ -4074,7 +4086,7 @@ function renderMessageResourceContentHTML(item: unknown): string {
   const title = recordString(record, 'title')
     || recordString(resource, 'title')
     || formatToolCallLabel(recordString(record, 'type'))
-    || 'Resource'
+    || t('resource')
   const mimeType = recordString(resource, 'mimeType') || recordString(record, 'mimeType')
   const uri = recordString(resource, 'uri') || recordString(record, 'uri')
   const text = recordString(resource, 'text') || recordString(record, 'text')
@@ -4083,7 +4095,7 @@ function renderMessageResourceContentHTML(item: unknown): string {
     uri
       ? `
         <div class="message-content-card__section">
-          <div class="message-content-card__label">URI</div>
+          <div class="message-content-card__label">${escHtml(t('uri'))}</div>
           <div class="message-content-card__uri">${escHtml(uri)}</div>
         </div>`
       : '',
@@ -4093,14 +4105,14 @@ function renderMessageResourceContentHTML(item: unknown): string {
     text
       ? `
         <div class="message-content-card__section">
-          <div class="message-content-card__label">Content</div>
+          <div class="message-content-card__label">${escHtml(t('content'))}</div>
           ${renderToolCallPreHTML(text, true)}
         </div>`
       : '',
     !imageSrc && !text
       ? `
         <div class="message-content-card__section">
-          <div class="message-content-card__label">Payload</div>
+          <div class="message-content-card__label">${escHtml(t('payload'))}</div>
           ${renderToolCallJSON(item, true)}
         </div>`
       : '',
@@ -4121,10 +4133,10 @@ function renderMessageContentBlockHTML(contentBlock: unknown): string {
     return renderMessageResourceContentHTML(contentBlock)
   }
 
-  const title = formatToolCallLabel(recordString(record, 'type')) || 'Content'
+  const title = formatToolCallLabel(recordString(record, 'type')) || t('content')
   return renderMessageContentCardHTML(title, [], `
     <div class="message-content-card__section">
-      <div class="message-content-card__label">Payload</div>
+      <div class="message-content-card__label">${escHtml(t('payload'))}</div>
       ${renderToolCallJSON(contentBlock, true)}
     </div>
   `)
@@ -4144,7 +4156,7 @@ function renderReasoningSectionHTML(
   extraClass = '',
   expanded = false,
   renderMarkdownContent = false,
-  label = 'Thinking',
+  label = t('thinking'),
 ): string {
   if (!hasReasoningText(reasoning)) return ''
   const state = reasoningPanelState(expanded)
@@ -4227,8 +4239,8 @@ function renderMessageSegmentContentHTML(
             class="msg-copy-btn msg-copy-btn--segment"
             data-copy-text="${encodeURIComponent(content)}"
             type="button"
-            title="Copy segment"
-            aria-label="Copy segment"
+            title="${escHtml(t('copySegment'))}"
+            aria-label="${escHtml(t('copySegment'))}"
           >⎘</button>
         ` : ''}
       </div>`
@@ -4262,7 +4274,7 @@ function renderMessageSegmentReasoningHTML(segment: MessageSegment, streaming: b
         isActiveStreamingSegment ? ' message-reasoning--streaming' : '',
         isExpanded,
         !isActiveStreamingSegment,
-        'Thought',
+        isActiveStreamingSegment ? t('thinking') : t('thought'),
       )}
     </div>`
 }
@@ -4326,7 +4338,7 @@ function renderMessageSegmentsHTML(
 
 function renderMessageStatusBubble(msg: Message, hasContent = false): string {
   if (msg.status === 'error') {
-    const bodyText = (msg.errorCode ? `[${msg.errorCode}] ` : '') + (msg.errorMessage ?? 'Unknown error')
+    const bodyText = (msg.errorCode ? `[${msg.errorCode}] ` : '') + (msg.errorMessage ?? t('unknownError'))
     return `<div class="message-segment message-segment--status">
       <div class="message-bubble message-bubble--error">${escHtml(bodyText)}</div>
     </div>`
@@ -4352,7 +4364,7 @@ function renderMessageAttachmentsHTML(
 }
 
 function renderMessageAttachmentHTML(attachment: MessageAttachment): string {
-  const title = attachment.name || 'Attachment'
+  const title = attachment.name || t('attachment')
   const meta = [attachment.mimeType, typeof attachment.size === 'number' ? formatBytes(attachment.size) : '']
     .filter((item): item is string => !!item)
   const downloadUrl = attachment.downloadUrl || attachment.previewUrl || undefined
@@ -4363,13 +4375,13 @@ function renderMessageAttachmentHTML(attachment: MessageAttachment): string {
     downloadUrl
       ? `
         <div class="message-content-card__section">
-          <a class="message-content-card__link" href="${escHtml(downloadUrl)}" target="_blank" rel="noreferrer">Open attachment</a>
+          <a class="message-content-card__link" href="${escHtml(downloadUrl)}" target="_blank" rel="noreferrer">${escHtml(t('openAttachment'))}</a>
         </div>`
       : '',
     attachment.uri
       ? `
         <div class="message-content-card__section">
-          <div class="message-content-card__label">URI</div>
+          <div class="message-content-card__label">${escHtml(t('uri'))}</div>
           <div class="message-content-card__uri">${escHtml(attachment.uri)}</div>
         </div>`
       : '',
@@ -4383,8 +4395,8 @@ function renderMessage(msg: Message): string {
     <button
       class="msg-copy-btn"
       data-copy-text="${escHtml(encodeURIComponent(text))}"
-      title="Copy message"
-      aria-label="Copy message"
+      title="${escHtml(t('copyMessage'))}"
+      aria-label="${escHtml(t('copyMessage'))}"
       type="button"
     >⎘</button>`
 
@@ -4412,7 +4424,7 @@ function renderMessage(msg: Message): string {
   const segmentsHTML = renderMessageSegmentsHTML(msg.id, segments, msg.status, false, null, null, null, msg.timestamp)
   const statusHTML = renderMessageStatusBubble(msg, hasContent)
 
-  const stopTag  = isCancelled ? `<span class="message-stop-reason">Cancelled</span>` : ''
+  const stopTag  = isCancelled ? `<span class="message-stop-reason">${escHtml(t('cancelled'))}</span>` : ''
   const footerMeta = (!hasContent || stopTag)
     ? `
       <div class="message-meta">
@@ -4686,8 +4698,10 @@ function updateMessageList(): void {
 
   if (!msgs.length) {
     listEl.innerHTML = renderEmptyState(
-      'Start the conversation',
-      `Send the first message to begin working with ${agentDisplayName(thread?.agent ?? '') || 'the agent'}.`,
+      t('startConversation'),
+      t('sendFirstMessageToAgent', {
+        agent: agentDisplayName(thread?.agent ?? '') || t('genericAgent'),
+      }),
       'conversation',
     )
     return
@@ -4738,10 +4752,10 @@ function updateInputState(): void {
     sendBtn.disabled = isStreaming ? !canCancelTurn : disableComposerActions || !hasComposerContent
     sendBtn.classList.toggle('btn-send--cancel', isStreaming)
     sendBtn.innerHTML = isStreaming ? iconStop : iconSend
-    sendBtn.setAttribute('aria-label', isStreaming ? 'Cancel turn' : 'Send message')
+    sendBtn.setAttribute('aria-label', isStreaming ? t('cancelTurn') : t('sendMessage'))
     sendBtn.title = isStreaming
-      ? (isCancelling ? 'Cancelling…' : 'Cancel turn')
-      : 'Send message'
+      ? (isCancelling ? t('cancelling') : t('cancelTurn'))
+      : t('sendMessage')
   }
   if (inputEl)  inputEl.disabled  = disableComposerInput
   if (attachmentBtn) attachmentBtn.disabled = disableComposerActions
@@ -4902,7 +4916,7 @@ async function switchThreadGitBranch(threadId: string, branch: string): Promise<
     const message = err instanceof Error ? err.message : String(err)
     setThreadGitState(normalizedThreadID, { switching: false, loading: false, error: message })
     syncThreadGitControl(normalizedThreadID)
-    window.alert(`Failed to switch git branch: ${message}`)
+    window.alert(t('failedToSwitchGitBranch', { message }))
   }
 }
 
@@ -5048,14 +5062,14 @@ function updateSlashCommandMenu(): void {
   if (!loading && !commands.length) {
     slashCommandSelectedIndex = 0
     menuEl.hidden = false
-    menuEl.innerHTML = `<div class="slash-command-empty">No matching slash commands.</div>`
+    menuEl.innerHTML = `<div class="slash-command-empty">${escHtml(t('noMatchingSlashCommands'))}</div>`
     return
   }
 
   slashCommandSelectedIndex = Math.max(0, Math.min(slashCommandSelectedIndex, commands.length - 1))
   menuEl.hidden = false
   menuEl.innerHTML = `
-    <div class="slash-command-header">Slash Commands</div>
+    <div class="slash-command-header">${escHtml(t('slashCommands'))}</div>
     <div class="slash-command-list">
       ${commands.map((command, index) => renderSlashCommandMenuItem(command, index === slashCommandSelectedIndex)).join('')}
     </div>`
@@ -5111,33 +5125,30 @@ function renderChatEmpty(): string {
   return `
     <div class="workspace-landing">
       <div class="workspace-landing__panel">
-        <div class="workspace-landing__eyebrow">Ngent Local Workbench</div>
+        <div class="workspace-landing__eyebrow">${escHtml(t('workspaceEyebrow'))}</div>
         <div class="workspace-landing__hero">
           <div class="workspace-landing__mark" aria-hidden="true">${iconBrandMark}</div>
           <div class="workspace-landing__copy">
-            <h2 class="workspace-landing__title">Run local agents against real working directories.</h2>
-            <p class="workspace-landing__desc">
-              Create a thread, choose an agent, and keep streaming output, tool activity, session history,
-              and permission review inside one desktop-style workspace.
-            </p>
+            <h2 class="workspace-landing__title">${escHtml(t('workspaceTitle'))}</h2>
+            <p class="workspace-landing__desc">${escHtml(t('workspaceDesc'))}</p>
           </div>
         </div>
         <div class="workspace-landing__facts">
           <div class="workspace-landing__fact">
-            <span class="workspace-landing__fact-label">Bind</span>
-            <strong>Loopback-first by default</strong>
+            <span class="workspace-landing__fact-label">${escHtml(t('bind'))}</span>
+            <strong>${escHtml(t('bindValue'))}</strong>
           </div>
           <div class="workspace-landing__fact">
-            <span class="workspace-landing__fact-label">Transport</span>
-            <strong>HTTP + POST SSE streaming</strong>
+            <span class="workspace-landing__fact-label">${escHtml(t('transport'))}</span>
+            <strong>${escHtml(t('transportValue'))}</strong>
           </div>
           <div class="workspace-landing__fact">
-            <span class="workspace-landing__fact-label">Focus</span>
-            <strong>Working directory first</strong>
+            <span class="workspace-landing__fact-label">${escHtml(t('focus'))}</span>
+            <strong>${escHtml(t('focusValue'))}</strong>
           </div>
         </div>
         <button class="btn btn-primary workspace-landing__cta" id="new-thread-empty-btn">
-          ${iconPlus} New Agent
+          ${iconPlus} ${escHtml(t('newAgent'))}
         </button>
       </div>
     </div>`
@@ -5182,9 +5193,9 @@ function renderSessionInfoPopover(thread: Thread): string {
   if (!sessionID) return ''
   const createdAt = thread.createdAt.trim()
   const fields = [
-    renderSessionInfoField('Session ID', sessionID, 'Copy session ID'),
-    createdAt ? renderSessionInfoField('Created', formatTimestamp(createdAt), 'Copy created time') : '',
-    renderSessionInfoField('Working Directory', thread.cwd, 'Copy working directory', true),
+    renderSessionInfoField(t('sessionId'), sessionID, t('copySessionId')),
+    createdAt ? renderSessionInfoField(t('created'), formatTimestamp(createdAt), t('copyCreatedTime')) : '',
+    renderSessionInfoField(t('workingDirectory'), thread.cwd, t('copyWorkingDirectory'), true),
   ].filter(Boolean).join('')
 
   return `
@@ -5193,15 +5204,15 @@ function renderSessionInfoPopover(thread: Thread): string {
         class="btn btn-icon session-info-trigger"
         id="session-info-trigger"
         type="button"
-        aria-label="Session info"
+        aria-label="${escHtml(t('sessionInfo'))}"
         aria-expanded="false"
         aria-controls="session-info-panel"
-        title="Session info"
+        title="${escHtml(t('sessionInfo'))}"
       >
         ${iconInfo}
       </button>
-      <div class="session-info-popover" id="session-info-panel" role="dialog" aria-label="Session Info" hidden>
-        <div class="session-info-heading">Session Info</div>
+      <div class="session-info-popover" id="session-info-panel" role="dialog" aria-label="${escHtml(t('sessionInfoTitle'))}" hidden>
+        <div class="session-info-heading">${escHtml(t('sessionInfoTitle'))}</div>
         ${fields}
       </div>
     </div>`
@@ -5236,31 +5247,31 @@ function truncateSessionTitle(title: string): string {
   return title.slice(0, MAX_SESSION_TITLE_LEN) + '…'
 }
 
-function getCurrentSessionTitle(t: Thread): string {
-  const sessionID = selectedThreadSessionID(t)
+function getCurrentSessionTitle(thread: Thread): string {
+  const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) {
-    return 'New Session'
+    return t('newSession')
   }
-  const state = sessionPanelState(t.threadId)
+  const state = sessionPanelState(thread.threadId)
   const session = state.sessions.find(s => s.sessionId === sessionID)
   const title = session?.title?.trim()
   if (title) {
     return truncateSessionTitle(title)
   }
   // Check for runtime title override
-  const overrides = sessionTitleOverridesByThread.get(t.threadId)
+  const overrides = sessionTitleOverridesByThread.get(thread.threadId)
   const overrideTitle = overrides?.get(sessionID)?.trim()
   if (overrideTitle) {
     return truncateSessionTitle(overrideTitle)
   }
-  return 'New Session'
+  return t('newSession')
 }
 
 function renderThreadGitControl(threadId: string): string {
   const state = threadGitState(threadId)
   if (state.available !== true) return ''
 
-  const currentLabel = state.currentRef.trim() || state.currentBranch.trim() || 'Detached HEAD'
+  const currentLabel = state.currentRef.trim() || state.currentBranch.trim() || t('detachedHead')
   const branchItems = state.branches.length
     ? state.branches.map(branch => {
       const isCurrent = !!branch.current || (!!state.currentBranch && branch.name === state.currentBranch)
@@ -5274,12 +5285,12 @@ function renderThreadGitControl(threadId: string): string {
         >
           <span class="git-branch-option-copy">
             <span class="git-branch-option-name" title="${escHtml(branch.name)}">${escHtml(branch.name)}</span>
-            <span class="git-branch-option-hint">${isCurrent ? 'Current branch' : 'Checkout branch'}</span>
+            <span class="git-branch-option-hint">${escHtml(isCurrent ? t('currentBranch') : t('checkoutBranch'))}</span>
           </span>
           ${isCurrent ? `<span class="git-branch-option-indicator" aria-hidden="true">${iconCheck}</span>` : ''}
         </button>`
     }).join('')
-    : `<div class="git-branch-empty">No local branches</div>`
+    : `<div class="git-branch-empty">${escHtml(t('noLocalBranches'))}</div>`
 
   return `
     <div
@@ -5301,7 +5312,7 @@ function renderThreadGitControl(threadId: string): string {
       </button>
       <div class="git-branch-menu" id="git-branch-menu" role="listbox" hidden>
         <div class="git-branch-menu-head">
-          <span class="git-branch-menu-title">Local branches</span>
+          <span class="git-branch-menu-title">${escHtml(t('localBranches'))}</span>
         </div>
         <div class="git-branch-menu-list">${branchItems}</div>
       </div>
@@ -5335,33 +5346,33 @@ function renderSessionUsageControl(thread: Thread): string {
     </div>`
 }
 
-function renderChatThread(t: Thread): string {
-  const sessionTitleLabel = getCurrentSessionTitle(t)
-  const scopeKey = threadChatScopeKey(t)
+function renderChatThread(thread: Thread): string {
+  const sessionTitleLabel = getCurrentSessionTitle(thread)
+  const scopeKey = threadChatScopeKey(thread)
   const draft = composerDraft(scopeKey)
-  const attachmentCount = threadComposerAttachments(t.threadId).length
-  const selectedModelID = fallbackThreadModelID(t)
-  const catalogKey = normalizeAgentConfigCatalogKey(t.agent ?? '', selectedModelID)
-  const hasConfigCache = threadConfigCache.has(t.threadId) || hasAgentConfigCatalog(t.agent ?? '', selectedModelID)
+  const attachmentCount = threadComposerAttachments(thread.threadId).length
+  const selectedModelID = fallbackThreadModelID(thread)
+  const catalogKey = normalizeAgentConfigCatalogKey(thread.agent ?? '', selectedModelID)
+  const hasConfigCache = threadConfigCache.has(thread.threadId) || hasAgentConfigCatalog(thread.agent ?? '', selectedModelID)
   const loadingConfig = !hasConfigCache || (!!catalogKey && agentConfigCatalogInFlight.has(catalogKey))
-  const configOptions = getThreadConfigOptionsForRender(t)
+  const configOptions = getThreadConfigOptionsForRender(thread)
   const modelOption = findModelOption(configOptions)
   const reasoningOption = findReasoningOption(configOptions)
   const modelPickerData = resolveConfigPickerData(
     modelOption,
-    fallbackThreadConfigValue(t, 'model'),
+    fallbackThreadConfigValue(thread, 'model'),
     loadingConfig,
-    modelPickerLabels,
+    modelPickerLabels(),
   )
   const reasoningPickerData = resolveConfigPickerData(
     reasoningOption,
-    reasoningOption ? fallbackThreadConfigValue(t, reasoningOption.id) : '',
+    reasoningOption ? fallbackThreadConfigValue(thread, reasoningOption.id) : '',
     loadingConfig,
-    reasoningPickerLabels,
+    reasoningPickerLabels(),
   )
   const showModelSwitch = modelPickerData.state === 'ready' && shouldShowModelSwitch(modelOption)
   const showReasoningSwitch = reasoningPickerData.state === 'ready' && shouldShowReasoningSwitch(reasoningOption)
-  const isSwitching = threadConfigSwitching.has(t.threadId)
+  const isSwitching = threadConfigSwitching.has(thread.threadId)
 
   return `
     <div class="chat-session-toggle-zone" id="chat-session-toggle-zone">
@@ -5376,12 +5387,12 @@ function renderChatThread(t: Thread): string {
 
     <div class="chat-header">
       <div class="chat-header-left">
-        <button class="btn btn-icon mobile-menu-btn" aria-label="Open menu">${iconMenu}</button>
+        <button class="btn btn-icon mobile-menu-btn" aria-label="${escHtml(t('openMenu'))}">${iconMenu}</button>
         <div class="chat-header-main">
           <div class="chat-header-kicker-row">
-            <span class="chat-header-kicker">Session</span>
+            <span class="chat-header-kicker">${escHtml(t('session'))}</span>
             <span class="chat-header-divider" aria-hidden="true">/</span>
-            <span class="chat-header-context">${escHtml(agentDisplayName(t.agent ?? '') || 'agent')}</span>
+            <span class="chat-header-context">${escHtml(agentDisplayName(thread.agent ?? '') || t('genericAgent'))}</span>
           </div>
           <div class="chat-header-title-row">
             <h2 class="chat-title" title="${escHtml(sessionTitleLabel)}">${escHtml(sessionTitleLabel)}</h2>
@@ -5389,26 +5400,26 @@ function renderChatThread(t: Thread): string {
         </div>
       </div>
       <div class="chat-header-right">
-        ${renderSessionInfoPopover(t)}
+        ${renderSessionInfoPopover(thread)}
       </div>
     </div>
 
     <div class="message-list-wrap">
       <div class="message-list" id="message-list"></div>
       <button class="scroll-bottom-btn" id="scroll-bottom-btn"
-              aria-label="Scroll to bottom" style="display:none">↓</button>
+              aria-label="${escHtml(t('scrollToBottom'))}" style="display:none">↓</button>
     </div>
 
     <div class="input-area">
       <div class="slash-command-menu" id="slash-command-menu" hidden></div>
       <div class="input-wrapper">
-        <div class="composer-attachments" id="composer-attachments">${renderComposerAttachmentsHTML(t.threadId)}</div>
+        <div class="composer-attachments" id="composer-attachments">${renderComposerAttachmentsHTML(thread.threadId)}</div>
         <textarea
           id="message-input"
           class="message-input"
-          placeholder="Describe the change, inspect the codebase, or continue the session"
+          placeholder="${escHtml(t('messageInputPlaceholder'))}"
           rows="1"
-          aria-label="Message input"
+          aria-label="${escHtml(t('messageInput'))}"
         >${escHtml(draft)}</textarea>
         <div class="input-compose-bar">
           <div class="input-compose-left">
@@ -5416,28 +5427,28 @@ function renderChatThread(t: Thread): string {
             <button
               class="btn btn-secondary btn-icon composer-attachment-btn"
               id="attachment-btn"
-              aria-label="Add attachments"
-              title="Add attachments"
+              aria-label="${escHtml(t('addAttachments'))}"
+              title="${escHtml(t('addAttachments'))}"
               type="button"
             >
               ${iconAttachment}
               ${attachmentCount ? `<span class="composer-attachment-btn__count">${attachmentCount}</span>` : ''}
             </button>
             <div class="thread-config-switches">
-              ${renderComposerConfigSwitch('model', 'Model', modelPickerData, modelPickerLabels, isSwitching, showModelSwitch)}
-              ${renderComposerConfigSwitch('reasoning', 'Reasoning', reasoningPickerData, reasoningPickerLabels, isSwitching, showReasoningSwitch)}
+              ${renderComposerConfigSwitch('model', t('model'), modelPickerData, modelPickerLabels(), isSwitching, showModelSwitch)}
+              ${renderComposerConfigSwitch('reasoning', t('reasoning'), reasoningPickerData, reasoningPickerLabels(), isSwitching, showReasoningSwitch)}
             </div>
           </div>
-          <button class="btn btn-primary btn-send" id="send-btn" aria-label="Send message" title="Send message">
+          <button class="btn btn-primary btn-send" id="send-btn" aria-label="${escHtml(t('sendMessage'))}" title="${escHtml(t('sendMessage'))}">
             ${iconSend}
           </button>
         </div>
       </div>
-      <div class="input-meta-row">
-        <div class="input-hint">Send with <kbd>⌘ Enter</kbd> · Slash commands start with <kbd>/</kbd></div>
+        <div class="input-meta-row">
+        <div class="input-hint">${t('inputHintHTML')}</div>
         <div class="input-meta-actions">
-          <div class="input-meta-slot" id="thread-git-slot">${renderThreadGitControl(t.threadId)}</div>
-          <div class="input-meta-slot" id="session-usage-slot">${renderSessionUsageControl(t)}</div>
+          <div class="input-meta-slot" id="thread-git-slot">${renderThreadGitControl(thread.threadId)}</div>
+          <div class="input-meta-slot" id="session-usage-slot">${renderSessionUsageControl(thread)}</div>
         </div>
       </div>
     </div>`
@@ -5449,7 +5460,7 @@ function renderComposerAttachmentsHTML(threadId: string): string {
 
   return attachments.map(attachment => {
     const isImage = !!attachment.previewUrl
-    const meta = [attachment.mimeType || 'File', formatBytes(attachment.size)].filter(Boolean)
+    const meta = [attachment.mimeType || t('file'), formatBytes(attachment.size)].filter(Boolean)
       .map(item => `<span class="composer-attachment__meta-item">${escHtml(item)}</span>`)
       .join('')
 
@@ -5465,8 +5476,8 @@ function renderComposerAttachmentsHTML(threadId: string): string {
         <button
           class="composer-attachment__remove"
           data-remove-attachment="${escHtml(attachment.id)}"
-          aria-label="Remove ${escHtml(attachment.name)}"
-          title="Remove attachment"
+          aria-label="${escHtml(t('removeAttachmentName', { name: attachment.name }))}"
+          title="${escHtml(t('removeAttachment'))}"
           type="button"
         >×</button>
       </div>`
@@ -5584,18 +5595,20 @@ function bindThreadConfigSwitches(thread: Thread): void {
     const options = getThreadConfigOptionsForRender(latest)
     const modelOption = findModelOption(options)
     const reasoningOption = findReasoningOption(options)
+    const modelLabels = modelPickerLabels()
+    const reasoningLabels = reasoningPickerLabels()
     const pickerDataByKey = {
-      model: resolveConfigPickerData(modelOption, fallbackThreadConfigValue(latest, 'model'), loading, modelPickerLabels),
+      model: resolveConfigPickerData(modelOption, fallbackThreadConfigValue(latest, 'model'), loading, modelLabels),
       reasoning: resolveConfigPickerData(
         reasoningOption,
         reasoningOption ? fallbackThreadConfigValue(latest, reasoningOption.id) : '',
         loading,
-        reasoningPickerLabels,
+        reasoningLabels,
       ),
     } as const
     const labelsByKey = {
-      model: modelPickerLabels,
-      reasoning: reasoningPickerLabels,
+      model: modelLabels,
+      reasoning: reasoningLabels,
     } as const
     const visibleByKey = {
       model: pickerDataByKey.model.state === 'ready' && shouldShowModelSwitch(modelOption),
@@ -5681,8 +5694,8 @@ function bindThreadConfigSwitches(thread: Thread): void {
     } catch (err) {
       renderConfigUI()
       const message = err instanceof Error ? err.message : String(err)
-      const targetLabel = configId.toLowerCase() === 'model' ? 'model' : 'config option'
-      window.alert(`Failed to update ${targetLabel}: ${message}`)
+      const targetLabel = configId.toLowerCase() === 'model' ? t('model') : t('configOption')
+      window.alert(t('failedToUpdateTarget', { target: targetLabel, message }))
     } finally {
       setSwitching(false)
       renderConfigUI()
@@ -5701,7 +5714,7 @@ function bindThreadConfigSwitches(thread: Thread): void {
         if (store.get().activeThreadId !== thread.threadId) return
         renderConfigUI()
         const message = err instanceof Error ? err.message : String(err)
-        window.alert(`Failed to load agent config options: ${message}`)
+        window.alert(t('failedToLoadAgentConfigOptions', { message }))
       })
   }
 
@@ -5977,7 +5990,7 @@ function addComposerAttachments(threadId: string, files: File[]): void {
     nextAttachments.push({
       id: generateUUID(),
       file,
-      name: file.name || 'attachment',
+      name: file.name || t('attachment'),
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
       previewUrl: attachmentPreviewURL(file),
@@ -6405,7 +6418,7 @@ async function handleSend(): Promise<void> {
         content:      partialContent,
         timestamp:    now,
         status:       'error',
-        errorMessage: 'Connection lost',
+        errorMessage: t('connectionLost'),
         segments:     finalSegments,
         planEntries:  finalPlanEntries,
         toolCalls:    finalToolCalls,
@@ -6462,14 +6475,14 @@ function renderShell(): void {
               <div class="sidebar-brand-mark" aria-hidden="true">${iconBrandMark}</div>
               <div class="sidebar-brand-copy">
                 <div class="sidebar-brand-wordmark">Ngent</div>
-                <div class="sidebar-brand-subtitle">Local Agent Workbench</div>
+                <div class="sidebar-brand-subtitle">${escHtml(t('localAgentWorkbench'))}</div>
               </div>
             </div>
           </div>
 
           <div class="sidebar-section">
             <div class="sidebar-section-head">
-              <span class="sidebar-section-label">Threads</span>
+              <span class="sidebar-section-label">${escHtml(t('threads'))}</span>
               <span class="sidebar-section-meta" id="thread-count">${threads.length}</span>
             </div>
 
@@ -6479,16 +6492,16 @@ function renderShell(): void {
           </div>
 
           <div class="sidebar-primary-action">
-            <button class="btn btn-primary sidebar-new-btn" id="new-thread-btn" title="New agent" aria-label="New agent">
+            <button class="btn btn-primary sidebar-new-btn" id="new-thread-btn" title="${escHtml(t('newAgent'))}" aria-label="${escHtml(t('newAgent'))}">
               ${iconPlus}
-              <span class="btn-label">New Agent</span>
+              <span class="btn-label">${escHtml(t('newAgent'))}</span>
             </button>
           </div>
 
           <div class="sidebar-footer">
             <button class="btn btn-ghost sidebar-settings-btn" id="settings-btn">
               ${iconSettings}
-              <span class="btn-label">Settings</span>
+              <span class="btn-label">${escHtml(t('settings'))}</span>
             </button>
           </div>
 
@@ -6510,6 +6523,13 @@ function renderShell(): void {
   document.getElementById('new-thread-empty-btn')?.addEventListener('click', openNewThread)
 
   syncSidebarChrome()
+}
+
+function rerenderAppShell(): void {
+  renderShell()
+  updateThreadList()
+  updateSessionPanel()
+  updateChatArea()
 }
 
 // ── Global keyboard shortcuts ─────────────────────────────────────────────
@@ -6602,13 +6622,23 @@ async function init(): Promise<void> {
   })
 
   store.subscribe(() => {
-    const { activeThreadId, threads } = store.get()
+    const { activeThreadId, threads, language } = store.get()
     const activeThread = activeThreadId ? threads.find(thread => thread.threadId === activeThreadId) ?? null : null
+    const languageChanged = language !== lastRenderLanguage
     const threadChanged = activeThreadId !== lastRenderThreadId
     const chatScopeKey = threadChatScopeKey(activeThread)
     const chatScopeChanged = chatScopeKey !== lastRenderChatScopeKey
     const chatScopeStreamState = getScopeStreamState(chatScopeKey)
     const shouldRefreshForScopeChange = chatScopeChanged && (!chatScopeStreamState || !hasMountedActiveStream(chatScopeKey))
+
+    if (languageChanged) {
+      setLanguage(language)
+      lastRenderLanguage = language
+      lastRenderThreadId = activeThreadId
+      lastRenderChatScopeKey = chatScopeKey
+      rerenderAppShell()
+      return
+    }
 
     updateThreadList()
     updateSessionPanel()
@@ -6642,9 +6672,7 @@ async function init(): Promise<void> {
   } catch {
     const el = document.getElementById('thread-list')
     if (el) {
-      el.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">
-        Failed to load agents.<br>Check the server connection in Settings.
-      </div>`
+      el.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">${t('failedToLoadAgentsCheckSettings')}</div>`
     }
   }
 }

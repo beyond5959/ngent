@@ -1,3 +1,5 @@
+import { getLanguage } from './i18n.ts'
+
 // ── UUID ───────────────────────────────────────────────────────────────────
 
 export function generateUUID(): string {
@@ -48,6 +50,14 @@ export function formatRelativeTime(iso: string): string {
   if (isNaN(d.getTime())) return ''
 
   const diffMs = Date.now() - d.getTime()
+  const language = getLanguage()
+  if (language === 'zh-CN') {
+    if (diffMs < 60_000) return '刚刚'
+    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}分钟前`
+    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}小时前`
+    return `${Math.floor(diffMs / 86_400_000)}天前`
+  }
+
   if (diffMs < 60_000) return 'just now'
   if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m`
   if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h`

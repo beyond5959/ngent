@@ -4,6 +4,8 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/beyond5959/ngent)](https://go.dev/)
 [![License](https://img.shields.io/github/license/beyond5959/ngent)](LICENSE)
 
+[简体中文](README.zh.md)
+
 > **Web Service Wrapper for ACP-compatible Agents**
 >
 > Ngent wraps command-line agents that speak the [Agent Client Protocol (ACP)](https://github.com/beyond5959/acp-adapter) into a web service, making them accessible via HTTP API and Web UI.

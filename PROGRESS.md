@@ -11,7 +11,32 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-03-30)
+## Latest Update (2026-04-01)
+
+- `Post-M8` active-turn viewer disconnect decoupling and resumable shared live SSE completed:
+  - server-side turn execution is no longer tied to the lifetime of the original `POST /v1/threads/{threadId}/turns` response, so browser refreshes and other viewer disconnects no longer cancel a healthy in-flight turn unless the user explicitly requests cancel.
+  - added `GET /v1/turns/{turnId}/events?after=<seq>` so a refreshed browser or a second browser can replay persisted turn events and then tail the same live turn stream from the last seen per-turn sequence.
+  - permission decisions now emit persisted/live `permission_resolved` turn events, so one browser approving a request updates the other browsers watching the same active turn instead of leaving stale pending cards behind.
+  - restored turn-event persistence to true append-only-on-write semantics, which keeps per-turn `seq` ordering stable for safe live resume while leaving any delta coalescing to read-time history serialization only.
+  - thread list/get responses now expose `hasActiveSession`, so a newly opened browser can immediately see which agent/thread currently owns a live session before opening that conversation.
+  - the embedded Web UI now rehydrates running turns from persisted events on history load, restores the active session/live bubble/pending permissions after refresh, consumes `permission_resolved`, fixes streaming-bubble dedupe during running-turn hydration, and reconnects transport-level viewer drops without converting them into user-visible turn cancellation.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-04-01)
+
+- `Post-M8` Web UI Simplified Chinese localization and Settings language switch completed:
+  - added a browser-local persisted `language` preference to the embedded Vite + TypeScript SPA, alongside the existing theme/auth/server settings.
+  - first load now defaults to the closest supported browser locale:
+    - `zh-*` browsers default to `zh-CN`.
+    - all other locales default to `en`.
+  - moved language switching into the Settings drawer and wired root-shell re-rendering so changing language updates the sidebar, session rail, composer, empty states, permission cards, markdown controls, and other primary UI chrome immediately.
+  - localized client-owned Web UI strings and relative-time labels for English + Simplified Chinese while keeping provider/server payload text as-is.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+## Previous Update (2026-03-30)
 
 - `Post-M8` ACP session-usage persistence and Web UI context-pressure indicator completed:
   - added shared ACP session-usage handling for both `session/update {sessionUpdate:"usage_update"}` and cumulative prompt-response `usage` payloads, including embedded Codex/Claude flows and shared ACP CLI drivers.

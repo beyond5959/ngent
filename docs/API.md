@@ -140,6 +140,7 @@ All errors use:
 - Headers: `X-Client-ID` (required), optional bearer auth if enabled.
 - Behavior:
   - returns every persisted thread on the current ngent instance, not just threads created by the current `X-Client-ID`.
+  - each thread payload includes `hasActiveSession`, which is true when ngent currently has at least one active session-scoped turn running on that thread.
 - Response `200`:
 
 ```json
@@ -152,6 +153,7 @@ All errors use:
       "title": "optional",
       "agentOptions": {},
       "summary": "",
+      "hasActiveSession": false,
       "createdAt": "2026-02-28T00:00:00Z",
       "updatedAt": "2026-02-28T00:00:00Z"
     }
@@ -174,6 +176,7 @@ All errors use:
     "title": "optional",
     "agentOptions": {},
     "summary": "",
+    "hasActiveSession": false,
     "createdAt": "2026-02-28T00:00:00Z",
     "updatedAt": "2026-02-28T00:00:00Z"
   }
@@ -300,20 +303,37 @@ All errors use:
   - same `(thread, sessionId)` scope allows only one active turn at a time.
   - if another turn is active on that same scope, return `409 CONFLICT`.
   - different sessions on the same thread may run concurrently after switching `agentOptions.sessionId`.
+  - disconnecting this specific viewer does not cancel a healthy active turn by itself.
   - if provider requests runtime permission, server emits `permission_required` and pauses turn until decision/timeout.
 
 - SSE event types:
-  - `turn_started`: `{"turnId":"..."}`
-  - `message_delta`: `{"turnId":"...","delta":"..."}`
-  - `plan_update`: `{"turnId":"...","entries":[{"content":"...","status":"pending|in_progress|completed","priority":"low|medium|high"}]}`
-  - `permission_required`: `{"turnId":"...","permissionId":"...","approval":"command|file|network|mcp","command":"...","requestId":"...","options":[{"optionId":"...","name":"...","kind":"allow_once|allow_always|reject_once|reject_always|..."}]}`
-  - `turn_completed`: `{"turnId":"...","stopReason":"end_turn|cancelled|error"}`
-  - `error`: `{"turnId":"...","code":"...","message":"..."}`
+  - all replayable event payloads include a monotonic per-turn `seq`.
+  - `turn_started`: `{"turnId":"...","seq":1}`
+  - `message_delta`: `{"turnId":"...","seq":2,"delta":"..."}`
+  - `plan_update`: `{"turnId":"...","seq":3,"entries":[{"content":"...","status":"pending|in_progress|completed","priority":"low|medium|high"}]}`
+  - `permission_required`: `{"turnId":"...","seq":4,"permissionId":"...","approval":"command|file|network|mcp","command":"...","requestId":"...","options":[{"optionId":"...","name":"...","kind":"allow_once|allow_always|reject_once|reject_always|..."}]}`
+  - `permission_resolved`: `{"turnId":"...","seq":5,"permissionId":"...","outcome":"approved|declined|cancelled","optionId":"...","optionName":"..."}` (`optionId` / `optionName` are present when the decision selected one advertised option)
+  - `turn_completed`: `{"turnId":"...","seq":6,"stopReason":"end_turn|cancelled|error"}`
+  - `error`: `{"turnId":"...","seq":6,"code":"...","message":"..."}`
   - for ACP `sessionUpdate == "plan"`, the server emits `plan_update` and treats each payload as a full replacement of the current plan list.
 
 - Permission fail-closed contract:
-  - permission request timeout or disconnected stream defaults to `declined`.
+  - permission request timeout or missing/invalid decision defaults to `declined`.
+  - disconnecting one viewer does not auto-decline by itself; another viewer may still reconnect and resolve the pending permission before timeout.
   - fake ACP flow uses terminal `stopReason="cancelled"` for `declined`/`cancelled`.
+
+6.1 `GET /v1/turns/{turnId}/events`
+- Headers: `X-Client-ID` (required), optional bearer auth if enabled.
+- Query:
+  - `after=<seq>` (optional integer, default `0`)
+- Behavior:
+  - response is SSE (`text/event-stream`).
+  - replays persisted events for the turn with `seq > after`, then tails newly published live events for the same turn.
+  - multiple clients may attach to the same active turn concurrently.
+  - disconnecting this stream does not cancel the underlying turn.
+  - stream closes naturally after a terminal event (`turn_completed` or `error`) or when the client disconnects.
+- Event payloads:
+  - same shapes as the `POST /v1/threads/{threadId}/turns` SSE event types above, including per-turn `seq`.
 
 7. `POST /v1/turns/{turnId}/cancel`
 - Headers: `X-Client-ID` (required), optional bearer auth if enabled.

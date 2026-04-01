@@ -1,4 +1,5 @@
 import { api } from '../api.ts'
+import { t } from '../i18n.ts'
 import type { PermissionOption } from '../types.ts'
 import { escHtml } from '../utils.ts'
 import type { PermissionRequiredPayload } from '../sse.ts'
@@ -9,6 +10,7 @@ const TICK_MS = 1_000
 
 type ResolveOutcome = 'approved' | 'declined' | 'cancelled'
 type ResolveState = ResolveOutcome | 'selected' | 'timeout'
+export type PermissionCardResolvedState = ResolveState
 
 interface PermissionAction {
   label: string
@@ -75,19 +77,19 @@ function buildHtml(
         <div class="permission-card-header">
           <div class="permission-card-header-top">
             <span class="permission-badge permission-badge--${escHtml(approval)}">${escHtml(approval)}</span>
-            <span class="permission-card-kicker">Review request</span>
+            <span class="permission-card-kicker">${escHtml(t('reviewRequest'))}</span>
           </div>
-          <span class="permission-card-title">Permission required</span>
+          <span class="permission-card-title">${escHtml(t('permissionRequired'))}</span>
         </div>
 
         <div class="permission-card-body">
-          <div class="permission-card-label">Requested command</div>
+          <div class="permission-card-label">${escHtml(t('requestedCommand'))}</div>
           <code class="permission-command">${escHtml(command)}</code>
         </div>
 
         <div class="permission-card-footer">
           <div class="permission-card-timer">
-            <span class="permission-card-label">Decision window</span>
+            <span class="permission-card-label">${escHtml(t('decisionWindow'))}</span>
             <span class="permission-countdown" id="perm-cd-${pid}">${formatRemaining(timeoutMs)}</span>
           </div>
           <div class="permission-actions" id="perm-actions-${pid}">
@@ -170,7 +172,7 @@ function bindCard(
 
 function buttonDecision(button: HTMLButtonElement): ResolveDecision {
   return {
-    label: button.dataset.label?.trim() || button.textContent?.trim() || 'Selected',
+    label: button.dataset.label?.trim() || button.textContent?.trim() || t('selected'),
     optionId: button.dataset.optionId?.trim() || undefined,
     outcome: parseResolveOutcome(button.dataset.outcome),
   }
@@ -234,8 +236,8 @@ function permissionActions(event: PermissionRequiredPayload): PermissionAction[]
   if (agentActions.length > 0) return agentActions
 
   return [
-    { label: 'Allow', outcome: 'approved', tone: 'success' },
-    { label: 'Deny', outcome: 'declined', tone: 'danger' },
+    { label: t('allow'), outcome: 'approved', tone: 'success' },
+    { label: t('deny'), outcome: 'declined', tone: 'danger' },
   ]
 }
 
@@ -262,7 +264,7 @@ function permissionOptionLabel(option: PermissionOption): string {
   const optionId = option.optionId?.trim()
   if (optionId) return humanizePermissionToken(optionId)
 
-  return 'Select'
+  return t('select')
 }
 
 function permissionOutcomeForKind(rawKind: string | undefined): ResolveOutcome | undefined {
@@ -291,7 +293,7 @@ function humanizePermissionToken(token: string): string {
     .trim()
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
-  if (!normalized) return 'Select'
+  if (!normalized) return t('select')
   return normalized.replace(/\b\w/g, char => char.toUpperCase())
 }
 
@@ -321,18 +323,25 @@ function showResolved(
   onResolved?.(resolved.state)
 }
 
+export function resolveMountedPermissionCard(
+  pid: string,
+  resolved: { state: PermissionCardResolvedState; label?: string },
+): void {
+  showResolved(pid, resolved)
+}
+
 function resolvedLabel(resolved: ResolvedPermission): string {
   switch (resolved.state) {
     case 'approved':
-      return `✓ ${resolved.label ?? 'Approved'}`
+      return `✓ ${resolved.label ?? t('approved')}`
     case 'declined':
-      return `✗ ${resolved.label ?? 'Denied'}`
+      return `✗ ${resolved.label ?? t('denied')}`
     case 'cancelled':
-      return `✕ ${resolved.label ?? 'Cancelled'}`
+      return `✕ ${resolved.label ?? t('cancelled')}`
     case 'selected':
-      return resolved.label ? `Selected: ${resolved.label}` : 'Selected'
+      return resolved.label ? t('selectedWithLabel', { label: resolved.label }) : t('selected')
     case 'timeout':
     default:
-      return '⏱ Timed out (auto-denied)'
+      return `⏱ ${t('timedOutAutoDenied')}`
   }
 }

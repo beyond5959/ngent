@@ -15,21 +15,23 @@ Build a local-first Ngent Server that:
 
 Modules:
 
-- `internal/httpapi`: routing, request validation, response/error encoding.
+- `internal/httpapi`: routing, request validation, response/error encoding, and per-turn live event replay/fanout for resumed viewers.
 - `internal/runtime`: thread controller, turn state machine, cancellation coordination.
 - `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
   - the shared agent callback surface also carries ACP session-usage snapshots so HTTP/storage/Web UI code can persist and render them without provider-specific UI wiring.
   - per-turn provider resolution selects implementation by thread metadata (agent id + cwd).
   - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, and `cursor`; provider-specific hooks own command startup, request parameter shaping, permission mapping, auth/model quirks, and cancel behavior.
 - `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
-- `internal/sse`: event formatting, stream fanout, resume helpers.
+- `internal/sse`: event formatting and SSE writer helpers shared by both the initial turn stream and per-turn replay/tail streams.
 - `internal/storage`: SQLite repository and migration management.
 - `internal/gitutil`: host-side git capability checks, repository inspection, and local-branch checkout helpers for one validated thread `cwd`.
 - `internal/observability`: human-readable stderr logging, access-log formatting, ANSI-color helpers, and redaction helpers.
 - `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; Web UI visual redesigns must remain presentation-only and must not change API/runtime behavior.
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
+  - on history load, the Web UI can hydrate a still-running turn from persisted turn events, restore its live bubble/pending permissions, and then reattach to the per-turn SSE stream so browser refreshes do not cancel or visually lose the active response.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
+  - the Web UI also owns a browser-local `language` preference (`en` or `zh-CN`); on first load it defaults from browser locale (`zh-*` => `zh-CN`, otherwise `en`), and Settings can override it persistently per browser profile.
 
 ## 3. Concurrency Model
 
@@ -38,8 +40,10 @@ Modules:
 - Each thread/session scope has at most one active turn.
 - New turn requests on an active scope return conflict error, while different sessions on the same thread may run concurrently.
 - Thread-level destructive or shared-state operations (for example delete/compact, thread-wide config changes, and manual git branch checkout for a thread `cwd`) remain whole-thread guarded.
+- active turn lifetime is not tied to any one SSE viewer connection; browser refresh/disconnect only detaches that viewer, and the turn continues until explicit cancel, terminal provider outcome, or fail-closed timeout.
+- multiple clients may subscribe to the same active turn concurrently and observe the same ordered live event stream.
 - Cancel request transitions turn state immediately and propagates cancellation token to provider.
-- Permission requests suspend the turn until a client decision arrives or timeout occurs.
+- Permission requests suspend the turn until a client decision arrives or timeout occurs, even if the original viewer disconnects.
 
 ## 4. Lazy Agent Startup
 
@@ -70,6 +74,7 @@ Flow:
    - SSE emits `permission_required` with `permissionId` and any provider-advertised `options[]`.
 3. turn waits for explicit decision.
    - client submits `POST /v1/permissions/{permissionId}` with `outcome`, `optionId`, or both.
+   - once resolved, ngent emits `permission_resolved` so every viewer of the live turn can update the same permission card state.
 4. if decision is missing/late/invalid, default is deny (fail-closed).
 
 Turn-side auxiliary callbacks:
@@ -94,8 +99,9 @@ SQLite stores:
 Properties:
 
 - all outbound stream events are persisted before or atomically with emission strategy.
-- streamed auxiliary events such as `message_content`, `reasoning_delta`, `plan_update`, and `permission_required` share the same append-only event log as `message_delta`.
-- each event has monotonic sequence per thread or turn.
+- streamed auxiliary events such as `message_content`, `reasoning_delta`, `plan_update`, `permission_required`, and `permission_resolved` share the same append-only event log as `message_delta`.
+- event persistence stays append-only on write, including consecutive deltas; any coalescing for heavy history payloads happens only on read.
+- each event has monotonic sequence per turn, exposed as `seq` in replayable SSE payloads.
 - thread deletion removes dependent rows in order (`events` -> `turns` -> `threads`) in one transaction.
 - restart can rebuild state from durable turn status plus event log.
 
@@ -107,16 +113,20 @@ On restart:
 - rebuild turn context window from persisted `threads.summary` and recent non-internal turns.
 - mark previously active turns as interrupted/recovering depending on provider capability.
 - allow clients to query history and continue with new turn.
-- replay SSE history from stored events for continuity.
+- browser-side viewer disconnects do not cancel healthy active turns; clients can hydrate persisted running-turn state and resume live delivery through `GET /v1/turns/{turnId}/events?after=<seq>`.
+- replay SSE history from stored events for continuity, including per-turn resume from the last seen `seq`.
 - graceful shutdown drains active turns with timeout and force-cancel fallback for stuck requests.
 
 ## 8. API Overview
 
 - health and server metadata
 - thread CRUD (create/list/get/update/delete)
+  - thread list/get responses include `hasActiveSession` so new browsers can spot live threads immediately.
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
 - thread session-usage snapshot lookup (`GET /v1/threads/{threadId}/session-usage?sessionId=...`)
-- turn create/cancel
+- turn create (`POST /v1/threads/{threadId}/turns`)
+- per-turn SSE replay/tail for resumed or additional viewers (`GET /v1/turns/{turnId}/events?after=...`)
+- turn cancel (`POST /v1/turns/{turnId}/cancel`)
 - thread compact (`POST /v1/threads/{threadId}/compact`)
 - SSE stream for real-time events
 - permission decision endpoint

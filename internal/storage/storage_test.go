@@ -507,7 +507,7 @@ func TestCreateTurnAppendEventFinalizeTurn(t *testing.T) {
 	}
 }
 
-func TestAppendEventMergesConsecutiveDeltaRuns(t *testing.T) {
+func TestAppendEventKeepsConsecutiveDeltaRunsAppendOnly(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
 	defer func() {
@@ -560,35 +560,37 @@ func TestAppendEventMergesConsecutiveDeltaRuns(t *testing.T) {
 	if got, want := first.Seq, 1; got != want {
 		t.Fatalf("first.Seq = %d, want %d", got, want)
 	}
-	if got, want := second.Seq, 1; got != want {
+	if got, want := second.Seq, 2; got != want {
 		t.Fatalf("second.Seq = %d, want %d", got, want)
 	}
-	if got, want := third.Seq, 2; got != want {
+	if got, want := third.Seq, 3; got != want {
 		t.Fatalf("third.Seq = %d, want %d", got, want)
 	}
-	if got, want := fourth.Seq, 2; got != want {
+	if got, want := fourth.Seq, 4; got != want {
 		t.Fatalf("fourth.Seq = %d, want %d", got, want)
 	}
-	if got, want := fifth.Seq, 3; got != want {
+	if got, want := fifth.Seq, 5; got != want {
 		t.Fatalf("fifth.Seq = %d, want %d", got, want)
 	}
-	if first.EventID != second.EventID {
-		t.Fatalf("message_delta merged event ids = [%d,%d], want same", first.EventID, second.EventID)
+	if first.EventID == second.EventID {
+		t.Fatalf("message_delta event ids = [%d,%d], want distinct ids", first.EventID, second.EventID)
 	}
-	if third.EventID != fourth.EventID {
-		t.Fatalf("reasoning_delta merged event ids = [%d,%d], want same", third.EventID, fourth.EventID)
+	if third.EventID == fourth.EventID {
+		t.Fatalf("reasoning_delta event ids = [%d,%d], want distinct ids", third.EventID, fourth.EventID)
 	}
 
 	events, err := store.ListEventsByTurn(ctx, "tu-merge")
 	if err != nil {
 		t.Fatalf("ListEventsByTurn(): %v", err)
 	}
-	if got, want := len(events), 3; got != want {
+	if got, want := len(events), 5; got != want {
 		t.Fatalf("len(events) = %d, want %d", got, want)
 	}
-	assertDeltaEventPayload(t, events[0].DataJSON, "tu-merge", "hello")
-	assertDeltaEventPayload(t, events[1].DataJSON, "tu-merge", "think-1")
-	assertDeltaEventPayload(t, events[2].DataJSON, "tu-merge", "!")
+	assertDeltaEventPayload(t, events[0].DataJSON, "tu-merge", "hel")
+	assertDeltaEventPayload(t, events[1].DataJSON, "tu-merge", "lo")
+	assertDeltaEventPayload(t, events[2].DataJSON, "tu-merge", "think-")
+	assertDeltaEventPayload(t, events[3].DataJSON, "tu-merge", "1")
+	assertDeltaEventPayload(t, events[4].DataJSON, "tu-merge", "!")
 }
 
 func TestTurnAttachmentsCRUD(t *testing.T) {

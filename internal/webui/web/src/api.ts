@@ -1,4 +1,5 @@
 import { store } from './store.ts'
+import { t } from './i18n.ts'
 import type {
   AgentInfo,
   ConfigOption,
@@ -113,7 +114,7 @@ class ApiClient {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
     } catch (err) {
-      throw new ApiError(`Network error: ${String(err)}`, 'NETWORK_ERROR', 0)
+      throw new ApiError(t('networkError', { error: String(err) }), 'NETWORK_ERROR', 0)
     }
 
     if (!res.ok) {
@@ -326,7 +327,26 @@ class ApiClient {
       headers = this.headers(null)
     }
 
-    const stream = new TurnStream(url, headers, body, callbacks)
+    const stream = new TurnStream(url, {
+      method: 'POST',
+      headers,
+      body,
+    }, callbacks)
+    void stream.start()
+    return stream
+  }
+
+  /** GET /v1/turns/{turnId}/events — replays persisted events and tails live updates. */
+  subscribeTurn(turnId: string, afterSeq: number, callbacks: TurnStreamCallbacks): TurnStream {
+    const params = new URLSearchParams()
+    if (afterSeq > 0) params.set('after', String(Math.floor(afterSeq)))
+    const suffix = params.toString() ? `?${params.toString()}` : ''
+    const url = this.url(`/v1/turns/${encodeURIComponent(turnId)}/events${suffix}`)
+    const stream = new TurnStream(url, {
+      method: 'GET',
+      headers: this.headers(null),
+      body: null,
+    }, callbacks)
     void stream.start()
     return stream
   }

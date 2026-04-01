@@ -2,6 +2,8 @@
 
 ## ADR Index
 
+- ADR-069: Keep active turns independent of individual SSE viewers and resume them through per-turn event streams. (Accepted)
+- ADR-068: Add browser-default English/Simplified Chinese localization to the embedded Web UI. (Accepted)
 - ADR-067: Persist ACP session usage snapshots and surface context-window pressure in the Web UI. (Accepted)
 - ADR-066: Surface thread-scoped git branch state in the Web UI composer. (Accepted)
 - ADR-065: Recast the embedded Web UI as a restrained desktop workbench. (Accepted)
@@ -59,6 +61,64 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-069: Keep Active Turns Independent Of Individual SSE Viewers And Resume Them Through Per-Turn Event Streams
+
+- Status: Accepted
+- Date: 2026-04-01
+- Context:
+  - the original `POST /v1/threads/{threadId}/turns` SSE request previously owned the turn lifetime, so refreshing the browser or losing that viewer connection cancelled the active turn even when the user did not ask to stop it.
+  - product now requires the opposite behavior: only explicit cancel, provider terminal state, or fail-closed permission timeout should end a healthy in-flight turn.
+  - refreshed browsers and other concurrent browsers also need to attach to the same active turn, receive the remaining live deltas in order, and keep the same active session visible.
+  - ngent already persisted turn events, but write-time delta merging weakened a strict `afterSeq` resume contract for live replay.
+- Decision:
+  - decouple turn execution lifetime from the original SSE viewer connection by running the turn under a context that survives request disconnect; explicit cancel and existing fail-closed permission timeout behavior remain intact.
+  - add `GET /v1/turns/{turnId}/events?after=<seq>` as a per-turn SSE endpoint that:
+    - subscribes to a live in-memory broker for that turn.
+    - replays persisted events with `seq > after`.
+    - continues tailing newly published events until terminal completion.
+  - emit a first-class `permission_resolved` turn event whenever a pending permission is decided or times out, so every viewer of that turn converges on the same permission state.
+  - expose `hasActiveSession` on thread list/get responses so a newly opened browser can tell which thread currently has a live session before it opens history for that thread.
+  - keep turn-event storage append-only on write, including consecutive delta events, and expose monotonic per-turn `seq` values in replayable SSE payloads.
+  - update the embedded Web UI to hydrate already-running turns from persisted history and then reattach via the new per-turn stream, so refresh and multi-browser viewing preserve the same active conversation.
+- Consequences:
+  - browser refreshes and other non-user transport disconnects no longer cancel healthy turns.
+  - multiple browsers can observe one running turn concurrently and receive the same ordered live event stream.
+  - SQLite now stores more raw delta rows than the earlier write-time merge approach, but resume correctness improves; any delta coalescing stays a read-path concern only.
+  - turn cancellation semantics are clearer: only explicit cancel, timeout, or provider terminal state stop the turn.
+- Alternatives considered:
+  - keep request-bound execution and require the browser to resubmit on refresh (rejected: duplicates work and violates the requested UX).
+  - use one shared global SSE channel for all turns (rejected: worse isolation and unnecessary cross-turn fanout noise).
+  - keep write-time delta merging and resume from timestamps instead of sequence numbers (rejected: weaker ordering guarantees and more ambiguous recovery behavior).
+
+## ADR-068: Add Browser-Default English/Simplified Chinese Localization To The Embedded Web UI
+
+- Status: Accepted
+- Date: 2026-04-01
+- Context:
+  - the embedded Web UI was English-only even though it is now used as the primary local workstation for a broader set of users.
+  - product required one new language immediately: Simplified Chinese.
+  - users also needed an explicit per-browser language override in Settings instead of being locked to the first detected locale forever.
+  - the existing frontend is a no-framework SPA, so the change needed to stay client-local and avoid backend/session contract changes.
+- Decision:
+  - add a persisted browser-local `language` preference to the frontend store with two supported values:
+    - `en`
+    - `zh-CN`
+  - on first load, when no explicit preference is stored yet:
+    - map any browser locale matching `zh-*` to `zh-CN`
+    - fall back to `en` for every other locale
+  - move language selection into the Settings drawer and keep it entirely client-side, alongside theme/auth/server URL preferences.
+  - re-render the Web UI shell when language changes so visible chrome updates immediately without a page reload.
+  - localize client-owned UI strings and relative-time formatting only; pass through backend/provider text unchanged for now.
+- Consequences:
+  - the first visit now feels locale-aware without introducing a third `system/follow browser` mode into long-term settings state.
+  - different browsers/profiles on the same machine can intentionally keep different UI languages because the setting lives in each browser's local storage.
+  - unsupported browser locales degrade safely to English.
+  - mixed-language surfaces are still possible when the backend returns English error text; that remains an accepted limitation for now.
+- Alternatives considered:
+  - add a persistent `system` language mode that tracks browser locale on every visit (rejected: unnecessary complexity for the current two-language scope).
+  - localize on the backend and send translated text over HTTP/SSE (rejected: outside the current UI-only scope and would complicate protocol contracts).
+  - auto-map only exact `zh-CN` and leave other `zh-*` locales in English (rejected: worse default experience for Chinese-language browsers).
 
 ## ADR-067: Persist ACP Session Usage Snapshots And Surface Context-Window Pressure In The Web UI
 

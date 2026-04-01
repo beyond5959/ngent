@@ -2,36 +2,40 @@ import type { PermissionOption, PlanEntry, SessionUsage } from './types.ts'
 
 // ── SSE event payloads (mirror server API contract) ───────────────────────
 
-export interface TurnStartedPayload {
+interface TurnEventMeta {
+  seq?: number
+}
+
+export interface TurnStartedPayload extends TurnEventMeta {
   turnId: string
 }
 
-export interface MessageDeltaPayload {
+export interface MessageDeltaPayload extends TurnEventMeta {
   turnId: string
   delta: string
 }
 
-export interface MessageContentPayload {
+export interface MessageContentPayload extends TurnEventMeta {
   turnId: string
   content?: unknown
 }
 
-export interface ReasoningDeltaPayload {
+export interface ReasoningDeltaPayload extends TurnEventMeta {
   turnId: string
   delta: string
 }
 
-export interface TurnCompletedPayload {
+export interface TurnCompletedPayload extends TurnEventMeta {
   turnId: string
   stopReason: string
 }
 
-export interface PlanUpdatePayload {
+export interface PlanUpdatePayload extends TurnEventMeta {
   turnId: string
   entries: PlanEntry[]
 }
 
-export interface ToolCallPayload {
+export interface ToolCallPayload extends TurnEventMeta {
   turnId: string
   toolCallId: string
   title?: string
@@ -43,34 +47,43 @@ export interface ToolCallPayload {
   rawOutput?: unknown
 }
 
-export interface SessionBoundPayload {
+export interface SessionBoundPayload extends TurnEventMeta {
   threadId: string
   sessionId: string
 }
 
-export interface SessionInfoUpdatePayload {
+export interface SessionInfoUpdatePayload extends TurnEventMeta {
   turnId: string
   sessionId: string
   title: string
 }
 
-export interface SessionUsageUpdatePayload extends SessionUsage {
+export interface SessionUsageUpdatePayload extends SessionUsage, TurnEventMeta {
   turnId: string
 }
 
-export interface TurnErrorPayload {
+export interface TurnErrorPayload extends TurnEventMeta {
   turnId: string
   code: string
   message: string
 }
 
-export interface PermissionRequiredPayload {
+export interface PermissionRequiredPayload extends TurnEventMeta {
   turnId: string
   permissionId: string
   approval: string
   command: string
   requestId: string
   options?: PermissionOption[]
+}
+
+export interface PermissionResolvedPayload extends TurnEventMeta {
+  turnId: string
+  permissionId: string
+  outcome: 'approved' | 'declined' | 'cancelled'
+  optionId?: string
+  optionName?: string
+  optionKind?: string
 }
 
 // ── Callbacks ─────────────────────────────────────────────────────────────
@@ -89,6 +102,7 @@ export interface TurnStreamCallbacks {
   onCompleted?:          (e: TurnCompletedPayload) => void
   onError?:              (e: TurnErrorPayload) => void
   onPermissionRequired?: (e: PermissionRequiredPayload) => void
+  onPermissionResolved?: (e: PermissionResolvedPayload) => void
   /** Called when the fetch connection closes unexpectedly (not via abort). */
   onDisconnect?:         () => void
 }
@@ -106,8 +120,11 @@ export class TurnStream {
 
   constructor(
     private readonly fetchUrl: string,
-    private readonly fetchHeaders: Record<string, string>,
-    private readonly body: FormData | Record<string, unknown>,
+    private readonly request: {
+      method: 'GET' | 'POST'
+      headers: Record<string, string>
+      body?: FormData | Record<string, unknown> | null
+    },
     private readonly callbacks: TurnStreamCallbacks,
   ) {}
 
@@ -116,9 +133,11 @@ export class TurnStream {
     let res: Response
     try {
       res = await fetch(this.fetchUrl, {
-        method: 'POST',
-        headers: this.fetchHeaders,
-        body: this.body instanceof FormData ? this.body : JSON.stringify(this.body),
+        method: this.request.method,
+        headers: this.request.headers,
+        body: this.request.body instanceof FormData
+          ? this.request.body
+          : (this.request.body ? JSON.stringify(this.request.body) : undefined),
         signal: this.aborter.signal,
       })
     } catch {
@@ -238,6 +257,9 @@ export class TurnStream {
         break
       case 'permission_required':
         this.callbacks.onPermissionRequired?.(payload as unknown as PermissionRequiredPayload)
+        break
+      case 'permission_resolved':
+        this.callbacks.onPermissionResolved?.(payload as unknown as PermissionResolvedPayload)
         break
     }
   }

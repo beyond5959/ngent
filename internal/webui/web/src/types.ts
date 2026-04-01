@@ -1,6 +1,7 @@
 // ── Theme & Settings ───────────────────────────────────────────────────────
 
 export type Theme = 'light' | 'dark' | 'system'
+export type Language = 'en' | 'zh-CN'
 
 // ── API models (mirrors server JSON contracts) ─────────────────────────────
 
@@ -38,6 +39,7 @@ export interface Thread {
   title: string
   agentOptions: Record<string, unknown>
   summary: string
+  hasActiveSession: boolean
   createdAt: string
   updatedAt: string
 }
@@ -222,6 +224,7 @@ export interface AppState {
   authToken: string
   serverUrl: string
   theme: Theme
+  language: Language
 
   // — runtime data (not persisted) —
   agents: AgentInfo[]

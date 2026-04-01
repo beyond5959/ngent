@@ -1,3 +1,4 @@
+import { detectBrowserLanguage, resolveLanguage } from './i18n.ts'
 import type { AppState, Theme } from './types.ts'
 
 // ── Storage keys ───────────────────────────────────────────────────────────
@@ -6,6 +7,7 @@ const LS = {
   authToken: 'ngent:authToken',
   serverUrl: 'ngent:serverUrl',
   theme:     'ngent:theme',
+  language:  'ngent:language',
 } as const
 
 // ── Store ──────────────────────────────────────────────────────────────────
@@ -52,6 +54,9 @@ class AppStore {
       authToken: localStorage.getItem(LS.authToken) || '',
       serverUrl: localStorage.getItem(LS.serverUrl) || window.location.origin,
       theme: (localStorage.getItem(LS.theme) as Theme | null) ?? 'system',
+      language: localStorage.getItem(LS.language)
+        ? resolveLanguage(localStorage.getItem(LS.language))
+        : detectBrowserLanguage(),
 
       // Runtime (empty until F3+)
       agents: [],
@@ -76,6 +81,9 @@ class AppStore {
     }
     if (patch.theme !== undefined) {
       localStorage.setItem(LS.theme, patch.theme)
+    }
+    if (patch.language !== undefined) {
+      localStorage.setItem(LS.language, patch.language)
     }
   }
 

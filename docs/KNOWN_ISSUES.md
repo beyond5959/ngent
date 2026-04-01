@@ -21,7 +21,7 @@
 - Severity: Low
 - Affects: browser users viewing HTTP/API/provider error messages inside the localized Web UI
 - Symptom:
-  - Settings, navigation, empty states, composer controls, and other client-owned Web UI strings switch between English and Simplified Chinese.
+  - Settings, navigation, empty states, composer controls, and other client-owned Web UI strings switch between English, Simplified Chinese, Spanish, and French.
   - errors that come straight from the backend or upstream agent/provider can still appear in English because the frontend currently renders those payload strings verbatim.
 - Workaround:
   - rely on the surrounding localized UI and exact error code/message, or switch to English if a support/debugging workflow expects backend wording unchanged.

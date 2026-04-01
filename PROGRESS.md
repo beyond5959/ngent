@@ -13,6 +13,20 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-04-01)
 
+- `Post-M8` Web UI Spanish/French localization and multilingual README expansion completed:
+  - expanded the embedded Web UI `language` preference from two values to four: `en`, `zh-CN`, `es`, and `fr`.
+  - browser-locale detection now maps the closest supported locale on first load:
+    - `zh-*` browsers default to `zh-CN`.
+    - `es-*` browsers default to `es`.
+    - `fr-*` browsers default to `fr`.
+    - all other locales default to `en`.
+  - localized the client-owned SPA chrome and relative-time labels for Spanish and French, and added Settings language switches for all four supported UI languages.
+  - added root `README.es.md` and `README.fr.md`, and cross-linked all root README variants so the repository landing docs are available in four languages.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+## Previous Update (2026-04-01)
+
 - `Post-M8` active-turn viewer disconnect decoupling and resumable shared live SSE completed:
   - server-side turn execution is no longer tied to the lifetime of the original `POST /v1/threads/{threadId}/turns` response, so browser refreshes and other viewer disconnects no longer cancel a healthy in-flight turn unless the user explicitly requests cancel.
   - added `GET /v1/turns/{turnId}/events?after=<seq>` so a refreshed browser or a second browser can replay persisted turn events and then tail the same live turn stream from the last seen per-turn sequence.

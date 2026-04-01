@@ -1,7 +1,7 @@
 // ── Theme & Settings ───────────────────────────────────────────────────────
 
 export type Theme = 'light' | 'dark' | 'system'
-export type Language = 'en' | 'zh-CN'
+export type Language = 'en' | 'zh-CN' | 'es' | 'fr'
 
 // ── API models (mirrors server JSON contracts) ─────────────────────────────
 

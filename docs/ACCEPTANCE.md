@@ -6,7 +6,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 
 - Operation:
   - open the embedded Web UI in a browser/profile with no existing `ngent:language` localStorage key.
-  - verify first-load language follows the browser locale (`zh-*` => Simplified Chinese, otherwise English).
+  - verify first-load language follows the closest supported browser locale (`zh-*` => Simplified Chinese, `es-*` => Spanish, `fr-*` => French, otherwise English).
   - open Settings, switch language, and verify the sidebar, session rail, composer, empty states, and permission/markdown controls update immediately without a full page reload.
 - Expected:
   - browser default locale is respected on first visit.
@@ -18,6 +18,8 @@ This checklist defines executable acceptance checks for requirements 1-16.
     - clear `localStorage['ngent:language']`
     - open the UI under an English browser locale
     - open the UI under a `zh-CN` browser locale
+    - open the UI under an `es-ES` browser locale
+    - open the UI under a `fr-FR` browser locale
     - switch languages in Settings and verify immediate UI re-render
 
 ## Requirement 1: HTTP/JSON plus SSE

@@ -31,7 +31,7 @@ Modules:
   - on history load, the Web UI can hydrate a still-running turn from persisted turn events, restore its live bubble/pending permissions, and then reattach to the per-turn SSE stream so browser refreshes do not cancel or visually lose the active response.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
-  - the Web UI also owns a browser-local `language` preference (`en` or `zh-CN`); on first load it defaults from browser locale (`zh-*` => `zh-CN`, otherwise `en`), and Settings can override it persistently per browser profile.
+  - the Web UI also owns a browser-local `language` preference (`en`, `zh-CN`, `es`, or `fr`); on first load it defaults from the closest supported browser locale (`zh-*` => `zh-CN`, `es-*` => `es`, `fr-*` => `fr`, otherwise `en`), and Settings can override it persistently per browser profile.
 
 ## 3. Concurrency Model
 

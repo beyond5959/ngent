@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-070: Expand embedded Web UI localization and repository READMEs to Spanish and French. (Accepted)
 - ADR-069: Keep active turns independent of individual SSE viewers and resume them through per-turn event streams. (Accepted)
 - ADR-068: Add browser-default English/Simplified Chinese localization to the embedded Web UI. (Accepted)
 - ADR-067: Persist ACP session usage snapshots and surface context-window pressure in the Web UI. (Accepted)
@@ -61,6 +62,37 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-070: Expand Embedded Web UI Localization And Repository READMEs To Spanish And French
+
+- Status: Accepted
+- Date: 2026-04-01
+- Context:
+  - ADR-068 already established browser-local UI localization for English and Simplified Chinese.
+  - product now requires the embedded Web UI to also support Spanish and French without introducing any backend locale negotiation or server-side translation layer.
+  - repository onboarding docs also need equivalent Spanish and French entry points alongside the existing English and Simplified Chinese READMEs.
+- Decision:
+  - expand the frontend `language` preference to four supported values:
+    - `en`
+    - `zh-CN`
+    - `es`
+    - `fr`
+  - extend browser-locale detection so first load chooses the closest supported locale:
+    - any `zh-*` locale => `zh-CN`
+    - any `es-*` locale => `es`
+    - any `fr-*` locale => `fr`
+    - all other locales => `en`
+  - keep localization entirely client-side in the embedded Web UI store/settings flow.
+  - add `README.es.md` and `README.fr.md`, and cross-link all root README variants from each translated entry point.
+- Consequences:
+  - the embedded Web UI now covers four languages without changing HTTP/SSE/API contracts.
+  - users whose browsers prefer Spanish or French now get a better first-load default instead of falling straight back to English.
+  - repository landing docs are now available in English, Simplified Chinese, Spanish, and French.
+  - backend/provider-originated error payloads still remain untranslated and can still produce mixed-language surfaces.
+- Alternatives considered:
+  - introduce region-specific stored variants such as `es-ES`, `es-MX`, `fr-FR`, and `fr-CA` (rejected: unnecessary complexity for the current UI copy scope).
+  - add automatic machine-translated README generation in CI (rejected: poorer reviewability and weaker quality control over user-facing docs).
+  - keep README translations limited to English and Simplified Chinese while only translating the UI (rejected: incomplete onboarding for the requested languages).
 
 ## ADR-069: Keep Active Turns Independent Of Individual SSE Viewers And Resume Them Through Per-Turn Event Streams
 

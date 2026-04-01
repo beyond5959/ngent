@@ -4,7 +4,7 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/beyond5959/ngent)](https://go.dev/)
 [![License](https://img.shields.io/github/license/beyond5959/ngent)](LICENSE)
 
-[简体中文](README.zh.md)
+[English](README.md) | [简体中文](README.zh.md) | [Español](README.es.md) | [Français](README.fr.md)
 
 > **Web Service Wrapper for ACP-compatible Agents**
 >
@@ -32,6 +32,7 @@ Ngent acts as a bridge between **ACP-compatible agents** (like Codex, Kimi CLI, 
 - 🔌 **Multi-Agent Support**: Works with any ACP-compatible agent (Codex, Kimi CLI, OpenCode, etc.)
 - 🌐 **Web API**: HTTP/JSON endpoints with Server-Sent Events (SSE) for streaming responses
 - 🖥️ **Built-in UI**: No separate frontend deployment needed — the web UI is embedded in the binary
+- 🌏 **Localized UI**: English, 简体中文, Español, and Français in the embedded Web UI
 - 🔒 **Permission Control**: Fine-grained approval system for agent file/system operations
 - 💾 **Persistent State**: SQLite-backed conversation history across sessions
 - 📱 **Mobile Friendly**: QR code for easy access from mobile devices on the same network

@@ -1,4 +1,4 @@
-import { setLanguage, t } from '../i18n.ts'
+import { getLanguageLabel, setLanguage, t } from '../i18n.ts'
 import { store } from '../store.ts'
 import type { Language, Theme } from '../types.ts'
 import { debounce, escHtml } from '../utils.ts'
@@ -112,8 +112,10 @@ function renderPanel(drafts: SettingsDraftValues = readDraftValues()): string {
             <label class="settings-label">${escHtml(t('language'))}</label>
             <p class="settings-description">${escHtml(t('languageDesc'))}</p>
             <div class="theme-btn-group">
-              ${languageBtn('en', t('english'))}
-              ${languageBtn('zh-CN', t('simplifiedChinese'))}
+              ${languageBtn('en', getLanguageLabel('en'))}
+              ${languageBtn('zh-CN', getLanguageLabel('zh-CN'))}
+              ${languageBtn('es', getLanguageLabel('es'))}
+              ${languageBtn('fr', getLanguageLabel('fr'))}
             </div>
           </section>
 

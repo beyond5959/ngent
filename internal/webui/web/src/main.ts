@@ -4,7 +4,11 @@ import { api } from './api.ts'
 import { getLanguage, setLanguage, t } from './i18n.ts'
 import { applyTheme, settingsPanel } from './components/settings-panel.ts'
 import { newThreadModal } from './components/new-thread-modal.ts'
-import { mountPermissionCard, PERMISSION_TIMEOUT_MS } from './components/permission-card.ts'
+import {
+  mountPermissionCard,
+  PERMISSION_TIMEOUT_MS,
+  resolveMountedPermissionCard,
+} from './components/permission-card.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
 import type {
   Thread,
@@ -26,7 +30,9 @@ import type {
 } from './types.ts'
 import type {
   MessageContentPayload,
+  PermissionResolvedPayload,
   TurnStream,
+  TurnStreamCallbacks,
   PermissionRequiredPayload,
   PlanUpdatePayload,
   ReasoningDeltaPayload,
@@ -981,6 +987,73 @@ interface TurnReplayAnalysis {
   segments?: MessageSegment[]
 }
 
+function lastTurnEventSeq(events: TurnEvent[] | undefined): number {
+  let lastSeq = 0
+  for (const event of events ?? []) {
+    if (typeof event.seq === 'number' && Number.isFinite(event.seq) && event.seq > lastSeq) {
+      lastSeq = event.seq
+    }
+  }
+  return lastSeq
+}
+
+function parsePermissionOptions(value: unknown): PermissionRequiredPayload['options'] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object') return []
+    const option = item as Record<string, unknown>
+    const optionId = typeof option.optionId === 'string' ? option.optionId.trim() : ''
+    if (!optionId) return []
+    return [{
+      optionId,
+      name: typeof option.name === 'string' ? option.name : undefined,
+      kind: typeof option.kind === 'string' ? option.kind : undefined,
+    }]
+  })
+}
+
+function pendingPermissionFromTurn(turn: Turn): PendingPermission | null {
+  let latest: PendingPermission | null = null
+  for (const event of sortTurnEvents(turn.events)) {
+    if (event.type === 'permission_required') {
+      const permissionId = typeof event.data.permissionId === 'string' ? event.data.permissionId.trim() : ''
+      if (!permissionId) continue
+      const approval = typeof event.data.approval === 'string' ? event.data.approval : 'command'
+      const command = typeof event.data.command === 'string' ? event.data.command : ''
+      const requestId = typeof event.data.requestId === 'string' ? event.data.requestId : ''
+      const createdAt = Date.parse(event.createdAt)
+      latest = {
+        turnId: turn.turnId,
+        permissionId,
+        approval,
+        command,
+        requestId,
+        options: parsePermissionOptions(event.data.options),
+        seq: event.seq,
+        deadlineMs: Number.isFinite(createdAt) ? createdAt + PERMISSION_TIMEOUT_MS : Date.now() + PERMISSION_TIMEOUT_MS,
+      }
+      continue
+    }
+
+    if (!latest) continue
+    switch (event.type) {
+      case 'permission_resolved':
+      case 'message_delta':
+      case 'message_content':
+      case 'reasoning_delta':
+      case 'thought_delta':
+      case 'tool_call':
+      case 'tool_call_update':
+      case 'plan_update':
+      case 'turn_completed':
+      case 'error':
+        latest = null
+        break
+    }
+  }
+  return latest
+}
+
 function analyzeTurnReplay(turn: Turn): TurnReplayAnalysis {
   const userTextParts: string[] = []
   let userAttachments: MessageAttachment[] = []
@@ -1324,6 +1397,9 @@ const activeContentSegmentIdByScope = new Map<string, string>()
 const activeReasoningSegmentIdByScope = new Map<string, string>()
 const activeToolCallSegmentIdByScope = new Map<string, string>()
 const streamStartedAtByScope = new Map<string, string>()
+const streamLastEventSeqByScope = new Map<string, number>()
+const streamReconnectTimerByScope = new Map<string, number>()
+const streamReconnectAttemptsByScope = new Map<string, number>()
 type PendingPermission = PermissionRequiredPayload & { deadlineMs: number }
 const pendingPermissionsByScope = new Map<string, Map<string, PendingPermission>>()
 let slashCommandLookupThreadId: string | null = null
@@ -1363,6 +1439,31 @@ function addMessageToStore(scopeKey: string, msg: Message): void {
 
 function activeContentSegmentID(scopeKey: string): string | null {
   return activeContentSegmentIdByScope.get(scopeKey) ?? null
+}
+
+function scopeLastEventSeq(scopeKey: string): number {
+  return streamLastEventSeqByScope.get(scopeKey) ?? 0
+}
+
+function setScopeLastEventSeq(scopeKey: string, seq: number | undefined): void {
+  if (!scopeKey) return
+  if (typeof seq !== 'number' || !Number.isFinite(seq) || seq <= 0) return
+  const nextSeq = Math.floor(seq)
+  const previous = streamLastEventSeqByScope.get(scopeKey) ?? 0
+  if (nextSeq <= previous) return
+  streamLastEventSeqByScope.set(scopeKey, nextSeq)
+}
+
+function clearScheduledStreamReconnect(scopeKey: string): void {
+  const timer = streamReconnectTimerByScope.get(scopeKey)
+  if (timer !== undefined) {
+    window.clearTimeout(timer)
+    streamReconnectTimerByScope.delete(scopeKey)
+  }
+}
+
+function resetStreamReconnectAttempts(scopeKey: string): void {
+  streamReconnectAttemptsByScope.delete(scopeKey)
 }
 
 function setActiveContentSegmentID(scopeKey: string, segmentID: string | null | undefined): void {
@@ -1674,6 +1775,24 @@ function hasThreadStream(threadId: string | null): boolean {
   return Object.values(store.get().streamStates).some(streamState => streamState.threadId === threadId)
 }
 
+function setThreadActiveSessionState(threadId: string, hasActiveSession: boolean): void {
+  threadId = threadId.trim()
+  if (!threadId) return
+
+  const state = store.get()
+  let changed = false
+  const threads = state.threads.map(thread => {
+    if (thread.threadId !== threadId || thread.hasActiveSession === hasActiveSession) {
+      return thread
+    }
+    changed = true
+    return { ...thread, hasActiveSession }
+  })
+  if (changed) {
+    store.set({ threads })
+  }
+}
+
 function setScopeStreamState(scopeKey: string, next: StreamState | null): void {
   const { streamStates } = store.get()
   const updated = { ...streamStates }
@@ -1704,6 +1823,7 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   listEl.querySelector('.message-list-loading')?.remove()
   const startedAt = streamStartedAtByScope.get(scopeKey) ?? new Date().toISOString()
   const div = document.createElement('div')
+  div.id = bubbleID
   div.className = 'message message--agent'
   div.dataset.msgId = streamState.messageId
   const livePlanEntries = streamPlanByScope.get(scopeKey)
@@ -1740,6 +1860,8 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
 }
 
 function clearScopeStreamRuntime(scopeKey: string): void {
+  clearScheduledStreamReconnect(scopeKey)
+  resetStreamReconnectAttempts(scopeKey)
   streamsByScope.delete(scopeKey)
   streamBufferByScope.delete(scopeKey)
   streamPlanByScope.delete(scopeKey)
@@ -1748,6 +1870,7 @@ function clearScopeStreamRuntime(scopeKey: string): void {
   activeReasoningSegmentIdByScope.delete(scopeKey)
   activeToolCallSegmentIdByScope.delete(scopeKey)
   streamStartedAtByScope.delete(scopeKey)
+  streamLastEventSeqByScope.delete(scopeKey)
   setScopeStreamState(scopeKey, null)
   if (activeChatScopeKey() === scopeKey) {
     activeStreamMsgId = null
@@ -1802,6 +1925,11 @@ function rebindScopeRuntime(oldScopeKey: string, nextScopeKey: string, nextSessi
     streamStartedAtByScope.delete(oldScopeKey)
     streamStartedAtByScope.set(nextScopeKey, startedAt)
   }
+  if (streamLastEventSeqByScope.has(oldScopeKey)) {
+    const lastSeq = streamLastEventSeqByScope.get(oldScopeKey) ?? 0
+    streamLastEventSeqByScope.delete(oldScopeKey)
+    if (lastSeq > 0) streamLastEventSeqByScope.set(nextScopeKey, lastSeq)
+  }
   if (pendingPermissionsByScope.has(oldScopeKey)) {
     const pending = pendingPermissionsByScope.get(oldScopeKey)
     pendingPermissionsByScope.delete(oldScopeKey)
@@ -1849,7 +1977,11 @@ function rebindScopeRuntime(oldScopeKey: string, nextScopeKey: string, nextSessi
   })
 }
 
-function upsertPendingPermission(scopeKey: string, event: PermissionRequiredPayload): PendingPermission {
+function upsertPendingPermission(
+  scopeKey: string,
+  event: PermissionRequiredPayload,
+  deadlineMs = Date.now() + PERMISSION_TIMEOUT_MS,
+): PendingPermission {
   let byID = pendingPermissionsByScope.get(scopeKey)
   if (!byID) {
     byID = new Map<string, PendingPermission>()
@@ -1860,7 +1992,7 @@ function upsertPendingPermission(scopeKey: string, event: PermissionRequiredPayl
 
   const pending: PendingPermission = {
     ...event,
-    deadlineMs: Date.now() + PERMISSION_TIMEOUT_MS,
+    deadlineMs,
   }
   byID.set(event.permissionId, pending)
   return pending
@@ -1896,6 +2028,434 @@ function renderPendingPermissionCards(scopeKey: string): void {
   const byID = pendingPermissionsByScope.get(scopeKey)
   if (!byID) return
   byID.forEach(pending => mountPendingPermissionCard(scopeKey, pending))
+}
+
+function applyPermissionResolved(scopeKey: string, event: PermissionResolvedPayload): void {
+  let label = event.optionName?.trim() || ''
+  if (!label) {
+    const pending = pendingPermissionsByScope.get(scopeKey)?.get(event.permissionId)
+    if (pending && event.optionId) {
+      label = (pending.options ?? []).find(option => option.optionId === event.optionId)?.name?.trim() || ''
+    }
+  }
+  resolveMountedPermissionCard(event.permissionId, {
+    state: event.outcome,
+    label: label || undefined,
+  })
+  removePendingPermission(scopeKey, event.permissionId)
+}
+
+function hydrateRunningTurnStreamScope(
+  scopeKey: string,
+  threadId: string,
+  sessionId: string,
+  turn: Turn,
+): StreamState {
+  const analysis = analyzeTurnReplay(turn)
+  const messageId = `${turn.turnId}-a`
+  const segments = cloneMessageSegments(analysis.segments) ?? []
+  const planEntries = clonePlanEntries(analysis.planEntries)
+  const pendingPermission = pendingPermissionFromTurn(turn)
+
+  streamBufferByScope.set(scopeKey, messageSegmentsContent(segments))
+  if (planEntries?.length) {
+    streamPlanByScope.set(scopeKey, planEntries)
+  } else {
+    streamPlanByScope.delete(scopeKey)
+  }
+  streamSegmentsByScope.set(scopeKey, segments)
+  activeContentSegmentIdByScope.delete(scopeKey)
+  activeReasoningSegmentIdByScope.delete(scopeKey)
+  activeToolCallSegmentIdByScope.delete(scopeKey)
+  streamStartedAtByScope.set(scopeKey, turn.createdAt)
+  setScopeLastEventSeq(scopeKey, lastTurnEventSeq(turn.events))
+
+  if (pendingPermission) {
+    upsertPendingPermission(scopeKey, pendingPermission, pendingPermission.deadlineMs)
+  } else {
+    clearPendingPermissions(scopeKey)
+  }
+
+  return {
+    turnId: turn.turnId,
+    threadId,
+    sessionId,
+    messageId,
+    status: 'streaming',
+  }
+}
+
+interface ScopeTurnStreamOptions {
+  threadId: string
+  initialScopeKey: string
+  initialSessionId: string
+  messageId: string
+  startedAt: string
+  openStream: (callbacks: TurnStreamCallbacks) => TurnStream
+}
+
+function scheduleStreamReconnect(threadId: string, scopeKey: string): void {
+  if (!scopeKey || streamReconnectTimerByScope.has(scopeKey)) return
+  const streamState = getScopeStreamState(scopeKey)
+  if (!streamState?.turnId) return
+
+  const attempt = (streamReconnectAttemptsByScope.get(scopeKey) ?? 0) + 1
+  streamReconnectAttemptsByScope.set(scopeKey, attempt)
+  const delayMs = Math.min(3_000, attempt * 750)
+  const timer = window.setTimeout(() => {
+    streamReconnectTimerByScope.delete(scopeKey)
+    const nextState = getScopeStreamState(scopeKey)
+    if (!nextState?.turnId) return
+
+    attachTurnStreamToScope({
+      threadId,
+      initialScopeKey: scopeKey,
+      initialSessionId: nextState.sessionId,
+      messageId: nextState.messageId,
+      startedAt: streamStartedAtByScope.get(scopeKey) ?? new Date().toISOString(),
+      openStream: callbacks => api.subscribeTurn(nextState.turnId, scopeLastEventSeq(scopeKey), callbacks),
+    })
+  }, delayMs)
+  streamReconnectTimerByScope.set(scopeKey, timer)
+}
+
+function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
+  const { threadId, messageId, startedAt, openStream } = options
+  let capturedScopeKey = options.initialScopeKey
+  let capturedSessionID = options.initialSessionId
+
+  clearScheduledStreamReconnect(capturedScopeKey)
+  resetStreamReconnectAttempts(capturedScopeKey)
+
+  const existingStream = streamsByScope.get(capturedScopeKey)
+  if (existingStream) {
+    existingStream.abort()
+    streamsByScope.delete(capturedScopeKey)
+  }
+
+  const markEventSeen = (seq: number | undefined): void => {
+    setScopeLastEventSeq(capturedScopeKey, seq)
+  }
+
+  const finalizeStreamMessage = (message: Message, markCompleted = false): void => {
+    clearScopeStreamRuntime(capturedScopeKey)
+    clearPendingPermissions(capturedScopeKey)
+    setThreadActiveSessionState(threadId, hasThreadStream(threadId))
+    if (markCompleted) {
+      markThreadCompletionBadge(threadId)
+    }
+    void loadThreadSessions(threadId)
+    void loadThreadSlashCommands(threadId, true)
+    void loadThreadGitState(threadId, { force: true })
+    void loadSessionUsageForScope(threadId, capturedScopeKey, capturedSessionID)
+    void syncSelectedSessionSelection(threadId)
+
+    addMessageToStore(capturedScopeKey, message)
+    void refreshThreadConfigState(threadId)
+      .then(() => {
+        if (store.get().activeThreadId === threadId && !activeStreamMsgId) {
+          updateChatArea()
+        }
+      })
+      .catch(() => {})
+  }
+
+  const callbacks: TurnStreamCallbacks = {
+    onTurnStarted({ turnId, seq }) {
+      markEventSeen(seq)
+      setThreadActiveSessionState(threadId, true)
+      const state = getScopeStreamState(capturedScopeKey)
+      if (!state) return
+      setScopeStreamState(capturedScopeKey, { ...state, turnId })
+    },
+
+    onDelta({ delta, seq }) {
+      markEventSeen(seq)
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveReasoningSegmentID(capturedScopeKey, null)
+      setActiveToolCallSegmentID(capturedScopeKey, null)
+      const previous = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const next = previous + delta
+      streamBufferByScope.set(capturedScopeKey, next)
+      const nextSegments = appendTextSegment(streamSegmentsByScope.get(capturedScopeKey), 'content', delta, messageId)
+      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
+      const activeSegmentID = nextSegments[nextSegments.length - 1]?.kind === 'content'
+        ? nextSegments[nextSegments.length - 1].id
+        : null
+      setActiveContentSegmentID(capturedScopeKey, activeSegmentID)
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubbleSegments(
+        messageId,
+        nextSegments,
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
+    onMessageContent({ content, seq }: MessageContentPayload) {
+      markEventSeen(seq)
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveReasoningSegmentID(capturedScopeKey, null)
+      setActiveToolCallSegmentID(capturedScopeKey, null)
+      const nextSegments = appendMessageContentSegments(
+        streamSegmentsByScope.get(capturedScopeKey),
+        content,
+        messageId,
+      )
+      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubbleSegments(
+        messageId,
+        nextSegments,
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
+    onReasoningDelta({ delta, seq }: ReasoningDeltaPayload) {
+      markEventSeen(seq)
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveToolCallSegmentID(capturedScopeKey, null)
+      const nextSegments = appendTextSegment(streamSegmentsByScope.get(capturedScopeKey), 'reasoning', delta, messageId)
+      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
+      const activeSegmentID = nextSegments[nextSegments.length - 1]?.kind === 'reasoning'
+        ? nextSegments[nextSegments.length - 1].id
+        : null
+      setActiveReasoningSegmentID(capturedScopeKey, activeSegmentID)
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubbleSegments(
+        messageId,
+        nextSegments,
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
+    onPlanUpdate({ entries, seq }: PlanUpdatePayload) {
+      markEventSeen(seq)
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveReasoningSegmentID(capturedScopeKey, null)
+      setActiveToolCallSegmentID(capturedScopeKey, null)
+      const nextPlanEntries = clonePlanEntries(entries) ?? []
+      streamPlanByScope.set(capturedScopeKey, nextPlanEntries)
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubblePlan(messageId, nextPlanEntries)
+      updateStreamingBubbleSegments(
+        messageId,
+        streamSegmentsByScope.get(capturedScopeKey),
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
+    onToolCall(event: ToolCallPayload) {
+      markEventSeen(event.seq)
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveReasoningSegmentID(capturedScopeKey, null)
+      const nextSegments = applyToolCallSegmentEvent(
+        streamSegmentsByScope.get(capturedScopeKey),
+        event as unknown as Record<string, unknown>,
+        messageId,
+      )
+      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
+      setActiveToolCallSegmentID(
+        capturedScopeKey,
+        findToolCallSegmentID(nextSegments, event.toolCallId),
+      )
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubbleSegments(
+        messageId,
+        nextSegments,
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
+    onToolCallUpdate(event: ToolCallPayload) {
+      markEventSeen(event.seq)
+      setActiveContentSegmentID(capturedScopeKey, null)
+      setActiveReasoningSegmentID(capturedScopeKey, null)
+      const nextSegments = applyToolCallSegmentEvent(
+        streamSegmentsByScope.get(capturedScopeKey),
+        event as unknown as Record<string, unknown>,
+        messageId,
+      )
+      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
+      setActiveToolCallSegmentID(
+        capturedScopeKey,
+        findToolCallSegmentID(nextSegments, event.toolCallId),
+      )
+
+      if (activeChatScopeKey() !== capturedScopeKey) return
+      const list = document.getElementById('message-list')
+      const atBottom = !list || isNearBottom(list)
+      updateStreamingBubbleSegments(
+        messageId,
+        nextSegments,
+        activeContentSegmentID(capturedScopeKey),
+        activeReasoningSegmentID(capturedScopeKey),
+        activeToolCallSegmentID(capturedScopeKey),
+      )
+      if (atBottom && list) list.scrollTop = list.scrollHeight
+    },
+
+    onSessionBound({ sessionId, seq }: SessionBoundPayload) {
+      markEventSeen(seq)
+      const nextSessionID = sessionId.trim()
+      if (!nextSessionID || nextSessionID === capturedSessionID) return
+      ensureSessionPanelSession(threadId, nextSessionID)
+      const previousScopeKey = capturedScopeKey
+      capturedSessionID = nextSessionID
+      capturedScopeKey = threadSessionScopeKey(threadId, capturedSessionID)
+      rebindScopeRuntime(previousScopeKey, capturedScopeKey, capturedSessionID)
+      updateThreadSessionID(threadId, sessionId)
+      syncSessionUsageControl(threadId)
+      void loadSessionUsageForScope(threadId, capturedScopeKey, capturedSessionID)
+    },
+
+    onSessionInfoUpdate({ sessionId, title, seq }: SessionInfoUpdatePayload) {
+      markEventSeen(seq)
+      applySessionTitleUpdate(threadId, sessionId, title)
+    },
+
+    onSessionUsageUpdate(event: SessionUsageUpdatePayload) {
+      markEventSeen(event.seq)
+      applySessionUsageUpdate(threadId, capturedScopeKey, event)
+    },
+
+    onPermissionRequired(event) {
+      markEventSeen(event.seq)
+      const pending = upsertPendingPermission(capturedScopeKey, event)
+      mountPendingPermissionCard(capturedScopeKey, pending)
+    },
+
+    onPermissionResolved(event) {
+      markEventSeen(event.seq)
+      applyPermissionResolved(capturedScopeKey, event)
+    },
+
+    onCompleted({ stopReason, seq }) {
+      markEventSeen(seq)
+      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
+      const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const finalContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
+      const finalToolCalls = messageSegmentsToolCalls(finalSegments)
+      const finalReasoning = messageSegmentsReasoning(finalSegments)
+
+      finalizeStreamMessage({
+        id: messageId,
+        role: 'agent',
+        content: finalContent,
+        timestamp: startedAt,
+        status: stopReason === 'cancelled' ? 'cancelled' : 'done',
+        stopReason,
+        segments: finalSegments,
+        planEntries: finalPlanEntries,
+        toolCalls: finalToolCalls,
+        reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
+      }, true)
+    },
+
+    onError({ turnId, code, message: errorMessage, seq }) {
+      if (!turnId.trim()) {
+        const streamState = getScopeStreamState(capturedScopeKey)
+        streamsByScope.delete(capturedScopeKey)
+        if (streamState?.turnId) {
+          scheduleStreamReconnect(threadId, capturedScopeKey)
+          return
+        }
+      }
+
+      markEventSeen(seq)
+      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
+      const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const partialContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
+      const finalToolCalls = messageSegmentsToolCalls(finalSegments)
+      const finalReasoning = messageSegmentsReasoning(finalSegments)
+
+      finalizeStreamMessage({
+        id: messageId,
+        role: 'agent',
+        content: partialContent,
+        timestamp: startedAt,
+        status: 'error',
+        errorCode: code,
+        errorMessage,
+        segments: finalSegments,
+        planEntries: finalPlanEntries,
+        toolCalls: finalToolCalls,
+        reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
+      })
+    },
+
+    onDisconnect() {
+      const streamState = getScopeStreamState(capturedScopeKey)
+      streamsByScope.delete(capturedScopeKey)
+      if (streamState?.turnId) {
+        scheduleStreamReconnect(threadId, capturedScopeKey)
+        return
+      }
+
+      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
+      const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
+      const segmentedContent = messageSegmentsContent(finalSegments)
+      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
+      const partialContent = hasVisibleContent(segmentedContent)
+        ? segmentedContent
+        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
+      const finalToolCalls = messageSegmentsToolCalls(finalSegments)
+      const finalReasoning = messageSegmentsReasoning(finalSegments)
+
+      finalizeStreamMessage({
+        id: messageId,
+        role: 'agent',
+        content: partialContent,
+        timestamp: startedAt,
+        status: 'error',
+        errorMessage: t('connectionLost'),
+        segments: finalSegments,
+        planEntries: finalPlanEntries,
+        toolCalls: finalToolCalls,
+        reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
+      })
+    },
+  }
+
+  const stream = openStream(callbacks)
+  streamsByScope.set(capturedScopeKey, stream)
 }
 
 function emptySessionPanelState(): SessionPanelState {
@@ -3156,7 +3716,8 @@ function updateThreadList(): void {
   el.innerHTML = filtered
     .map(t => {
       const isActive = t.threadId === activeThreadId
-      const activityIndicator: ThreadActivityIndicator = Object.values(streamStates).some(streamState => streamState.threadId === t.threadId)
+      const activityIndicator: ThreadActivityIndicator = (t.hasActiveSession
+        || Object.values(streamStates).some(streamState => streamState.threadId === t.threadId))
         ? 'loading'
         : (!isActive && threadCompletionBadges[t.threadId] ? 'done' : null)
       return renderThreadItem(t, activeThreadId, activityIndicator)
@@ -3260,6 +3821,17 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   Array.from(pendingPermissionsByScope.keys()).forEach(scopeKey => {
     if (scopeKey.startsWith(threadScopePrefix)) {
       clearPendingPermissions(scopeKey)
+    }
+  })
+  Array.from(streamReconnectTimerByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      clearScheduledStreamReconnect(scopeKey)
+      resetStreamReconnectAttempts(scopeKey)
+    }
+  })
+  Array.from(streamLastEventSeqByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      streamLastEventSeqByScope.delete(scopeKey)
     }
   })
   threadConfigCache.delete(threadId)
@@ -3542,7 +4114,9 @@ async function loadHistory(threadId: string): Promise<void> {
     if (!activeThread || threadChatScopeKey(activeThread) !== requestedScopeKey) return
     if (getScopeStreamState(requestedScopeKey)) return
 
-    const localMessages = await turnsToMessagesAsync(filterTurnsBySession(turns, requestedSessionID))
+    const filteredTurns = filterTurnsBySession(turns, requestedSessionID)
+    const runningTurn = [...filteredTurns].reverse().find(turn => turn.status === 'running') ?? null
+    const localMessages = await turnsToMessagesAsync(filteredTurns)
     const cachedMessages = state.messages[requestedScopeKey] ?? []
     let nextMessages = localMessages
     if (requestedSessionID) {
@@ -3593,12 +4167,42 @@ async function loadHistory(threadId: string): Promise<void> {
     if (getScopeStreamState(requestedScopeKey)) return
 
     loadedHistoryScopeKeys.add(requestedScopeKey)
+    const nextStreamStates = { ...finalState.streamStates }
+    if (runningTurn) {
+      nextStreamStates[requestedScopeKey] = hydrateRunningTurnStreamScope(
+        requestedScopeKey,
+        threadId,
+        requestedSessionID,
+        runningTurn,
+      )
+    }
     store.set({
       messages: {
         ...finalState.messages,
         [requestedScopeKey]: nextMessages,
       },
+      streamStates: nextStreamStates,
     })
+
+    const renderState = store.get()
+    const renderThread = renderState.threads.find(item => item.threadId === threadId)
+    if (runningTurn && renderState.activeThreadId === threadId && renderThread && threadChatScopeKey(renderThread) === requestedScopeKey) {
+      appendOrRestoreStreamingBubble(renderThread)
+      renderPendingPermissionCards(requestedScopeKey)
+      if (!streamsByScope.has(requestedScopeKey)) {
+        const streamState = getScopeStreamState(requestedScopeKey)
+        if (streamState?.turnId) {
+          attachTurnStreamToScope({
+            threadId,
+            initialScopeKey: requestedScopeKey,
+            initialSessionId: requestedSessionID,
+            messageId: streamState.messageId,
+            startedAt: streamStartedAtByScope.get(requestedScopeKey) ?? runningTurn.createdAt,
+            openStream: callbacks => api.subscribeTurn(streamState.turnId, scopeLastEventSeq(requestedScopeKey), callbacks),
+          })
+        }
+      }
+    }
   } catch {
     if (store.get().activeThreadId !== threadId) return
     if (threadChatScopeKey(store.get().threads.find(item => item.threadId === threadId)) !== requestedScopeKey) return
@@ -6106,6 +6710,7 @@ async function handleSend(): Promise<void> {
   if (listEl) {
     listEl.querySelector('.empty-state')?.remove()
     const div = document.createElement('div')
+    div.id = `bubble-${agentMsgID}`
     div.className        = 'message message--agent'
     div.dataset.msgId    = agentMsgID
     div.innerHTML = `
@@ -6127,314 +6732,17 @@ async function handleSend(): Promise<void> {
   }
 
   // ── 5. Start SSE stream ────────────────────────────────────────────────────
-  const stream = api.startTurn(capturedThreadID, {
-    input: text,
-    attachments: attachmentDrafts.map(attachment => attachment.file),
-  }, {
-
-    onTurnStarted({ turnId }) {
-      const state = getScopeStreamState(capturedScopeKey)
-      if (!state) return
-      setScopeStreamState(capturedScopeKey, { ...state, turnId })
-    },
-
-    onDelta({ delta }) {
-      setActiveContentSegmentID(capturedScopeKey, null)
-      setActiveReasoningSegmentID(capturedScopeKey, null)
-      setActiveToolCallSegmentID(capturedScopeKey, null)
-      const previous = streamBufferByScope.get(capturedScopeKey) ?? ''
-      const next = previous + delta
-      streamBufferByScope.set(capturedScopeKey, next)
-      const nextSegments = appendTextSegment(streamSegmentsByScope.get(capturedScopeKey), 'content', delta, agentMsgID)
-      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
-      const activeSegmentID = nextSegments[nextSegments.length - 1]?.kind === 'content'
-        ? nextSegments[nextSegments.length - 1].id
-        : null
-      setActiveContentSegmentID(capturedScopeKey, activeSegmentID)
-
-      if (activeChatScopeKey() !== capturedScopeKey) return
-      const list      = document.getElementById('message-list')
-      const atBottom  = !list || isNearBottom(list)
-      updateStreamingBubbleSegments(
-        agentMsgID,
-        nextSegments,
-        activeContentSegmentID(capturedScopeKey),
-        activeReasoningSegmentID(capturedScopeKey),
-        activeToolCallSegmentID(capturedScopeKey),
-      )
-      if (atBottom && list) list.scrollTop = list.scrollHeight
-    },
-
-    onMessageContent({ content }: MessageContentPayload) {
-      setActiveContentSegmentID(capturedScopeKey, null)
-      setActiveReasoningSegmentID(capturedScopeKey, null)
-      setActiveToolCallSegmentID(capturedScopeKey, null)
-      const nextSegments = appendMessageContentSegments(
-        streamSegmentsByScope.get(capturedScopeKey),
-        content,
-        agentMsgID,
-      )
-      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
-
-      if (activeChatScopeKey() !== capturedScopeKey) return
-      const list = document.getElementById('message-list')
-      const atBottom = !list || isNearBottom(list)
-      updateStreamingBubbleSegments(
-        agentMsgID,
-        nextSegments,
-        activeContentSegmentID(capturedScopeKey),
-        activeReasoningSegmentID(capturedScopeKey),
-        activeToolCallSegmentID(capturedScopeKey),
-      )
-      if (atBottom && list) list.scrollTop = list.scrollHeight
-    },
-
-    onReasoningDelta({ delta }: ReasoningDeltaPayload) {
-      setActiveContentSegmentID(capturedScopeKey, null)
-      setActiveToolCallSegmentID(capturedScopeKey, null)
-      const nextSegments = appendTextSegment(streamSegmentsByScope.get(capturedScopeKey), 'reasoning', delta, agentMsgID)
-      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
-      const activeSegmentID = nextSegments[nextSegments.length - 1]?.kind === 'reasoning'
-        ? nextSegments[nextSegments.length - 1].id
-        : null
-      setActiveReasoningSegmentID(capturedScopeKey, activeSegmentID)
-
-      if (activeChatScopeKey() !== capturedScopeKey) return
-      const list = document.getElementById('message-list')
-      const atBottom = !list || isNearBottom(list)
-      updateStreamingBubbleSegments(
-        agentMsgID,
-        nextSegments,
-        activeContentSegmentID(capturedScopeKey),
-        activeReasoningSegmentID(capturedScopeKey),
-        activeToolCallSegmentID(capturedScopeKey),
-      )
-      if (atBottom && list) list.scrollTop = list.scrollHeight
-    },
-
-    onPlanUpdate({ entries }: PlanUpdatePayload) {
-      setActiveContentSegmentID(capturedScopeKey, null)
-      setActiveReasoningSegmentID(capturedScopeKey, null)
-      setActiveToolCallSegmentID(capturedScopeKey, null)
-      const nextPlanEntries = clonePlanEntries(entries) ?? []
-      streamPlanByScope.set(capturedScopeKey, nextPlanEntries)
-
-      if (activeChatScopeKey() !== capturedScopeKey) return
-      const list = document.getElementById('message-list')
-      const atBottom = !list || isNearBottom(list)
-      updateStreamingBubblePlan(agentMsgID, nextPlanEntries)
-      updateStreamingBubbleSegments(
-        agentMsgID,
-        streamSegmentsByScope.get(capturedScopeKey),
-        activeContentSegmentID(capturedScopeKey),
-        activeReasoningSegmentID(capturedScopeKey),
-        activeToolCallSegmentID(capturedScopeKey),
-      )
-      if (atBottom && list) list.scrollTop = list.scrollHeight
-    },
-
-    onToolCall(event: ToolCallPayload) {
-      setActiveContentSegmentID(capturedScopeKey, null)
-      setActiveReasoningSegmentID(capturedScopeKey, null)
-      const nextSegments = applyToolCallSegmentEvent(
-        streamSegmentsByScope.get(capturedScopeKey),
-        event as unknown as Record<string, unknown>,
-        agentMsgID,
-      )
-      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
-      setActiveToolCallSegmentID(
-        capturedScopeKey,
-        findToolCallSegmentID(nextSegments, event.toolCallId),
-      )
-
-      if (activeChatScopeKey() !== capturedScopeKey) return
-      const list = document.getElementById('message-list')
-      const atBottom = !list || isNearBottom(list)
-      updateStreamingBubbleSegments(
-        agentMsgID,
-        nextSegments,
-        activeContentSegmentID(capturedScopeKey),
-        activeReasoningSegmentID(capturedScopeKey),
-        activeToolCallSegmentID(capturedScopeKey),
-      )
-      if (atBottom && list) list.scrollTop = list.scrollHeight
-    },
-
-    onToolCallUpdate(event: ToolCallPayload) {
-      setActiveContentSegmentID(capturedScopeKey, null)
-      setActiveReasoningSegmentID(capturedScopeKey, null)
-      const nextSegments = applyToolCallSegmentEvent(
-        streamSegmentsByScope.get(capturedScopeKey),
-        event as unknown as Record<string, unknown>,
-        agentMsgID,
-      )
-      streamSegmentsByScope.set(capturedScopeKey, nextSegments)
-      setActiveToolCallSegmentID(
-        capturedScopeKey,
-        findToolCallSegmentID(nextSegments, event.toolCallId),
-      )
-
-      if (activeChatScopeKey() !== capturedScopeKey) return
-      const list = document.getElementById('message-list')
-      const atBottom = !list || isNearBottom(list)
-      updateStreamingBubbleSegments(
-        agentMsgID,
-        nextSegments,
-        activeContentSegmentID(capturedScopeKey),
-        activeReasoningSegmentID(capturedScopeKey),
-        activeToolCallSegmentID(capturedScopeKey),
-      )
-      if (atBottom && list) list.scrollTop = list.scrollHeight
-    },
-
-    onSessionBound({ sessionId }: SessionBoundPayload) {
-      const nextSessionID = sessionId.trim()
-      if (!nextSessionID || nextSessionID === capturedSessionID) return
-      ensureSessionPanelSession(capturedThreadID, nextSessionID)
-      const previousScopeKey = capturedScopeKey
-      capturedSessionID = nextSessionID
-      capturedScopeKey = threadSessionScopeKey(capturedThreadID, capturedSessionID)
-      rebindScopeRuntime(previousScopeKey, capturedScopeKey, capturedSessionID)
-      updateThreadSessionID(capturedThreadID, sessionId)
-      syncSessionUsageControl(capturedThreadID)
-      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
-    },
-
-    onSessionInfoUpdate({ sessionId, title }: SessionInfoUpdatePayload) {
-      applySessionTitleUpdate(capturedThreadID, sessionId, title)
-    },
-
-    onSessionUsageUpdate(event: SessionUsageUpdatePayload) {
-      applySessionUsageUpdate(capturedThreadID, capturedScopeKey, event)
-    },
-
-    onPermissionRequired(event) {
-      const pending = upsertPendingPermission(capturedScopeKey, event)
-      mountPendingPermissionCard(capturedScopeKey, pending)
-    },
-
-    onCompleted({ stopReason }) {
-      // Clear stream tracking BEFORE addMessageToStore (so subscribe calls updateMessageList)
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
-      const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const segmentedContent = messageSegmentsContent(finalSegments)
-      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
-      const finalContent = hasVisibleContent(segmentedContent)
-        ? segmentedContent
-        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
-      const finalToolCalls = messageSegmentsToolCalls(finalSegments)
-      const finalReasoning = messageSegmentsReasoning(finalSegments)
-      clearScopeStreamRuntime(capturedScopeKey)
-      clearPendingPermissions(capturedScopeKey)
-      markThreadCompletionBadge(capturedThreadID)
-      void loadThreadSessions(capturedThreadID)
-      void loadThreadSlashCommands(capturedThreadID, true)
-      void loadThreadGitState(capturedThreadID, { force: true })
-      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
-      void syncSelectedSessionSelection(capturedThreadID)
-
-      addMessageToStore(capturedScopeKey, {
-        id:         agentMsgID,
-        role:       'agent',
-        content:    finalContent,
-        timestamp:  now,
-        status:     stopReason === 'cancelled' ? 'cancelled' : 'done',
-        stopReason,
-        segments: finalSegments,
-        planEntries: finalPlanEntries,
-        toolCalls: finalToolCalls,
-        reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
-      })
-      void refreshThreadConfigState(capturedThreadID)
-        .then(() => {
-          if (store.get().activeThreadId === capturedThreadID && !activeStreamMsgId) {
-            updateChatArea()
-          }
-        })
-        .catch(() => {})
-    },
-
-    onError({ code, message: msg }) {
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
-      const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const segmentedContent = messageSegmentsContent(finalSegments)
-      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
-      const partialContent = hasVisibleContent(segmentedContent)
-        ? segmentedContent
-        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
-      const finalToolCalls = messageSegmentsToolCalls(finalSegments)
-      const finalReasoning = messageSegmentsReasoning(finalSegments)
-      clearScopeStreamRuntime(capturedScopeKey)
-      clearPendingPermissions(capturedScopeKey)
-      void loadThreadSessions(capturedThreadID)
-      void loadThreadSlashCommands(capturedThreadID, true)
-      void loadThreadGitState(capturedThreadID, { force: true })
-      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
-      void syncSelectedSessionSelection(capturedThreadID)
-
-      addMessageToStore(capturedScopeKey, {
-        id:           agentMsgID,
-        role:         'agent',
-        content:      partialContent,
-        timestamp:    now,
-        status:       'error',
-        errorCode:    code,
-        errorMessage: msg,
-        segments:     finalSegments,
-        planEntries:  finalPlanEntries,
-        toolCalls:    finalToolCalls,
-        reasoning:    hasReasoningText(finalReasoning) ? finalReasoning : undefined,
-      })
-      void refreshThreadConfigState(capturedThreadID)
-        .then(() => {
-          if (store.get().activeThreadId === capturedThreadID && !activeStreamMsgId) {
-            updateChatArea()
-          }
-        })
-        .catch(() => {})
-    },
-
-    onDisconnect() {
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
-      const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
-      const segmentedContent = messageSegmentsContent(finalSegments)
-      const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
-      const partialContent = hasVisibleContent(segmentedContent)
-        ? segmentedContent
-        : (hasVisibleContent(bufferedContent) ? bufferedContent : '')
-      const finalToolCalls = messageSegmentsToolCalls(finalSegments)
-      const finalReasoning = messageSegmentsReasoning(finalSegments)
-      clearScopeStreamRuntime(capturedScopeKey)
-      clearPendingPermissions(capturedScopeKey)
-      void loadThreadSessions(capturedThreadID)
-      void loadThreadSlashCommands(capturedThreadID, true)
-      void loadThreadGitState(capturedThreadID, { force: true })
-      void loadSessionUsageForScope(capturedThreadID, capturedScopeKey, capturedSessionID)
-      void syncSelectedSessionSelection(capturedThreadID)
-
-      addMessageToStore(capturedScopeKey, {
-        id:           agentMsgID,
-        role:         'agent',
-        content:      partialContent,
-        timestamp:    now,
-        status:       'error',
-        errorMessage: t('connectionLost'),
-        segments:     finalSegments,
-        planEntries:  finalPlanEntries,
-        toolCalls:    finalToolCalls,
-        reasoning:    hasReasoningText(finalReasoning) ? finalReasoning : undefined,
-      })
-      void refreshThreadConfigState(capturedThreadID)
-        .then(() => {
-          if (store.get().activeThreadId === capturedThreadID && !activeStreamMsgId) {
-            updateChatArea()
-          }
-        })
-        .catch(() => {})
-    },
+  attachTurnStreamToScope({
+    threadId: capturedThreadID,
+    initialScopeKey: capturedScopeKey,
+    initialSessionId: capturedSessionID,
+    messageId: agentMsgID,
+    startedAt: now,
+    openStream: callbacks => api.startTurn(capturedThreadID, {
+      input: text,
+      attachments: attachmentDrafts.map(attachment => attachment.file),
+    }, callbacks),
   })
-
-  streamsByScope.set(capturedScopeKey, stream)
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────
@@ -6659,6 +6967,10 @@ async function init(): Promise<void> {
       // activeStreamMsgId is non-null while the streaming bubble is in the DOM.
       // Re-rendering the message list would destroy that bubble, so we skip it.
       if (!activeStreamMsgId) updateMessageList()
+      if (chatScopeStreamState && !hasMountedActiveStream(chatScopeKey) && activeThread) {
+        appendOrRestoreStreamingBubble(activeThread)
+      }
+      renderPendingPermissionCards(chatScopeKey)
       updateInputState()
     }
   })

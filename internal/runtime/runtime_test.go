@@ -19,6 +19,9 @@ func TestTurnControllerActivateCancelRelease(t *testing.T) {
 	if !controller.IsThreadActive("th-1") {
 		t.Fatalf("thread should be active")
 	}
+	if !controller.HasActiveSession("th-1") {
+		t.Fatalf("thread should report active session")
+	}
 	if !controller.IsSessionActive("th-1", "ses-1") {
 		t.Fatalf("session should be active")
 	}
@@ -49,6 +52,9 @@ func TestTurnControllerActivateCancelRelease(t *testing.T) {
 	controller.Release("th-1", "ses-2", "tu-2")
 	if controller.IsThreadActive("th-1") {
 		t.Fatalf("thread should be inactive after releasing all sessions")
+	}
+	if controller.HasActiveSession("th-1") {
+		t.Fatalf("thread should not report active session after releasing all sessions")
 	}
 }
 
@@ -117,6 +123,9 @@ func TestTurnControllerActivateThreadExclusive(t *testing.T) {
 	}
 	if !controller.IsThreadActive("th-1") {
 		t.Fatalf("thread should be active while exclusive guard is held")
+	}
+	if controller.HasActiveSession("th-1") {
+		t.Fatalf("exclusive guard should not count as active session")
 	}
 	if err := controller.Activate("th-1", "ses-1", "tu-1", nil); !errors.Is(err, ErrActiveTurnExists) {
 		t.Fatalf("Activate() while thread guard held error = %v, want %v", err, ErrActiveTurnExists)

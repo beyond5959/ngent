@@ -197,6 +197,13 @@ func (c *TurnController) IsThreadActive(threadID string) bool {
 	return c.threadActive[threadID] > 0
 }
 
+// HasActiveSession reports whether a thread has any active session-scoped turn.
+func (c *TurnController) HasActiveSession(threadID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.threadActive[threadID] > 0
+}
+
 // IsSessionActive reports whether one thread/session scope has an active turn.
 func (c *TurnController) IsSessionActive(threadID, sessionID string) bool {
 	c.mu.Lock()
@@ -213,6 +220,14 @@ func (c *TurnController) ActiveCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.byTurn)
+}
+
+// IsTurnActive reports whether one tracked turn is still active.
+func (c *TurnController) IsTurnActive(turnID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.byTurn[turnID]
+	return ok
 }
 
 // CancelAll requests cancellation for all active turns.

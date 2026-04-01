@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -4239,6 +4240,102 @@ func TestTurnPermissionApprovedContinuesAndCompletes(t *testing.T) {
 	}
 }
 
+func TestTurnEventsStreamBroadcastsPermissionResolved(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{
+		allowedRoots:      []string{root},
+		agent:             newFakeACPStreamer(t),
+		permissionTimeout: 2 * time.Second,
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+
+	resp, cancelStream := startTurnStreamHTTP(t, ts.URL, "client-a", threadID, "need approval")
+	defer cancelStream()
+	defer resp.Body.Close()
+	eventsCh, doneCh := streamSSEEvents(resp.Body)
+
+	var turnID string
+	var permissionID string
+	var permissionSeq int
+	deadline := time.After(4 * time.Second)
+waitForPermission:
+	for {
+		select {
+		case event, ok := <-eventsCh:
+			if !ok {
+				t.Fatalf("stream closed before permission_required")
+			}
+			if event.Event != "permission_required" {
+				continue
+			}
+			turnID = stringField(event.Data, "turnId")
+			permissionID = stringField(event.Data, "permissionId")
+			permissionSeq = intField(event.Data, "seq")
+			break waitForPermission
+		case err := <-doneCh:
+			t.Fatalf("stream ended before permission_required: %v", err)
+		case <-deadline:
+			t.Fatalf("timeout waiting for permission_required")
+		}
+	}
+	if turnID == "" {
+		t.Fatalf("permission_required.turnId is empty")
+	}
+	if permissionID == "" {
+		t.Fatalf("permission_required.permissionId is empty")
+	}
+	if permissionSeq <= 0 {
+		t.Fatalf("permission_required.seq = %d, want > 0", permissionSeq)
+	}
+
+	resumeResp, cancelResume := startTurnEventsHTTP(t, ts.URL, "client-b", turnID, permissionSeq)
+	defer cancelResume()
+	defer resumeResp.Body.Close()
+	resumeEventsCh, resumeDoneCh := streamSSEEvents(resumeResp.Body)
+
+	status, body := postPermissionDecision(t, ts.URL, "client-a", permissionID, "approved")
+	if status != http.StatusOK {
+		t.Fatalf("permission decision status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	seenResolved := false
+	completed := false
+	deadline = time.After(4 * time.Second)
+	for !completed {
+		select {
+		case event, ok := <-resumeEventsCh:
+			if !ok {
+				t.Fatalf("turn events stream closed before completion")
+			}
+			switch event.Event {
+			case "permission_resolved":
+				seenResolved = true
+				if got := stringField(event.Data, "permissionId"); got != permissionID {
+					t.Fatalf("permission_resolved.permissionId = %q, want %q", got, permissionID)
+				}
+				if got := stringField(event.Data, "outcome"); got != string(agents.PermissionOutcomeApproved) {
+					t.Fatalf("permission_resolved.outcome = %q, want %q", got, agents.PermissionOutcomeApproved)
+				}
+			case "turn_completed":
+				completed = true
+			}
+		case err := <-resumeDoneCh:
+			if err != nil {
+				t.Fatalf("turn events stream ended early: %v", err)
+			}
+			resumeDoneCh = nil
+		case <-deadline:
+			t.Fatalf("timeout waiting for permission_resolved/turn_completed")
+		}
+	}
+	if !seenResolved {
+		t.Fatalf("missing permission_resolved SSE event on replay stream")
+	}
+}
+
 func TestTurnPermissionSelectedOptionFlowsThroughExactAgentChoice(t *testing.T) {
 	root := t.TempDir()
 	streamer := &permissionOptionStreamer{
@@ -4437,6 +4534,336 @@ waitLoop:
 	if stopReason != "cancelled" {
 		t.Fatalf("turn status/stopReason = %q/%q, want stopReason %q", status, stopReason, "cancelled")
 	}
+}
+
+func TestTurnDisconnectDoesNotCancelAndCanResumeFromTurnEvents(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	firstDelivered := make(chan struct{}, 1)
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		agent: &resumableStreamer{
+			firstDelta:     "hello ",
+			secondDelta:    "world",
+			firstDelivered: firstDelivered,
+			release:        release,
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	resp, cancelStream := startTurnStreamHTTP(t, ts.URL, "client-a", threadID, "resume me")
+	eventsCh, doneCh := streamSSEEvents(resp.Body)
+
+	turnID := ""
+	deadline := time.After(4 * time.Second)
+	for {
+		select {
+		case ev, ok := <-eventsCh:
+			if !ok {
+				t.Fatalf("stream ended before first delta")
+			}
+			switch ev.Event {
+			case "turn_started":
+				turnID = stringField(ev.Data, "turnId")
+			case "message_delta":
+				if got := stringField(ev.Data, "delta"); got != "hello " {
+					t.Fatalf("first message_delta = %q, want %q", got, "hello ")
+				}
+				goto gotFirstDelta
+			}
+		case err := <-doneCh:
+			t.Fatalf("stream ended before first delta: %v", err)
+		case <-deadline:
+			t.Fatalf("timeout waiting for initial streamed delta")
+		}
+	}
+
+gotFirstDelta:
+	if turnID == "" {
+		t.Fatalf("turnId is empty")
+	}
+
+	cancelStream()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("close initial stream response body: %v", err)
+	}
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("initial stream reader did not exit after disconnect")
+	}
+
+	lastSeq := 0
+	runningDeadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(runningDeadline) {
+		history := getHistoryHTTP(t, ts.URL, "client-a", threadID, false)
+		if len(history.Turns) == 0 {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		lastTurn := history.Turns[len(history.Turns)-1]
+		if lastTurn.Status == "running" {
+			historyWithEvents := getHistoryWithEventsHTTP(t, ts.URL, "client-a", threadID)
+			if got := len(historyWithEvents.Turns); got == 0 {
+				t.Fatalf("history with events turns = %d, want >= 1", got)
+			}
+			events := historyWithEvents.Turns[len(historyWithEvents.Turns)-1].Events
+			if len(events) == 0 {
+				t.Fatalf("running turn events are empty")
+			}
+			lastSeq = events[len(events)-1].Seq
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lastSeq == 0 {
+		t.Fatalf("turn did not remain running after disconnect")
+	}
+
+	resumeResp, cancelResume := startTurnEventsHTTP(t, ts.URL, "client-b", turnID, lastSeq)
+	defer cancelResume()
+	defer resumeResp.Body.Close()
+	resumeEventsCh, resumeDoneCh := streamSSEEvents(resumeResp.Body)
+
+	close(release)
+
+	sawResumedDelta := false
+	sawCompleted := false
+	deadline = time.After(4 * time.Second)
+	for !sawCompleted {
+		select {
+		case ev, ok := <-resumeEventsCh:
+			if !ok {
+				t.Fatalf("resume stream ended before completion")
+			}
+			switch ev.Event {
+			case "message_delta":
+				if got := stringField(ev.Data, "delta"); got != "world" {
+					t.Fatalf("resumed message_delta = %q, want %q", got, "world")
+				}
+				sawResumedDelta = true
+			case "turn_completed":
+				if got := stringField(ev.Data, "stopReason"); got != "end_turn" {
+					t.Fatalf("turn_completed.stopReason = %q, want %q", got, "end_turn")
+				}
+				sawCompleted = true
+			}
+		case err := <-resumeDoneCh:
+			t.Fatalf("resume stream ended early: %v", err)
+		case <-deadline:
+			t.Fatalf("timeout waiting for resumed turn events")
+		}
+	}
+	if !sawResumedDelta {
+		t.Fatalf("resume stream did not receive the remaining delta")
+	}
+
+	status, stopReason := waitForTerminalTurn(t, ts.URL, "client-a", threadID, 4*time.Second)
+	if status != "completed" || stopReason != "end_turn" {
+		t.Fatalf("turn status/stopReason = %q/%q, want %q/%q", status, stopReason, "completed", "end_turn")
+	}
+}
+
+func TestThreadListIncludesHasActiveSessionForRunningTurn(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	firstDelivered := make(chan struct{}, 1)
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		agent: &resumableStreamer{
+			firstDelta:     "hello ",
+			secondDelta:    "world",
+			firstDelivered: firstDelivered,
+			release:        release,
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	resp, cancelStream := startTurnStreamHTTP(t, ts.URL, "client-a", threadID, "resume me")
+	defer cancelStream()
+	defer resp.Body.Close()
+	_, doneCh := streamSSEEvents(resp.Body)
+
+	select {
+	case <-firstDelivered:
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timeout waiting for running turn to produce first delta")
+	}
+
+	status, body := doJSON(t, http.MethodGet, ts.URL+"/v1/threads", nil, map[string]string{"X-Client-ID": "client-b"})
+	if status != http.StatusOK {
+		t.Fatalf("list threads status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+	var list struct {
+		Threads []struct {
+			ThreadID         string `json:"threadId"`
+			HasActiveSession bool   `json:"hasActiveSession"`
+		} `json:"threads"`
+	}
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("unmarshal list threads: %v", err)
+	}
+	var found bool
+	for _, thread := range list.Threads {
+		if thread.ThreadID != threadID {
+			continue
+		}
+		found = true
+		if !thread.HasActiveSession {
+			t.Fatalf("list threads hasActiveSession = false, want true")
+		}
+	}
+	if !found {
+		t.Fatalf("thread %q not found in list response", threadID)
+	}
+
+	status, body = doJSON(t, http.MethodGet, ts.URL+"/v1/threads/"+threadID, nil, map[string]string{"X-Client-ID": "client-b"})
+	if status != http.StatusOK {
+		t.Fatalf("get thread status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+	var getResp struct {
+		Thread struct {
+			HasActiveSession bool `json:"hasActiveSession"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal([]byte(body), &getResp); err != nil {
+		t.Fatalf("unmarshal get thread: %v", err)
+	}
+	if !getResp.Thread.HasActiveSession {
+		t.Fatalf("get thread hasActiveSession = false, want true")
+	}
+
+	close(release)
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("running turn stream ended with error: %v", err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timeout waiting for running turn stream to finish")
+	}
+
+	status, body = doJSON(t, http.MethodGet, ts.URL+"/v1/threads/"+threadID, nil, map[string]string{"X-Client-ID": "client-b"})
+	if status != http.StatusOK {
+		t.Fatalf("get thread after completion status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+	if err := json.Unmarshal([]byte(body), &getResp); err != nil {
+		t.Fatalf("unmarshal get thread after completion: %v", err)
+	}
+	if getResp.Thread.HasActiveSession {
+		t.Fatalf("get thread hasActiveSession = true after completion, want false")
+	}
+}
+
+func TestTurnEventsStreamFansOutToMultipleSubscribers(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		agent: &resumableStreamer{
+			firstDelta:  "alpha ",
+			secondDelta: "omega",
+			release:     release,
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	resp, cancelStream := startTurnStreamHTTP(t, ts.URL, "client-a", threadID, "fanout")
+	defer cancelStream()
+	defer resp.Body.Close()
+	eventsCh, doneCh := streamSSEEvents(resp.Body)
+
+	turnID := ""
+	lastSeq := 0
+	deadline := time.After(4 * time.Second)
+	for {
+		select {
+		case ev, ok := <-eventsCh:
+			if !ok {
+				t.Fatalf("stream ended before first delta")
+			}
+			switch ev.Event {
+			case "turn_started":
+				turnID = stringField(ev.Data, "turnId")
+			case "message_delta":
+				if got := stringField(ev.Data, "delta"); got != "alpha " {
+					t.Fatalf("first message_delta = %q, want %q", got, "alpha ")
+				}
+				lastSeq = intField(ev.Data, "seq")
+				goto fanoutReady
+			}
+		case err := <-doneCh:
+			t.Fatalf("stream ended before first delta: %v", err)
+		case <-deadline:
+			t.Fatalf("timeout waiting for first streamed delta")
+		}
+	}
+
+fanoutReady:
+	if turnID == "" {
+		t.Fatalf("turnId is empty")
+	}
+	if lastSeq == 0 {
+		t.Fatalf("first delta seq is empty")
+	}
+
+	subRespOne, cancelOne := startTurnEventsHTTP(t, ts.URL, "client-b", turnID, lastSeq)
+	defer cancelOne()
+	defer subRespOne.Body.Close()
+	subEventsOne, subDoneOne := streamSSEEvents(subRespOne.Body)
+
+	subRespTwo, cancelTwo := startTurnEventsHTTP(t, ts.URL, "client-c", turnID, lastSeq)
+	defer cancelTwo()
+	defer subRespTwo.Body.Close()
+	subEventsTwo, subDoneTwo := streamSSEEvents(subRespTwo.Body)
+
+	close(release)
+
+	assertSubscriber := func(eventsCh <-chan parsedSSEEvent, doneCh <-chan error, name string) {
+		t.Helper()
+		sawDelta := false
+		sawCompleted := false
+		deadline := time.After(4 * time.Second)
+		for !sawCompleted {
+			select {
+			case ev, ok := <-eventsCh:
+				if !ok {
+					t.Fatalf("%s stream ended before completion", name)
+				}
+				switch ev.Event {
+				case "message_delta":
+					if got := stringField(ev.Data, "delta"); got != "omega" {
+						t.Fatalf("%s delta = %q, want %q", name, got, "omega")
+					}
+					sawDelta = true
+				case "turn_completed":
+					if got := stringField(ev.Data, "stopReason"); got != "end_turn" {
+						t.Fatalf("%s stopReason = %q, want %q", name, got, "end_turn")
+					}
+					sawCompleted = true
+				}
+			case err := <-doneCh:
+				if err != nil {
+					t.Fatalf("%s stream ended early: %v", name, err)
+				}
+				doneCh = nil
+			case <-deadline:
+				t.Fatalf("timeout waiting for %s subscriber", name)
+			}
+		}
+		if !sawDelta {
+			t.Fatalf("%s subscriber missed live delta", name)
+		}
+	}
+
+	assertSubscriber(subEventsOne, subDoneOne, "first")
+	assertSubscriber(subEventsTwo, subDoneTwo, "second")
 }
 
 func TestInjectedPromptIncludesSummaryAndRecent(t *testing.T) {
@@ -4850,6 +5277,20 @@ func stringField(payload map[string]any, key string) string {
 	v, _ := payload[key]
 	s, _ := v.(string)
 	return s
+}
+
+func intField(payload map[string]any, key string) int {
+	v, _ := payload[key]
+	switch value := v.(type) {
+	case float64:
+		return int(value)
+	case int64:
+		return int(value)
+	case int:
+		return value
+	default:
+		return 0
+	}
 }
 
 func int64Field(payload map[string]any, key string) int64 {
@@ -5454,6 +5895,39 @@ func (s *sessionScopedStreamer) Stream(ctx context.Context, input string, onDelt
 	return agents.StopReasonEndTurn, nil
 }
 
+type resumableStreamer struct {
+	firstDelta     string
+	secondDelta    string
+	firstDelivered chan<- struct{}
+	release        <-chan struct{}
+}
+
+func (s *resumableStreamer) Name() string {
+	return "resumable-streamer"
+}
+
+func (s *resumableStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = input
+	if err := onDelta(s.firstDelta); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if s.firstDelivered != nil {
+		select {
+		case s.firstDelivered <- struct{}{}:
+		default:
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return agents.StopReasonCancelled, ctx.Err()
+	case <-s.release:
+	}
+	if err := onDelta(s.secondDelta); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
 type sessionTranscriptStreamer struct {
 	result        agents.SessionTranscriptResult
 	lastSessionID atomic.Value
@@ -5802,6 +6276,35 @@ func startTurnStreamHTTP(t *testing.T, baseURL, clientID, threadID, input string
 		raw, _ := io.ReadAll(resp.Body)
 		cancel()
 		t.Fatalf("stream status = %d, want %d, body=%s", resp.StatusCode, http.StatusOK, string(raw))
+	}
+	return resp, cancel
+}
+
+func startTurnEventsHTTP(t *testing.T, baseURL, clientID, turnID string, afterSeq int) (*http.Response, context.CancelFunc) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	url := baseURL + "/v1/turns/" + turnID + "/events"
+	if afterSeq > 0 {
+		url += "?after=" + strconv.Itoa(afterSeq)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		cancel()
+		t.Fatalf("http.NewRequest turn events: %v", err)
+	}
+	req.Header.Set("X-Client-ID", clientID)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		cancel()
+		t.Fatalf("http.Do turn events request: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		cancel()
+		t.Fatalf("turn events status = %d, want %d, body=%s", resp.StatusCode, http.StatusOK, string(raw))
 	}
 	return resp, cancel
 }

@@ -45,3 +45,8 @@ func (sw *Writer) Event(eventType string, payload any) error {
 	sw.flusher.Flush()
 	return nil
 }
+
+// Flush flushes pending headers/body bytes without emitting an event frame.
+func (sw *Writer) Flush() {
+	sw.flusher.Flush()
+}

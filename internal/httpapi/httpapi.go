@@ -125,6 +125,7 @@ type Server struct {
 
 	agentMu       sync.Mutex
 	agentsByScope map[string]*managedAgent
+	turnEvents    *turnEventBroker
 	janitorStop   chan struct{}
 	janitorDone   chan struct{}
 }
@@ -139,6 +140,7 @@ const (
 	threadAgentOptionFreshSessionKey = "_ngentFreshSession"
 	eventTypeUserPrompt              = "user_prompt"
 	eventTypeMessageContent          = "message_content"
+	eventTypePermissionResolved      = "permission_resolved"
 	eventTypeReasoningDelta          = "reasoning_delta"
 	eventTypeSessionInfoUpdate       = "session_info_update"
 	eventTypeSessionUsageUpdate      = "session_usage_update"
@@ -266,6 +268,7 @@ func New(cfg Config) *Server {
 		frontendHandler:    cfg.FrontendHandler,
 		permissions:        make(map[string]*pendingPermission),
 		agentsByScope:      make(map[string]*managedAgent),
+		turnEvents:         newTurnEventBroker(),
 		janitorStop:        make(chan struct{}),
 		janitorDone:        make(chan struct{}),
 	}
@@ -374,6 +377,11 @@ func (s *Server) routeV1(w http.ResponseWriter, r *http.Request, clientID string
 
 	if permissionID, ok := parsePermissionPath(r.URL.Path); ok {
 		s.handlePermissionDecision(w, r, clientID, permissionID)
+		return
+	}
+
+	if turnID, ok := parseTurnEventsPath(r.URL.Path); ok {
+		s.handleTurnEventsStream(w, r, clientID, turnID)
 		return
 	}
 
@@ -676,7 +684,7 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request, clien
 
 	items := make([]threadResponse, 0, len(threads))
 	for _, thread := range threads {
-		item, convErr := toThreadResponse(thread)
+		item, convErr := s.threadResponseForThread(thread)
 		if convErr != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to encode thread", map[string]any{"reason": convErr.Error()})
 			return
@@ -699,7 +707,7 @@ func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request, clientI
 		return
 	}
 
-	resp, convErr := toThreadResponse(thread)
+	resp, convErr := s.threadResponseForThread(thread)
 	if convErr != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "failed to encode thread", map[string]any{"reason": convErr.Error()})
 		return
@@ -817,7 +825,7 @@ func (s *Server) handleUpdateThread(w http.ResponseWriter, r *http.Request, clie
 		return
 	}
 
-	resp, convErr := toThreadResponse(updatedThread)
+	resp, convErr := s.threadResponseForThread(updatedThread)
 	if convErr != nil {
 		writeError(w, http.StatusInternalServerError, codeInternal, "failed to encode thread", map[string]any{"reason": convErr.Error()})
 		return
@@ -921,7 +929,7 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 
 	turnID := newTurnID()
 	turnSessionID := threadSessionID(thread.AgentOptionsJSON)
-	turnCtx, cancelTurn := context.WithCancel(r.Context())
+	turnCtx, cancelTurn := context.WithCancel(context.WithoutCancel(r.Context()))
 	persistCtx := context.WithoutCancel(r.Context())
 	if err := s.turns.Activate(thread.ThreadID, turnSessionID, turnID, cancelTurn); err != nil {
 		if errors.Is(err, runtime.ErrActiveTurnExists) {
@@ -937,6 +945,7 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 	defer func() {
 		cancelTurn()
 		s.turns.Release(thread.ThreadID, turnSessionID, turnID)
+		s.turnEvents.CloseTurn(turnID)
 	}()
 	if err := s.syncThreadConfigSelections(r.Context(), thread, streamAgent); err != nil {
 		writeError(w, http.StatusServiceUnavailable, codeUpstreamUnavailable, "failed to sync thread config options", map[string]any{
@@ -972,24 +981,28 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 	}
 
 	aggregated := strings.Builder{}
+	requestStreamClosed := false
+
+	writeStreamEvent := func(eventType string, payload map[string]any) {
+		if requestStreamClosed {
+			return
+		}
+		if err := streamWriter.Event(eventType, payload); err != nil {
+			requestStreamClosed = true
+		}
+	}
 
 	emit := func(eventType string, payload map[string]any) error {
-		dataJSON, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			return marshalErr
+		_, streamPayload, err := s.appendTurnEvent(persistCtx, turnID, eventType, payload)
+		if err != nil {
+			return err
 		}
-		if _, appendErr := s.store.AppendEvent(persistCtx, turnID, eventType, string(dataJSON)); appendErr != nil {
-			return appendErr
-		}
-		return streamWriter.Event(eventType, payload)
+		writeStreamEvent(eventType, streamPayload)
+		return nil
 	}
 	appendOnlyEvent := func(eventType string, payload map[string]any) error {
-		dataJSON, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		_, appendErr := s.store.AppendEvent(persistCtx, turnID, eventType, string(dataJSON))
-		return appendErr
+		_, _, err := s.appendTurnEvent(persistCtx, turnID, eventType, payload)
+		return err
 	}
 
 	if req.Prompt.HasResourceLinks() {
@@ -1001,10 +1014,11 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 	}
 
 	w.WriteHeader(http.StatusOK)
+	streamWriter.Flush()
 
 	turnCtx = agents.WithPermissionHandler(turnCtx, func(permissionCtx context.Context, req agents.PermissionRequest) (agents.PermissionResponse, error) {
 		permissionID := s.nextPermissionID(req.RequestID)
-		pending := newPendingPermission(req.Options)
+		pending := newPendingPermission(turnID, req.Options)
 		s.registerPermission(permissionID, pending)
 		defer s.unregisterPermission(permissionID, pending)
 
@@ -1023,7 +1037,15 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 			return permissionFailClosedResponse(), err
 		}
 
-		return s.waitPermissionResponse(permissionCtx, pending), nil
+		response := s.waitPermissionResponse(permissionCtx, pending)
+		if err := emit(eventTypePermissionResolved, pending.resolvedEventPayload(permissionID, response)); err != nil {
+			s.logger.Warn("permission.resolved_event_failed",
+				"turnId", turnID,
+				"permissionId", permissionID,
+				"reason", err.Error(),
+			)
+		}
+		return response, nil
 	})
 	turnCtx = agents.WithPlanHandler(turnCtx, func(planCtx context.Context, entries []agents.PlanEntry) error {
 		_ = planCtx
@@ -2933,14 +2955,15 @@ func (s *Server) getAccessibleThread(ctx context.Context, threadID string) (stor
 }
 
 type threadResponse struct {
-	ThreadID     string          `json:"threadId"`
-	Agent        string          `json:"agent"`
-	CWD          string          `json:"cwd"`
-	Title        string          `json:"title"`
-	AgentOptions json.RawMessage `json:"agentOptions"`
-	Summary      string          `json:"summary"`
-	CreatedAt    string          `json:"createdAt"`
-	UpdatedAt    string          `json:"updatedAt"`
+	ThreadID         string          `json:"threadId"`
+	Agent            string          `json:"agent"`
+	CWD              string          `json:"cwd"`
+	Title            string          `json:"title"`
+	AgentOptions     json.RawMessage `json:"agentOptions"`
+	Summary          string          `json:"summary"`
+	HasActiveSession bool            `json:"hasActiveSession"`
+	CreatedAt        string          `json:"createdAt"`
+	UpdatedAt        string          `json:"updatedAt"`
 }
 
 type threadGitResponse struct {
@@ -2987,6 +3010,7 @@ var (
 )
 
 type pendingPermission struct {
+	turnID  string
 	options map[string]agents.PermissionOption
 
 	ch   chan agents.PermissionResponse
@@ -3007,7 +3031,7 @@ type threadConfigSelectionState interface {
 	CurrentConfigOverrides() map[string]string
 }
 
-func newPendingPermission(options []agents.PermissionOption) *pendingPermission {
+func newPendingPermission(turnID string, options []agents.PermissionOption) *pendingPermission {
 	optionMap := make(map[string]agents.PermissionOption, len(options))
 	for _, option := range options {
 		optionID := strings.TrimSpace(option.OptionID)
@@ -3021,6 +3045,7 @@ func newPendingPermission(options []agents.PermissionOption) *pendingPermission 
 		}
 	}
 	return &pendingPermission{
+		turnID:  strings.TrimSpace(turnID),
 		options: optionMap,
 		ch:      make(chan agents.PermissionResponse, 1),
 	}
@@ -3057,21 +3082,46 @@ func (p *pendingPermission) normalizeDecision(response agents.PermissionResponse
 	return response, nil
 }
 
-func toThreadResponse(thread storage.Thread) (threadResponse, error) {
+func (p *pendingPermission) resolvedEventPayload(permissionID string, response agents.PermissionResponse) map[string]any {
+	payload := map[string]any{
+		"turnId":       p.turnID,
+		"permissionId": strings.TrimSpace(permissionID),
+		"outcome":      string(response.Outcome),
+	}
+	if optionID := strings.TrimSpace(response.SelectedOptionID); optionID != "" {
+		payload["optionId"] = optionID
+		if option, ok := p.options[optionID]; ok {
+			if name := strings.TrimSpace(option.Name); name != "" {
+				payload["optionName"] = name
+			}
+			if kind := strings.TrimSpace(option.Kind); kind != "" {
+				payload["optionKind"] = kind
+			}
+		}
+	}
+	return payload
+}
+
+func (s *Server) threadResponseForThread(thread storage.Thread) (threadResponse, error) {
+	return toThreadResponse(thread, s.turns.HasActiveSession(thread.ThreadID))
+}
+
+func toThreadResponse(thread storage.Thread, hasActiveSession bool) (threadResponse, error) {
 	raw, err := sanitizeThreadAgentOptionsForResponse(thread.AgentOptionsJSON)
 	if err != nil {
 		return threadResponse{}, fmt.Errorf("invalid agent_options_json for thread %s", thread.ThreadID)
 	}
 
 	return threadResponse{
-		ThreadID:     thread.ThreadID,
-		Agent:        thread.AgentID,
-		CWD:          thread.CWD,
-		Title:        thread.Title,
-		AgentOptions: raw,
-		Summary:      thread.Summary,
-		CreatedAt:    thread.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:    thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ThreadID:         thread.ThreadID,
+		Agent:            thread.AgentID,
+		CWD:              thread.CWD,
+		Title:            thread.Title,
+		AgentOptions:     raw,
+		Summary:          thread.Summary,
+		HasActiveSession: hasActiveSession,
+		CreatedAt:        thread.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:        thread.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}, nil
 }
 

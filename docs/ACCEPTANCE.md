@@ -22,20 +22,22 @@ This checklist defines executable acceptance checks for requirements 1-16.
 
 ## Requirement 1: HTTP/JSON plus SSE
 
-- Operation: call JSON endpoint and one SSE turn endpoint.
-- Expected: JSON response is `application/json`; turn endpoint is `text/event-stream`; turn streams can persist auxiliary event types such as `reasoning_delta` and `plan_update` alongside `message_delta`.
+- Operation: call JSON endpoint, start one SSE turn, then attach a second SSE viewer to the same turn with `GET /v1/turns/{turnId}/events?after=<seq>`.
+- Expected: JSON response is `application/json`; both the turn-create stream and the per-turn replay/tail stream are `text/event-stream`; replayable turn events carry monotonic per-turn `seq` values; turn streams can persist auxiliary event types such as `reasoning_delta` and `plan_update` alongside `message_delta`.
 - Verification command:
   - `curl -sS -i http://127.0.0.1:8686/healthz`
   - `curl -sS -N -H 'X-Client-ID: demo' -H 'Content-Type: application/json' -d '{"input":"hello","stream":true}' http://127.0.0.1:8686/v1/threads/<threadId>/turns`
+  - `curl -sS -N -H 'X-Client-ID: demo' http://127.0.0.1:8686/v1/turns/<turnId>/events?after=<seq>`
   - `go test ./internal/httpapi -run TestTurnsSSEAndHistory -count=1`
   - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
+  - `go test ./internal/httpapi -run TestTurnDisconnectDoesNotCancelAndCanResumeFromTurnEvents -count=1`
 
 ## Requirement 2: Multi-client and multi-thread support
 
-- Operation: create a thread under one `X-Client-ID` and verify a different `X-Client-ID` can list and open the same thread.
-- Expected: thread/session state is shared across browser clients connected to the same ngent instance.
+- Operation: create a thread under one `X-Client-ID`, verify a different `X-Client-ID` can list/open the same thread, and attach two live viewers to the same active turn.
+- Expected: thread/session state is shared across browser clients connected to the same ngent instance, `GET /v1/threads` / `GET /v1/threads/{threadId}` expose `hasActiveSession` for live threads, and the same active turn can fan out ordered live events to multiple viewers concurrently.
 - Verification command:
-  - `go test ./internal/httpapi -run 'TestThreadAccessAcrossClientsSharesThreads|TestUpdateThreadAgentOptionsAcrossClients|TestThreadConfigOptionsAcrossClients' -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadAccessAcrossClientsSharesThreads|TestUpdateThreadAgentOptionsAcrossClients|TestThreadConfigOptionsAcrossClients|TestTurnEventsStreamFansOutToMultipleSubscribers|TestThreadListIncludesHasActiveSessionForRunningTurn' -count=1`
 
 ## Requirement 3: Per-thread independent agent instance
 
@@ -46,10 +48,11 @@ This checklist defines executable acceptance checks for requirements 1-16.
 
 ## Requirement 4: One active turn per thread/session scope plus cancel
 
-- Operation: start first turn, submit second turn on same session, verify conflict; then switch to another session on the same thread and verify that second session can run concurrently; finally cancel.
-- Expected: same-session second turn gets `409 CONFLICT`; different session on the same thread is allowed; cancel converges quickly.
+- Operation: start first turn, submit second turn on same session and verify conflict; switch to another session on the same thread and verify that second session can run concurrently; disconnect the original viewer and verify the first turn remains active; finally issue explicit cancel.
+- Expected: same-session second turn gets `409 CONFLICT`; different session on the same thread is allowed; viewer disconnect or browser refresh alone does not cancel the active turn; explicit cancel still converges quickly.
 - Verification command:
   - `go test ./internal/httpapi -run 'TestTurnConflictSingleActiveTurnPerSession|TestTurnAllowsConcurrentSessionsOnSameThread|TestUpdateThreadClearingSessionDropsStaleUnboundProvider' -count=1`
+  - `go test ./internal/httpapi -run TestTurnDisconnectDoesNotCancelAndCanResumeFromTurnEvents -count=1`
   - `go test ./internal/httpapi -run TestTurnCancel -count=1`
 
 ## Requirement 5: Lazy startup
@@ -69,11 +72,12 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 7: Permission forwarding and fail-closed
 
 - Operation: trigger permission-required flow; test approved, timeout, and disconnect cases.
-- Expected: `permission_required` emitted; when the provider advertises permission `options[]`, the SSE payload preserves them and `/v1/permissions/{permissionId}` can submit an exact `optionId`; timeout/disconnect still fail closed.
+- Expected: `permission_required` emitted; when the provider advertises permission `options[]`, the SSE payload preserves them and `/v1/permissions/{permissionId}` can submit an exact `optionId`; once a decision is recorded, viewers of the same live turn receive `permission_resolved`; timeout/disconnect still fail closed.
   - embedded codex command-approval flow should not fail with adapter-side `-32601 method not found` when using updated app-server request methods.
 - Verification command:
   - `go test ./internal/httpapi -run TestTurnPermissionRequiredSSEEvent -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionApprovedContinuesAndCompletes -count=1`
+  - `go test ./internal/httpapi -run TestTurnEventsStreamBroadcastsPermissionResolved -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionSelectedOptionFlowsThroughExactAgentChoice -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionTimeoutFailClosed -count=1`
   - `go test ./internal/httpapi -run TestTurnPermissionSSEDisconnectFailClosed -count=1`
@@ -120,15 +124,17 @@ This checklist defines executable acceptance checks for requirements 1-16.
 
 ## Requirement 13: Embedded Web UI
 
-- Operation: start server; open browser at `http://127.0.0.1:8686/`.
-- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the current restrained desktop-workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, its collapse/expand affordance is revealed from the chat panel's left edge, and the selected session row is visually obvious through the stronger active treatment alone without needing a separate badge. When the active session has ACP session-usage `contextUsed/contextSize`, the composer footer shows a compact neutral ring-only context-pressure indicator to the right of the git branch pill; when usage is absent, no placeholder is rendered. For Codex-backed sessions, the usage cache and Web UI lookup must key off the same stable session id shown in the session list instead of raw ACP load ids like `session-1`. The indicator remains a fixed neutral tone instead of switching to warning/danger hues at higher usage. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming.
+- Operation: start server; open browser at `http://127.0.0.1:8686/`; begin a live turn; refresh the page or open the same thread from another browser while that turn is still running.
+- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the current restrained desktop-workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, its collapse/expand affordance is revealed from the chat panel's left edge, and the selected session row is visually obvious through the stronger active treatment alone without needing a separate badge. When the active session has ACP session-usage `contextUsed/contextSize`, the composer footer shows a compact neutral ring-only context-pressure indicator to the right of the git branch pill; when usage is absent, no placeholder is rendered. For Codex-backed sessions, the usage cache and Web UI lookup must key off the same stable session id shown in the session list instead of raw ACP load ids like `session-1`. The indicator remains a fixed neutral tone instead of switching to warning/danger hues at higher usage. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming. Refreshing the browser or attaching another browser during an active turn must keep the active session visible, restore the live bubble from persisted events, continue streaming the remaining response instead of cancelling the turn, update permission cards when another browser approves/denies the same request, and show active-thread state in the left thread list through the server-provided `hasActiveSession` flag.
 - Verification command:
   - `go test ./internal/webui -count=1` (checks `GET /` returns 200 with `text/html` content-type and SPA fallback)
   - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
+  - `go test ./internal/httpapi -run TestTurnDisconnectDoesNotCancelAndCanResumeFromTurnEvents -count=1`
+  - `go test ./internal/httpapi -run TestTurnEventsStreamFansOutToMultipleSubscribers -count=1`
   - `go test ./internal/httpapi -run TestTurnSessionUsageUpdateSSEHistoryAndCache -count=1`
   - `go test ./internal/agents/codex -run 'TestNotifyCachedSessionUsagePromotesRawID|TestConsumeCodexReplayUpdateNormalizesSessionUsageID' -count=1`
   - `cd internal/webui/web && npm run build`
-  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the session list, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, and unsent textarea content survives both session/agent switches and turn completion rebuilds
+  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the session list, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, unsent textarea content survives both session/agent switches and turn completion rebuilds, and refreshing or opening the same thread in another browser during an active turn keeps the same session visible and the live response continues instead of being cancelled
 
 ## Global Gate
 

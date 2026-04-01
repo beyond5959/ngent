@@ -10,6 +10,7 @@ const TICK_MS = 1_000
 
 type ResolveOutcome = 'approved' | 'declined' | 'cancelled'
 type ResolveState = ResolveOutcome | 'selected' | 'timeout'
+export type PermissionCardResolvedState = ResolveState
 
 interface PermissionAction {
   label: string
@@ -320,6 +321,13 @@ function showResolved(
 
   cardEl.classList.add(`permission-card--${resolved.state}`)
   onResolved?.(resolved.state)
+}
+
+export function resolveMountedPermissionCard(
+  pid: string,
+  resolved: { state: PermissionCardResolvedState; label?: string },
+): void {
+  showResolved(pid, resolved)
 }
 
 function resolvedLabel(resolved: ResolvedPermission): string {

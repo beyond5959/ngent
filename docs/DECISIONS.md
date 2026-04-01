@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-069: Keep active turns independent of individual SSE viewers and resume them through per-turn event streams. (Accepted)
 - ADR-068: Add browser-default English/Simplified Chinese localization to the embedded Web UI. (Accepted)
 - ADR-067: Persist ACP session usage snapshots and surface context-window pressure in the Web UI. (Accepted)
 - ADR-066: Surface thread-scoped git branch state in the Web UI composer. (Accepted)
@@ -60,6 +61,35 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-069: Keep Active Turns Independent Of Individual SSE Viewers And Resume Them Through Per-Turn Event Streams
+
+- Status: Accepted
+- Date: 2026-04-01
+- Context:
+  - the original `POST /v1/threads/{threadId}/turns` SSE request previously owned the turn lifetime, so refreshing the browser or losing that viewer connection cancelled the active turn even when the user did not ask to stop it.
+  - product now requires the opposite behavior: only explicit cancel, provider terminal state, or fail-closed permission timeout should end a healthy in-flight turn.
+  - refreshed browsers and other concurrent browsers also need to attach to the same active turn, receive the remaining live deltas in order, and keep the same active session visible.
+  - ngent already persisted turn events, but write-time delta merging weakened a strict `afterSeq` resume contract for live replay.
+- Decision:
+  - decouple turn execution lifetime from the original SSE viewer connection by running the turn under a context that survives request disconnect; explicit cancel and existing fail-closed permission timeout behavior remain intact.
+  - add `GET /v1/turns/{turnId}/events?after=<seq>` as a per-turn SSE endpoint that:
+    - subscribes to a live in-memory broker for that turn.
+    - replays persisted events with `seq > after`.
+    - continues tailing newly published events until terminal completion.
+  - emit a first-class `permission_resolved` turn event whenever a pending permission is decided or times out, so every viewer of that turn converges on the same permission state.
+  - expose `hasActiveSession` on thread list/get responses so a newly opened browser can tell which thread currently has a live session before it opens history for that thread.
+  - keep turn-event storage append-only on write, including consecutive delta events, and expose monotonic per-turn `seq` values in replayable SSE payloads.
+  - update the embedded Web UI to hydrate already-running turns from persisted history and then reattach via the new per-turn stream, so refresh and multi-browser viewing preserve the same active conversation.
+- Consequences:
+  - browser refreshes and other non-user transport disconnects no longer cancel healthy turns.
+  - multiple browsers can observe one running turn concurrently and receive the same ordered live event stream.
+  - SQLite now stores more raw delta rows than the earlier write-time merge approach, but resume correctness improves; any delta coalescing stays a read-path concern only.
+  - turn cancellation semantics are clearer: only explicit cancel, timeout, or provider terminal state stop the turn.
+- Alternatives considered:
+  - keep request-bound execution and require the browser to resubmit on refresh (rejected: duplicates work and violates the requested UX).
+  - use one shared global SSE channel for all turns (rejected: worse isolation and unnecessary cross-turn fanout noise).
+  - keep write-time delta merging and resume from timestamps instead of sequence numbers (rejected: weaker ordering guarantees and more ambiguous recovery behavior).
 
 ## ADR-068: Add Browser-Default English/Simplified Chinese Localization To The Embedded Web UI
 

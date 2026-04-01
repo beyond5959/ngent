@@ -101,13 +101,18 @@
 - Follow-up plan: consider an opt-in `--log-format=json|pretty` switch if operator demand for machine-readable logs returns
 
 - ID: KI-001
-- Title: SSE disconnect during long-running turn
-- Status: Open
+- Title: SSE viewer disconnect can still cause a temporary live-view gap
+- Status: Mitigated
 - Severity: Medium
 - Affects: streaming clients on unstable links
-- Symptom: stream closes and client misses live tokens/events
-- Workaround: reconnect with last seen event sequence and replay from history endpoint
-- Follow-up plan: add heartbeat and explicit resume token contract in M4
+- Symptom:
+  - a dropped viewer connection no longer cancels the underlying turn, but that specific viewer still stops receiving live tokens until it reconnects.
+  - if the network silently stalls rather than hard-closing, the browser can still experience a short gap before reconnect logic notices and resumes tailing the active turn.
+- Workaround:
+  - refresh/reopen the same thread or reconnect with `GET /v1/turns/{turnId}/events?after=<lastSeq>`.
+  - the underlying turn keeps running unless the user explicitly cancels it or it times out while waiting on permission.
+- Follow-up plan:
+  - add heartbeat/idle detection so dead viewer connections are noticed faster and reconnect latency is more predictable.
 
 - ID: KI-002
 - Title: Permission decision timeout
@@ -152,7 +157,7 @@
 - Affects: clients that close stream while permission is pending
 - Symptom: decision endpoint may return `404/409` after auto fail-closed resolution
 - Workaround: reconnect and inspect turn history terminal state; treat stale `permissionId` as non-retriable
-- Follow-up plan: add explicit `permission_resolved` event with reason (`timeout|disconnect|client_decision`)
+- Follow-up plan: extend the existing `permission_resolved` event with an explicit machine-readable reason such as `timeout|disconnect|client_decision`
 
 - ID: KI-007
 - Title: Embedded codex runtime prerequisite mismatch

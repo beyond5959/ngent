@@ -39,6 +39,7 @@ export interface Thread {
   title: string
   agentOptions: Record<string, unknown>
   summary: string
+  hasActiveSession: boolean
   createdAt: string
   updatedAt: string
 }

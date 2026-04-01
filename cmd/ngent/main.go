@@ -32,14 +32,10 @@ import (
 	"github.com/beyond5959/ngent/internal/runtime"
 	"github.com/beyond5959/ngent/internal/storage"
 	"github.com/beyond5959/ngent/internal/webui"
-	"github.com/mattn/go-isatty"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-const (
-	startupLogoANSIInk   = "\x1b[38;2;15;118;110m"
-	startupLogoANSIReset = "\x1b[0m"
-	startupLogoASCII     = `
+const startupLogoASCII = `
 ███╗   ██╗ ██████╗ ███████╗███╗   ██╗████████╗
 ████╗  ██║██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
 ██╔██╗ ██║██║  ███╗█████╗  ██╔██╗ ██║   ██║   
@@ -47,7 +43,6 @@ const (
 ██║ ╚████║╚██████╔╝███████╗██║ ╚████║   ██║   
 ╚═╝  ╚═══╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   
 `
-)
 
 func main() {
 	logger := observability.NewLogger(observability.LevelInfo)
@@ -585,23 +580,7 @@ func printLogo(out io.Writer) {
 	if out == nil {
 		return
 	}
-	_, _ = fmt.Fprint(out, renderStartupLogo(startupBannerSupportsANSI(out)))
-}
-
-func renderStartupLogo(useANSI bool) string {
-	if !useANSI {
-		return startupLogoASCII
-	}
-	return startupLogoANSIInk + startupLogoASCII + startupLogoANSIReset
-}
-
-func startupBannerSupportsANSI(out io.Writer) bool {
-	file, ok := out.(*os.File)
-	if !ok {
-		return false
-	}
-	fd := file.Fd()
-	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+	_, _ = fmt.Fprint(out, startupLogoASCII)
 }
 
 // getLANURL returns the LAN-accessible URL for the given listen address.

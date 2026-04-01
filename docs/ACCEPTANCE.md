@@ -638,8 +638,8 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - start ngent from an interactive terminal and observe the startup banner on stderr.
   - optionally redirect stderr to a file or buffer and inspect the captured startup output.
 - Expected:
-  - the startup banner begins with the existing ASCII `NGENT` logo.
-  - ANSI color is applied only for interactive TTY output; redirected/non-TTY startup output remains plain text without raw escape sequences.
+  - the startup banner begins with the ASCII `NGENT` logo.
+  - the logo is displayed without ANSI colors in all output modes (both TTY and redirected).
   - the surrounding startup metadata remains readable and free of stray escape sequences when output is redirected or buffered.
 - Verification commands (executed 2026-03-26):
   - `cd internal/webui/web && npm run build`

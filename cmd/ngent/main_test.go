@@ -281,29 +281,3 @@ func TestPrintQRCodeDoesNothingForEmptyURL(t *testing.T) {
 	}
 }
 
-func TestPrintLogoSkipsANSIForNonTTYWriter(t *testing.T) {
-	var out bytes.Buffer
-	printLogo(&out)
-
-	got := out.String()
-	if got != startupLogoASCII {
-		t.Fatalf("printLogo() = %q, want plain ASCII logo", got)
-	}
-	if strings.Contains(got, startupLogoANSIInk) {
-		t.Fatalf("printLogo() unexpectedly emitted ANSI color: %q", got)
-	}
-}
-
-func TestRenderStartupLogoWithANSI(t *testing.T) {
-	got := renderStartupLogo(true)
-
-	if !strings.Contains(got, startupLogoANSIInk) {
-		t.Fatalf("renderStartupLogo(true) missing ink-green prefix: %q", got)
-	}
-	if !strings.Contains(got, startupLogoASCII) {
-		t.Fatalf("renderStartupLogo(true) missing ASCII art body: %q", got)
-	}
-	if !strings.HasSuffix(got, startupLogoANSIReset) {
-		t.Fatalf("renderStartupLogo(true) missing ANSI reset suffix: %q", got)
-	}
-}

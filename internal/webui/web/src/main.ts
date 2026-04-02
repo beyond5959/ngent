@@ -178,12 +178,33 @@ const iconDotsHorizontal = `<svg width="16" height="16" viewBox="0 0 16 16" fill
   <circle cx="12.8" cy="8" r="1.5" fill="currentColor"/>
 </svg>`
 
-const iconGitBranch = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-  <circle cx="4" cy="3" r="1.35" fill="currentColor"/>
-  <circle cx="12" cy="6" r="1.35" fill="currentColor"/>
-  <circle cx="4" cy="13" r="1.35" fill="currentColor"/>
-  <path d="M4 4.85v6.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M4 6.15v1.05A1.8 1.8 0 0 0 5.8 9h4.85" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+const iconGitBranch = `<svg class="git-ui-icon git-ui-icon--branch" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path class="git-ui-icon__track" d="M8 7v10.5"/>
+  <path class="git-ui-icon__track" d="M8 8h2.8c3.15 0 5.7 2.55 5.7 5.7"/>
+  <path class="git-ui-icon__line" d="M8 7v10.5"/>
+  <path class="git-ui-icon__line" d="M8 8h2.8c3.15 0 5.7 2.55 5.7 5.7"/>
+  <circle class="git-ui-icon__node-shell" cx="8" cy="5" r="3"/>
+  <circle class="git-ui-icon__node-shell git-ui-icon__node-shell--right" cx="16.5" cy="13.7" r="3.3"/>
+  <circle class="git-ui-icon__node-shell" cx="8" cy="19" r="3"/>
+  <circle class="git-ui-icon__node-core git-ui-icon__node-core--top" cx="8" cy="5" r="1.15"/>
+  <circle class="git-ui-icon__node-core git-ui-icon__node-core--right" cx="16.5" cy="13.7" r="1.3"/>
+  <circle class="git-ui-icon__node-core git-ui-icon__node-core--bottom" cx="8" cy="19" r="1.15"/>
+  <circle class="git-ui-icon__node-shine" cx="6.85" cy="3.95" r="0.72"/>
+  <circle class="git-ui-icon__node-shine" cx="15.25" cy="12.3" r="0.78"/>
+  <circle class="git-ui-icon__node-shine" cx="6.85" cy="17.85" r="0.72"/>
+</svg>`
+
+const iconGitDiff = `<svg class="git-ui-icon git-ui-icon--diff" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path class="git-ui-icon__link-track" d="M10.75 9.25 13.35 11.85"/>
+  <path class="git-ui-icon__link-line" d="M10.75 9.25 13.35 11.85"/>
+  <rect class="git-ui-icon__card git-ui-icon__card--plus" x="4" y="4" width="8.6" height="8.6" rx="2.45"/>
+  <rect class="git-ui-icon__card git-ui-icon__card--minus" x="11.4" y="11.4" width="8.6" height="8.6" rx="2.45"/>
+  <rect class="git-ui-icon__badge git-ui-icon__badge--plus" x="5.75" y="5.85" width="4.9" height="4.9" rx="1.3"/>
+  <rect class="git-ui-icon__badge git-ui-icon__badge--minus" x="13.25" y="13.25" width="5.4" height="4.9" rx="1.3"/>
+  <path class="git-ui-icon__mark git-ui-icon__mark--plus" d="M8.2 7.1v2.35M7.02 8.28h2.36"/>
+  <path class="git-ui-icon__mark git-ui-icon__mark--minus" d="M14.8 15.7h2.32"/>
+  <path class="git-ui-icon__gloss" d="M6.35 5.15h3.15"/>
+  <path class="git-ui-icon__gloss" d="M13.85 12.55h3.55"/>
 </svg>`
 
 const iconFile = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -6289,7 +6310,7 @@ function renderThreadGitDiffControl(thread: Thread): string {
         aria-controls="thread-git-diff-panel"
         title="${escHtml(expanded ? t('gitDiffHide') : t('gitDiffShow'))}"
       >
-        <span class="git-diff-trigger-icon" aria-hidden="true">${iconGitBranch}</span>
+        <span class="git-diff-trigger-icon" aria-hidden="true">${iconGitDiff}</span>
         <span class="git-diff-trigger-stats">
           ${renderThreadGitDiffStat(state.summary.insertions, 'added')}
           ${renderThreadGitDiffStat(state.summary.deletions, 'deleted')}

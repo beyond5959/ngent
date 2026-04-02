@@ -2801,20 +2801,90 @@ body {
 }
 
 .git-branch-trigger-icon {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
   color: color-mix(in srgb, var(--text-2) 72%, var(--text-3));
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 28%, transparent))
+    drop-shadow(0 6px 10px color-mix(in srgb, var(--accent) 10%, transparent));
+  transition: transform var(--t-fast), filter var(--t-fast), color var(--t-fast);
 }
 
 .git-branch-trigger:hover:not(:disabled) .git-branch-trigger-icon,
 .git-branch-trigger[aria-expanded="true"] .git-branch-trigger-icon {
   color: color-mix(in srgb, var(--text-1) 84%, var(--accent) 16%);
+  transform: translateY(-0.5px) scale(1.04);
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 34%, transparent))
+    drop-shadow(0 8px 14px color-mix(in srgb, var(--accent) 16%, transparent));
 }
 
 .git-branch-trigger-icon svg {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.git-ui-icon {
+  display: block;
+  overflow: visible;
+}
+
+.git-ui-icon__track,
+.git-ui-icon__line,
+.git-ui-icon__link-track,
+.git-ui-icon__link-line,
+.git-ui-icon__fold,
+.git-ui-icon__mark,
+.git-ui-icon__gloss {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.git-branch-trigger-icon .git-ui-icon__track {
+  stroke: color-mix(in srgb, var(--bg-panel-strong) 84%, var(--border-strong));
+  stroke-width: 4.4;
+  opacity: 0.98;
+}
+
+.git-branch-trigger-icon .git-ui-icon__line {
+  stroke: color-mix(in srgb, var(--text-1) 50%, var(--accent) 50%);
+  stroke-width: 2.3;
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-shell {
+  fill: color-mix(in srgb, var(--bg-panel-strong) 90%, white 10%);
+  stroke: color-mix(in srgb, var(--border-strong) 50%, var(--accent) 50%);
+  stroke-width: 1.24;
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-shell--right {
+  fill: color-mix(in srgb, var(--bg-panel-strong) 78%, var(--accent) 22%);
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-core--top,
+.git-branch-trigger-icon .git-ui-icon__node-core--bottom {
+  fill: color-mix(in srgb, var(--text-2) 26%, var(--accent) 74%);
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-core--right {
+  fill: color-mix(in srgb, var(--accent) 78%, white 22%);
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-shine {
+  fill: color-mix(in srgb, white 74%, transparent);
+  opacity: 0.78;
+}
+
+.git-branch-trigger:hover:not(:disabled) .git-ui-icon__line,
+.git-branch-trigger[aria-expanded="true"] .git-ui-icon__line {
+  stroke: color-mix(in srgb, var(--text-1) 44%, var(--accent) 56%);
+}
+
+.git-branch-trigger:hover:not(:disabled) .git-ui-icon__node-shell,
+.git-branch-trigger[aria-expanded="true"] .git-ui-icon__node-shell {
+  stroke: color-mix(in srgb, var(--border-strong) 44%, var(--accent) 56%);
 }
 
 .git-branch-trigger-label {
@@ -5545,13 +5615,17 @@ button:active:not(:disabled),
 }
 
 .git-diff-trigger-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: color-mix(in srgb, var(--text-2) 76%, var(--accent) 24%);
   flex: 0 0 auto;
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 30%, transparent))
+    drop-shadow(0 8px 14px color-mix(in srgb, var(--accent) 12%, transparent));
+  transition: transform var(--t-fast), filter var(--t-fast), color var(--t-fast);
 }
 
 .git-diff-trigger-icon svg,
@@ -5561,6 +5635,70 @@ button:active:not(:disabled),
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.git-diff-trigger:hover .git-diff-trigger-icon,
+.git-diff-trigger[aria-expanded="true"] .git-diff-trigger-icon {
+  transform: translateY(-0.5px) scale(1.04);
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 34%, transparent))
+    drop-shadow(0 10px 16px color-mix(in srgb, var(--accent) 16%, transparent));
+}
+
+.git-diff-trigger-icon .git-ui-icon__link-track {
+  stroke: color-mix(in srgb, var(--bg-panel-strong) 86%, var(--border-strong));
+  stroke-width: 4.8;
+}
+
+.git-diff-trigger-icon .git-ui-icon__link-line {
+  stroke: color-mix(in srgb, var(--text-2) 26%, var(--accent) 74%);
+  stroke-width: 2.25;
+}
+
+.git-diff-trigger-icon .git-ui-icon__card {
+  stroke-width: 1.15;
+}
+
+.git-diff-trigger-icon .git-ui-icon__card--plus {
+  fill: color-mix(in srgb, var(--success) 12%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--success) 34%, var(--border));
+}
+
+.git-diff-trigger-icon .git-ui-icon__card--minus {
+  fill: color-mix(in srgb, var(--error) 11%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--error) 32%, var(--border));
+}
+
+.git-diff-trigger-icon .git-ui-icon__badge {
+  stroke-width: 0.95;
+}
+
+.git-diff-trigger-icon .git-ui-icon__badge--plus {
+  fill: color-mix(in srgb, var(--success) 24%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--success) 40%, transparent);
+}
+
+.git-diff-trigger-icon .git-ui-icon__badge--minus {
+  fill: color-mix(in srgb, var(--error) 22%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--error) 36%, transparent);
+}
+
+.git-diff-trigger-icon .git-ui-icon__mark {
+  stroke-width: 1.65;
+}
+
+.git-diff-trigger-icon .git-ui-icon__mark--plus {
+  stroke: color-mix(in srgb, var(--success) 78%, white 22%);
+}
+
+.git-diff-trigger-icon .git-ui-icon__mark--minus {
+  stroke: color-mix(in srgb, var(--error) 80%, white 20%);
+}
+
+.git-diff-trigger-icon .git-ui-icon__gloss {
+  stroke: color-mix(in srgb, white 76%, transparent);
+  stroke-width: 0.9;
+  opacity: 0.84;
 }
 
 .git-diff-trigger-stats {

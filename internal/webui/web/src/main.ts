@@ -1412,6 +1412,10 @@ let lastRenderChatScopeKey = ''
 let lastRenderLanguage = store.get().language
 /** Chat scope keys whose filtered history was loaded. */
 const loadedHistoryScopeKeys = new Set<string>()
+/** Chat scope keys whose latest history load failed before any local messages were available. */
+const historyLoadErrorByScope = new Map<string, string>()
+/** Latest in-flight history request sequence for each chat scope key. */
+const historyLoadRequestSeqByScope = new Map<string, number>()
 /** Bound session scopes that were promoted from a temporary fresh-session scope. */
 const reboundFreshSessionScopeKeys = new Set<string>()
 /** Segment ids whose final Thinking panel is currently expanded in the UI. */
@@ -1422,6 +1426,7 @@ let openThreadActionMenuId: string | null = null
 let renamingThreadId: string | null = null
 let renamingThreadDraft = ''
 let sessionPanelExpanded = true
+let historyLoadRequestSeq = 0
 
 // ── Scroll helpers ────────────────────────────────────────────────────────
 
@@ -3841,6 +3846,16 @@ async function handleDeleteThread(threadId: string): Promise<void> {
       loadedHistoryScopeKeys.delete(scopeKey)
     }
   })
+  Array.from(historyLoadErrorByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      historyLoadErrorByScope.delete(scopeKey)
+    }
+  })
+  Array.from(historyLoadRequestSeqByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      historyLoadRequestSeqByScope.delete(scopeKey)
+    }
+  })
   Array.from(reboundFreshSessionScopeKeys).forEach(scopeKey => {
     if (scopeKey.startsWith(threadScopePrefix)) {
       reboundFreshSessionScopeKeys.delete(scopeKey)
@@ -4106,8 +4121,12 @@ async function loadHistory(threadId: string): Promise<void> {
   const requestedSessionID = selectionSessionID(sessionSelectionFromScopeKey(requestedScopeKey))
   if (!requestedScopeKey) return
   if (!requestedSessionID && isFreshSessionScopeKey(requestedScopeKey)) return
+  const requestSeq = ++historyLoadRequestSeq
+  historyLoadRequestSeqByScope.set(requestedScopeKey, requestSeq)
+  historyLoadErrorByScope.delete(requestedScopeKey)
   try {
     const turns = await api.getHistory(threadId, requestedSessionID)
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
     const state = store.get()
     if (state.activeThreadId !== threadId) return
     const activeThread = state.threads.find(item => item.threadId === threadId)
@@ -4117,6 +4136,7 @@ async function loadHistory(threadId: string): Promise<void> {
     const filteredTurns = filterTurnsBySession(turns, requestedSessionID)
     const runningTurn = [...filteredTurns].reverse().find(turn => turn.status === 'running') ?? null
     const localMessages = await turnsToMessagesAsync(filteredTurns)
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
     const cachedMessages = state.messages[requestedScopeKey] ?? []
     let nextMessages = localMessages
     if (requestedSessionID) {
@@ -4130,6 +4150,7 @@ async function loadHistory(threadId: string): Promise<void> {
       } else {
         try {
           const replay = await api.getThreadSessionHistory(threadId, requestedSessionID)
+          if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
           const transcriptState = store.get()
           if (transcriptState.activeThreadId !== threadId) return
           const transcriptThread = transcriptState.threads.find(item => item.threadId === threadId)
@@ -4153,6 +4174,7 @@ async function loadHistory(threadId: string): Promise<void> {
             }).catch(() => {})
           }
         } catch {
+          if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
           nextMessages = localMessages
         }
       }
@@ -4160,6 +4182,7 @@ async function loadHistory(threadId: string): Promise<void> {
     nextMessages = hydrateMessagesFromCache(nextMessages, localMessages)
     nextMessages = hydrateMessagesFromCache(nextMessages, cachedMessages)
 
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
     const finalState = store.get()
     if (finalState.activeThreadId !== threadId) return
     const finalThread = finalState.threads.find(item => item.threadId === threadId)
@@ -4167,6 +4190,7 @@ async function loadHistory(threadId: string): Promise<void> {
     if (getScopeStreamState(requestedScopeKey)) return
 
     loadedHistoryScopeKeys.add(requestedScopeKey)
+    historyLoadErrorByScope.delete(requestedScopeKey)
     const nextStreamStates = { ...finalState.streamStates }
     if (runningTurn) {
       nextStreamStates[requestedScopeKey] = hydrateRunningTurnStreamScope(
@@ -4204,14 +4228,21 @@ async function loadHistory(threadId: string): Promise<void> {
       }
     }
   } catch {
-    if (store.get().activeThreadId !== threadId) return
-    if (threadChatScopeKey(store.get().threads.find(item => item.threadId === threadId)) !== requestedScopeKey) return
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
+    historyLoadErrorByScope.set(requestedScopeKey, t('failedToLoadHistory'))
+    const failureState = store.get()
+    if (failureState.activeThreadId !== threadId) return
+    if (threadChatScopeKey(failureState.threads.find(item => item.threadId === threadId)) !== requestedScopeKey) return
     // Show error only if no matching local history was already rendered.
-    if (!loadedHistoryScopeKeys.has(requestedScopeKey)) {
+    if (!loadedHistoryScopeKeys.has(requestedScopeKey) && !(failureState.messages[requestedScopeKey] ?? []).length) {
       const listEl = document.getElementById('message-list')
       if (listEl) {
         listEl.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">${escHtml(t('failedToLoadHistory'))}</div>`
       }
+    }
+  } finally {
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) === requestSeq) {
+      historyLoadRequestSeqByScope.delete(requestedScopeKey)
     }
   }
 }
@@ -5299,6 +5330,16 @@ function updateMessageList(): void {
   const thread   = threads.find(t => t.threadId === activeThreadId)
   const scopeKey = threadChatScopeKey(thread)
   const msgs     = messages[scopeKey] ?? []
+  const historyLoadError = historyLoadErrorByScope.get(scopeKey)?.trim() ?? ''
+
+  if (!msgs.length && !loadedHistoryScopeKeys.has(scopeKey)) {
+    if (historyLoadError) {
+      listEl.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">${escHtml(historyLoadError)}</div>`
+    } else {
+      listEl.innerHTML = `<div class="message-list-loading"><div class="loading-spinner"></div></div>`
+    }
+    return
+  }
 
   if (!msgs.length) {
     listEl.innerHTML = renderEmptyState(

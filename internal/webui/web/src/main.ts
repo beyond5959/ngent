@@ -9,6 +9,7 @@ import {
   PERMISSION_TIMEOUT_MS,
   resolveMountedPermissionCard,
 } from './components/permission-card.ts'
+import { resolveGitDiffFileIcon } from './git-file-icons.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
 import type {
   Thread,
@@ -267,7 +268,7 @@ let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
 let threadGitDiffRequestSeq = 0
-const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 15_000
+const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 30_000
 let threadGitDiffPollTimer = 0
 let threadGitDiffPollScopeKey = ''
 const SESSION_ITEM_HOVER_PREVIEW_DELAY_MS = 120
@@ -6233,6 +6234,15 @@ function renderThreadGitDiffFileStats(file: ThreadGitDiffInfo['files'][number]):
   return `${added}${deleted}`
 }
 
+function renderThreadGitDiffFileIcon(path: string): string {
+  const icon = resolveGitDiffFileIcon(path)
+  if (!icon) {
+    return `<span class="git-diff-file-icon" aria-hidden="true">${iconFile}</span>`
+  }
+
+  return `<span class="git-diff-file-icon git-diff-file-icon--glyph git-diff-file-icon--${icon.font}" aria-hidden="true" style="--git-file-icon-color: ${icon.color}; --git-file-icon-scale: ${(icon.scale ?? 1).toFixed(2)};">${icon.glyph}</span>`
+}
+
 function renderThreadGitDiffControl(thread: Thread): string {
   const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) return ''
@@ -6245,7 +6255,7 @@ function renderThreadGitDiffControl(thread: Thread): string {
   const expanded = isThreadGitDiffExpanded(scopeKey)
   const fileRows = state.files.map(file => `
       <div class="git-diff-file-row">
-        <span class="git-diff-file-icon" aria-hidden="true">${iconFile}</span>
+        ${renderThreadGitDiffFileIcon(file.path)}
         <div class="git-diff-file-copy">
           <div class="git-diff-file-path" title="${escHtml(file.path)}">${escHtml(file.path)}</div>
         </div>

@@ -15,6 +15,38 @@
   src: url('/fonts/inter-variable-latin.woff2') format('woff2');
 }
 
+@font-face {
+  font-family: 'Git Diff File Icons FI';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-fi.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Git Diff File Icons MF';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-mf.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Git Diff File Icons FA';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-fa.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Git Diff File Icons Octicons';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-octicons.woff2') format('woff2');
+}
+
 /* ===== Design Tokens ===== */
 :root {
   /* Colors — light */
@@ -5464,6 +5496,7 @@ button:active:not(:disabled),
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
+  width: 100%;
 }
 
 .git-diff-widget--loading .git-diff-trigger {
@@ -5486,6 +5519,7 @@ button:active:not(:disabled),
     0 18px 28px -26px color-mix(in srgb, var(--text-1) 44%, transparent),
     inset 0 1px 0 color-mix(in srgb, white 30%, transparent);
   color: var(--text-1);
+  font-family: var(--font-mono);
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -5580,7 +5614,9 @@ button:active:not(:disabled),
 }
 
 .git-diff-panel {
-  width: min(100%, 680px);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: 18px;
   background: color-mix(in srgb, var(--bg-panel-strong) 97%, transparent);
@@ -5607,7 +5643,47 @@ button:active:not(:disabled),
   border-bottom: none;
 }
 
-.git-diff-file-icon,
+.git-diff-file-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex: 0 0 auto;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  background: color-mix(in srgb, var(--bg-inset) 86%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 24%, transparent);
+}
+
+.git-diff-file-icon--glyph {
+  font-style: normal;
+  font-weight: 400;
+  font-size: calc(11px * var(--git-file-icon-scale, 1));
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--git-file-icon-color, var(--text-2));
+  border-color: color-mix(in srgb, var(--git-file-icon-color, var(--border)) 22%, var(--border));
+  background: color-mix(in srgb, var(--git-file-icon-color, var(--text-2)) 12%, var(--bg-panel-strong));
+}
+
+.git-diff-file-icon--fi {
+  font-family: 'Git Diff File Icons FI';
+}
+
+.git-diff-file-icon--mf {
+  font-family: 'Git Diff File Icons MF';
+}
+
+.git-diff-file-icon--fa {
+  font-family: 'Git Diff File Icons FA';
+}
+
+.git-diff-file-icon--octicons {
+  font-family: 'Git Diff File Icons Octicons';
+}
+
 .git-diff-panel-root-icon {
   width: 14px;
   height: 14px;
@@ -5628,9 +5704,15 @@ button:active:not(:disabled),
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.45;
   color: var(--text-1);
+}
+
+.git-diff-file-icon svg {
+  width: 12px;
+  height: 12px;
 }
 
 .git-diff-file-stats {

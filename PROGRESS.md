@@ -23,6 +23,7 @@ This file is the source of milestone progress, validation commands, and next act
   - when tracked or untracked working-tree changes exist, the composer now shows a Kimi-style change-summary chip above the input; expanding it reveals the per-file rows and repository root, and untracked files render with a dedicated "New" badge.
   - follow-up fix: the Web UI now preserves the backend `untracked` flag during API normalization, so untracked rows actually render as the dedicated "New" badge instead of falling back to "Changed".
   - follow-up fix: the chip now tracks pending self-toggles separately from polled diff data, so the trigger's own `focusout` during DOM re-render no longer reopens the panel and repeated real clicks open/close it immediately.
+  - follow-up polish: expanded git-diff file rows now show suffix/file-name based type icons sourced from a locally vendored subset of `file-icons/vscode` font assets, with theme-aware tinted icon tiles and a generic fallback for unknown file types.
   - clean repositories, non-git directories, and hosts without `git` show no diff chip at all.
   - validation:
     - pass: `cd internal/webui/web && npm run build`

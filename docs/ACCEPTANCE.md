@@ -15,6 +15,8 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - session switches trigger an immediate refetch.
   - untracked files increase the chip's file count and appear in the expanded list with a dedicated "New" badge even when insertions/deletions remain zero.
   - repeated clicks on the summary chip expand and collapse the panel immediately, without waiting for the next poll response.
+  - expanded file rows show suffix/basename-matched file-type icons for common files such as `README.md`, `test.py`, `main.go`, `app.tsx`, and `Dockerfile`, and those icon tiles remain legible in both light and dark themes.
+  - unmapped file types fall back to the generic file icon instead of rendering a broken/missing asset.
   - non-git/unavailable-git environments return no visible diff surface.
   - clean repositories also omit the chip instead of showing a zero-state badge.
 - Verification command:

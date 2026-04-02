@@ -15,6 +15,19 @@
 
 ## Open Issues
 
+- ID: KI-048
+- Title: Git-diff file icons currently cover a curated subset of common file types
+- Status: Open
+- Severity: Low
+- Affects: expanded Web UI git-diff rows whose file names/extensions are not yet in the frontend icon map
+- Symptom:
+  - common code/content/config files such as `*.py`, `*.ts`, `*.tsx`, `*.go`, `*.json`, `*.md`, `*.yml`, `Dockerfile`, and `go.mod` now show specific type icons.
+  - rarer file types that are not yet mapped still fall back to the generic file icon in the expanded diff panel.
+- Workaround:
+  - rely on the visible file path text; unknown types still render correctly, just without a specialized icon.
+- Follow-up plan:
+  - extend the curated basename/extension map when real usage shows additional file types that need first-class icons.
+
 - ID: KI-047
 - Title: Web UI locale switch does not translate server-originated error text
 - Status: Open

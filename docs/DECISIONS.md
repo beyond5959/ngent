@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-072: Render git-diff expanded file rows with locally vendored suffix-based file icons. (Accepted)
 - ADR-071: Surface session-selected git diff summaries above the Web UI composer, including untracked files. (Accepted)
 - ADR-070: Expand embedded Web UI localization and repository READMEs to Spanish and French. (Accepted)
 - ADR-069: Keep active turns independent of individual SSE viewers and resume them through per-turn event streams. (Accepted)
@@ -63,6 +64,29 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-072: Render Git-Diff Expanded File Rows With Locally Vendored Suffix-Based File Icons
+
+- Status: Accepted
+- Date: 2026-04-02
+- Context:
+  - ADR-071 added a session-scoped git diff summary chip and expandable per-file list above the Web UI composer.
+  - product now requires those expanded file rows to show recognizable file-type icons, while the embedded SPA must stay local-first and avoid runtime icon fetches from GitHub or external CDNs.
+  - the requested upstream source, `file-icons/vscode`, ships its icon theme as font glyphs plus palette metadata rather than a small SVG bundle.
+- Decision:
+  - locally vendor only the `woff2` font assets needed by the current git-diff surface and keep the upstream MIT license text in-repo with those files.
+  - resolve icons in the frontend from a curated basename/extension map:
+    - basename-first for special files such as `Dockerfile`, `.dockerignore`, `go.mod`, `go.sum`, `.bashrc`, and `.zshrc`.
+    - otherwise by the final lowercase file extension, so names such as `test.py` still resolve to the Python icon.
+  - render those glyphs inside subtle tinted tiles whose border/background derive from the icon color plus the active theme surface, and fall back to the existing generic file icon when no mapping exists.
+- Consequences:
+  - the expanded git-diff panel now reads more like a code workbench while remaining fully local and theme-aware.
+  - unknown or niche file types still render safely with the generic file icon instead of a missing/broken asset state.
+  - icon coverage is intentionally curated, so expanding support later is a frontend-only mapping change.
+- Alternatives considered:
+  - load icons directly from GitHub/raw URLs at runtime (rejected: weaker offline behavior, more latency, and an unnecessary external dependency).
+  - vendor the entire upstream icon theme and all mapping tables (rejected: much heavier than this narrow UI surface needs).
+  - draw a bespoke inline SVG icon set from scratch (rejected: slower to build and less aligned with the explicitly requested upstream visual source).
 
 ## ADR-071: Surface Session-Selected Git Diff Summaries Above The Web UI Composer, Including Untracked Files
 

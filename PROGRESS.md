@@ -11,7 +11,38 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-04-01)
+## Latest Update (2026-04-02)
+
+- `Post-M8` session-scoped Web UI git diff summary and file-change panel completed:
+  - added `GET /v1/threads/{threadId}/git-diff`, backed by `internal/gitutil`, which parses `git --no-pager diff --shortstat`, `git --no-pager diff --numstat`, and untracked file paths from `git ls-files --others --exclude-standard -z` for the thread working tree.
+  - the endpoint is fail-soft like the existing git branch API:
+    - if `git` is unavailable, it returns `available=false`.
+    - if the thread `cwd` is not inside a git repository, it returns `available=false`.
+  - the embedded Web UI now polls this endpoint every 15 seconds only when the active thread has a selected concrete session id, immediately refetches when the user switches sessions, and refreshes again after turn completion, but the API itself no longer requires or echoes `sessionId`.
+  - when tracked or untracked working-tree changes exist, the composer now shows a Kimi-style change-summary chip above the input; expanding it reveals the per-file rows and repository root, and untracked files render with a dedicated "New" badge.
+  - follow-up fix: the Web UI now preserves the backend `untracked` flag during API normalization, so untracked rows actually render as the dedicated "New" badge instead of falling back to "Changed".
+  - follow-up fix: the chip now tracks pending self-toggles separately from polled diff data, so the trigger's own `focusout` during DOM re-render no longer reopens the panel and repeated real clicks open/close it immediately.
+  - follow-up polish: expanded git-diff file rows now show suffix/file-name based type icons sourced from a locally vendored subset of `file-icons/vscode` font assets, with theme-aware tinted icon tiles and a generic fallback for unknown file types.
+  - clean repositories, non-git directories, and hosts without `git` show no diff chip at all.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-04-01)
+
+- `Post-M8` Web UI Spanish/French localization and multilingual README expansion completed:
+  - expanded the embedded Web UI `language` preference from two values to four: `en`, `zh-CN`, `es`, and `fr`.
+  - browser-locale detection now maps the closest supported locale on first load:
+    - `zh-*` browsers default to `zh-CN`.
+    - `es-*` browsers default to `es`.
+    - `fr-*` browsers default to `fr`.
+    - all other locales default to `en`.
+  - localized the client-owned SPA chrome and relative-time labels for Spanish and French, and added Settings language switches for all four supported UI languages.
+  - added root `README.es.md` and `README.fr.md`, and cross-linked all root README variants so the repository landing docs are available in four languages.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+## Previous Update (2026-04-01)
 
 - `Post-M8` active-turn viewer disconnect decoupling and resumable shared live SSE completed:
   - server-side turn execution is no longer tied to the lifetime of the original `POST /v1/threads/{threadId}/turns` response, so browser refreshes and other viewer disconnects no longer cancel a healthy in-flight turn unless the user explicitly requests cancel.

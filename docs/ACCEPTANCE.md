@@ -2,11 +2,34 @@
 
 This checklist defines executable acceptance checks for requirements 1-16.
 
+## Supplemental Web UI: Session Git Diff Summary
+
+- Operation:
+  - open a thread whose `cwd` is inside a git repository and switch to a concrete session id (not `New session`).
+  - modify one or more tracked files in that repository and create at least one untracked file.
+  - verify the composer immediately requests `/v1/threads/{threadId}/git-diff`, shows the summary chip above the input, and refreshes again within 15 seconds while the same session remains selected.
+  - expand the chip and verify the per-file list matches tracked rows from `git --no-pager diff --numstat` plus the repository's untracked files.
+  - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
+- Expected:
+  - polling only happens when the active thread has a selected concrete session id.
+  - session switches trigger an immediate refetch.
+  - untracked files increase the chip's file count and appear in the expanded list with a dedicated "New" badge even when insertions/deletions remain zero.
+  - repeated clicks on the summary chip expand and collapse the panel immediately, without waiting for the next poll response.
+  - expanded file rows show suffix/basename-matched file-type icons for common files such as `README.md`, `test.py`, `main.go`, `app.tsx`, and `Dockerfile`, and those icon tiles remain legible in both light and dark themes.
+  - unmapped file types fall back to the generic file icon instead of rendering a broken/missing asset.
+  - non-git/unavailable-git environments return no visible diff surface.
+  - clean repositories also omit the chip instead of showing a zero-state badge.
+- Verification command:
+  - `go test ./internal/gitutil -run TestDiff -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadGitDiffDoesNotRequireSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - manual browser check against a repository-backed thread/session
+
 ## Supplemental Web UI: Language Selection
 
 - Operation:
   - open the embedded Web UI in a browser/profile with no existing `ngent:language` localStorage key.
-  - verify first-load language follows the browser locale (`zh-*` => Simplified Chinese, otherwise English).
+  - verify first-load language follows the closest supported browser locale (`zh-*` => Simplified Chinese, `es-*` => Spanish, `fr-*` => French, otherwise English).
   - open Settings, switch language, and verify the sidebar, session rail, composer, empty states, and permission/markdown controls update immediately without a full page reload.
 - Expected:
   - browser default locale is respected on first visit.
@@ -18,6 +41,8 @@ This checklist defines executable acceptance checks for requirements 1-16.
     - clear `localStorage['ngent:language']`
     - open the UI under an English browser locale
     - open the UI under a `zh-CN` browser locale
+    - open the UI under an `es-ES` browser locale
+    - open the UI under a `fr-FR` browser locale
     - switch languages in Settings and verify immediate UI re-render
 
 ## Requirement 1: HTTP/JSON plus SSE
@@ -125,7 +150,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 13: Embedded Web UI
 
 - Operation: start server; open browser at `http://127.0.0.1:8686/`; begin a live turn; refresh the page or open the same thread from another browser while that turn is still running.
-- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the current restrained desktop-workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, its collapse/expand affordance is revealed from the chat panel's left edge, and the selected session row is visually obvious through the stronger active treatment alone without needing a separate badge. When the active session has ACP session-usage `contextUsed/contextSize`, the composer footer shows a compact neutral ring-only context-pressure indicator to the right of the git branch pill; when usage is absent, no placeholder is rendered. For Codex-backed sessions, the usage cache and Web UI lookup must key off the same stable session id shown in the session list instead of raw ACP load ids like `session-1`. The indicator remains a fixed neutral tone instead of switching to warning/danger hues at higher usage. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming. Refreshing the browser or attaching another browser during an active turn must keep the active session visible, restore the live bubble from persisted events, continue streaming the remaining response instead of cancelling the turn, update permission cards when another browser approves/denies the same request, and show active-thread state in the left thread list through the server-provided `hasActiveSession` flag.
+- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the current restrained desktop-workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, its collapse/expand affordance is revealed from the chat panel's left edge, and the selected session row is visually obvious through the stronger active treatment alone without needing a separate badge. When the active session has ACP session-usage `contextUsed/contextSize`, the composer footer shows a compact neutral ring-only context-pressure indicator to the right of the git branch pill; when usage is absent, no placeholder is rendered. For Codex-backed sessions, the usage cache and Web UI lookup must key off the same stable session id shown in the session list instead of raw ACP load ids like `session-1`. The indicator remains a fixed neutral tone instead of switching to warning/danger hues at higher usage. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming. Switching into an existing session that has no browser-local cache yet must keep the chat-pane loading spinner visible until the history/transcript fetch resolves, instead of dropping to a blank/empty pane and then popping the history in later. Refreshing the browser or attaching another browser during an active turn must keep the active session visible, restore the live bubble from persisted events, continue streaming the remaining response instead of cancelling the turn, update permission cards when another browser approves/denies the same request, and show active-thread state in the left thread list through the server-provided `hasActiveSession` flag.
 - Verification command:
   - `go test ./internal/webui -count=1` (checks `GET /` returns 200 with `text/html` content-type and SPA fallback)
   - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
@@ -134,7 +159,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/httpapi -run TestTurnSessionUsageUpdateSSEHistoryAndCache -count=1`
   - `go test ./internal/agents/codex -run 'TestNotifyCachedSessionUsagePromotesRawID|TestConsumeCodexReplayUpdateNormalizesSessionUsageID' -count=1`
   - `cd internal/webui/web && npm run build`
-  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the session list, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, unsent textarea content survives both session/agent switches and turn completion rebuilds, and refreshing or opening the same thread in another browser during an active turn keeps the same session visible and the live response continues instead of being cancelled
+  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the session list, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, uncached existing-session switches keep the spinner visible until history resolves, unsent textarea content survives both session/agent switches and turn completion rebuilds, and refreshing or opening the same thread in another browser during an active turn keeps the same session visible, keeps the live response pinned to the bottom of the message list, and continues streaming instead of being cancelled
 
 ## Global Gate
 

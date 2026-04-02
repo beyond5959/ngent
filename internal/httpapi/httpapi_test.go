@@ -2479,6 +2479,180 @@ func TestThreadGitStatusAndSwitchBranch(t *testing.T) {
 	}
 }
 
+func TestThreadGitDiffDoesNotRequireSessionID(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := stringField(body, "threadId"), threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if _, ok := body["sessionId"]; ok {
+		t.Fatalf("response unexpectedly included sessionId: %v", body["sessionId"])
+	}
+}
+
+func TestThreadGitDiffUnavailableForNonRepository(t *testing.T) {
+	root := t.TempDir()
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+
+	threadID := createThreadForClient(t, h, "client-a", root)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		ThreadID  string `json:"threadId"`
+		Available bool   `json:"available"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := body.ThreadID, threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if body.Available {
+		t.Fatal("available = true, want false")
+	}
+}
+
+func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	appPath := filepath.Join(repo, "pkg", "app.txt")
+	if err := os.MkdirAll(filepath.Dir(appPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(): %v", err)
+	}
+	if err := os.WriteFile(appPath, []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(appPath): %v", err)
+	}
+	runGitInRepo(t, repo, "add", "pkg/app.txt")
+	runGitInRepo(t, repo, "commit", "--quiet", "-m", "add app")
+
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(README.md): %v", err)
+	}
+	if err := os.WriteFile(appPath, []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(appPath): %v", err)
+	}
+	untrackedPath := filepath.Join(repo, "docs", "todo.txt")
+	if err := os.MkdirAll(filepath.Dir(untrackedPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(untrackedPath): %v", err)
+	}
+	if err := os.WriteFile(untrackedPath, []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(untrackedPath): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		ThreadID  string `json:"threadId"`
+		Available bool   `json:"available"`
+		RepoRoot  string `json:"repoRoot"`
+		Summary   struct {
+			FilesChanged int `json:"filesChanged"`
+			Insertions   int `json:"insertions"`
+			Deletions    int `json:"deletions"`
+		} `json:"summary"`
+		Files []struct {
+			Path      string `json:"path"`
+			Added     int    `json:"added"`
+			Deleted   int    `json:"deleted"`
+			Binary    bool   `json:"binary"`
+			Untracked bool   `json:"untracked"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := body.ThreadID, threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if !body.Available {
+		t.Fatal("available = false, want true")
+	}
+	if got, want := evalPath(t, body.RepoRoot), evalPath(t, repo); got != want {
+		t.Fatalf("repoRoot = %q, want %q", got, want)
+	}
+	if got, want := body.Summary.FilesChanged, 3; got != want {
+		t.Fatalf("summary.filesChanged = %d, want %d", got, want)
+	}
+	if got, want := body.Summary.Insertions, 1; got != want {
+		t.Fatalf("summary.insertions = %d, want %d", got, want)
+	}
+	if got, want := body.Summary.Deletions, 1; got != want {
+		t.Fatalf("summary.deletions = %d, want %d", got, want)
+	}
+	if got, want := len(body.Files), 3; got != want {
+		t.Fatalf("len(files) = %d, want %d", got, want)
+	}
+
+	byPath := map[string]struct {
+		Added     int
+		Deleted   int
+		Binary    bool
+		Untracked bool
+	}{}
+	for _, file := range body.Files {
+		byPath[file.Path] = struct {
+			Added     int
+			Deleted   int
+			Binary    bool
+			Untracked bool
+		}{
+			Added:     file.Added,
+			Deleted:   file.Deleted,
+			Binary:    file.Binary,
+			Untracked: file.Untracked,
+		}
+	}
+
+	if got := byPath["README.md"]; got.Added != 1 || got.Deleted != 0 || got.Binary || got.Untracked {
+		t.Fatalf("README.md diff = %#v, want Added=1 Deleted=0 Binary=false Untracked=false", got)
+	}
+	if got := byPath["pkg/app.txt"]; got.Added != 0 || got.Deleted != 1 || got.Binary || got.Untracked {
+		t.Fatalf("pkg/app.txt diff = %#v, want Added=0 Deleted=1 Binary=false Untracked=false", got)
+	}
+	if got := byPath["docs/todo.txt"]; got.Added != 0 || got.Deleted != 0 || got.Binary || !got.Untracked {
+		t.Fatalf("docs/todo.txt diff = %#v, want Added=0 Deleted=0 Binary=false Untracked=true", got)
+	}
+}
+
 func TestThreadGitSwitchConflictsWithActiveTurn(t *testing.T) {
 	repo := newGitRepoForHTTPTest(t)
 	release := make(chan struct{})
@@ -6453,4 +6627,14 @@ func runGitInRepo(t *testing.T, repo string, args ...string) string {
 		t.Fatalf("git %v: %v\n%s", args, err, output)
 	}
 	return string(output)
+}
+
+func evalPath(t *testing.T, path string) string {
+	t.Helper()
+
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }

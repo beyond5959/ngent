@@ -15,13 +15,26 @@
 
 ## Open Issues
 
+- ID: KI-048
+- Title: Git-diff file icons currently cover a curated subset of common file types
+- Status: Open
+- Severity: Low
+- Affects: expanded Web UI git-diff rows whose file names/extensions are not yet in the frontend icon map
+- Symptom:
+  - common code/content/config files such as `*.py`, `*.ts`, `*.tsx`, `*.go`, `*.json`, `*.md`, `*.yml`, `Dockerfile`, and `go.mod` now show specific type icons.
+  - rarer file types that are not yet mapped still fall back to the generic file icon in the expanded diff panel.
+- Workaround:
+  - rely on the visible file path text; unknown types still render correctly, just without a specialized icon.
+- Follow-up plan:
+  - extend the curated basename/extension map when real usage shows additional file types that need first-class icons.
+
 - ID: KI-047
 - Title: Web UI locale switch does not translate server-originated error text
 - Status: Open
 - Severity: Low
 - Affects: browser users viewing HTTP/API/provider error messages inside the localized Web UI
 - Symptom:
-  - Settings, navigation, empty states, composer controls, and other client-owned Web UI strings switch between English and Simplified Chinese.
+  - Settings, navigation, empty states, composer controls, and other client-owned Web UI strings switch between English, Simplified Chinese, Spanish, and French.
   - errors that come straight from the backend or upstream agent/provider can still appear in English because the frontend currently renders those payload strings verbatim.
 - Workaround:
   - rely on the surrounding localized UI and exact error code/message, or switch to English if a support/debugging workflow expects backend wording unchanged.
@@ -87,9 +100,11 @@
 - Status: Open
 - Severity: Low
 - Affects: the embedded Web UI on different desktop/mobile browsers and operating systems
-- Symptom: typography, subtle contrast steps, and spacing can look slightly different depending on locally available system fonts, font rendering, and display calibration
-- Workaround: use a modern browser with good system-font rendering; functional behavior remains unchanged even when the exact presentation shifts slightly
-- Follow-up plan: consider lightweight visual regression snapshots and/or optional bundled local fonts if exact cross-platform visual parity becomes a product requirement
+- Symptom:
+  - assistant reply prose now ships with a bundled `Inter Variable` body font for closer Kimi-style transcript rendering, but CJK fallback glyphs, code rendering details, and the rest of the shell chrome still depend on host/browser font rasterization.
+  - typography, subtle contrast steps, and spacing can therefore still look slightly different across browsers, operating systems, and displays even though behavior stays the same.
+- Workaround: use a modern browser with good font rendering; functional behavior remains unchanged even when the exact presentation shifts slightly
+- Follow-up plan: consider lightweight visual regression snapshots and, only if exact parity becomes a product requirement, broader bundled font coverage beyond the assistant-body surface
 
 - ID: KI-034
 - Title: Human-readable stderr logs are less machine-friendly than JSON logs

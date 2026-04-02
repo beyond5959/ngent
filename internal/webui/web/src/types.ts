@@ -1,7 +1,7 @@
 // ── Theme & Settings ───────────────────────────────────────────────────────
 
 export type Theme = 'light' | 'dark' | 'system'
-export type Language = 'en' | 'zh-CN'
+export type Language = 'en' | 'zh-CN' | 'es' | 'fr'
 
 // ── API models (mirrors server JSON contracts) ─────────────────────────────
 
@@ -77,6 +77,28 @@ export interface ThreadGitInfo {
   currentBranch?: string
   detached?: boolean
   branches: GitBranchInfo[]
+}
+
+export interface ThreadGitDiffSummary {
+  filesChanged: number
+  insertions: number
+  deletions: number
+}
+
+export interface ThreadGitDiffFile {
+  path: string
+  added: number
+  deleted: number
+  binary?: boolean
+  untracked?: boolean
+}
+
+export interface ThreadGitDiffInfo {
+  threadId: string
+  available: boolean
+  repoRoot?: string
+  summary: ThreadGitDiffSummary
+  files: ThreadGitDiffFile[]
 }
 
 export interface SessionUsage {

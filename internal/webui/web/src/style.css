@@ -7,6 +7,46 @@
   padding: 0;
 }
 
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-variable-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Git Diff File Icons FI';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-fi.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Git Diff File Icons MF';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-mf.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Git Diff File Icons FA';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-fa.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Git Diff File Icons Octicons';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/file-icons-octicons.woff2') format('woff2');
+}
+
 /* ===== Design Tokens ===== */
 :root {
   /* Colors — light */
@@ -84,7 +124,9 @@
 
   /* Font */
   --font: 'Avenir Next', 'Segoe UI Variable Display', 'SF Pro Display', 'Helvetica Neue', 'Noto Sans', sans-serif;
+  --font-body: 'Inter Variable', -apple-system, 'system-ui', 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace;
+  --font-body-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --font-size-xs:   11px;
   --font-size-sm:   12px;
   --font-size-md:   13px;
@@ -1535,6 +1577,7 @@ body {
   background: var(--agent-bubble-bg);
   box-shadow: var(--shadow-sm);
   color: var(--text-1);
+  font-family: var(--font-body);
   font-size: var(--font-size-base);
   line-height: 1.72;
   word-break: break-word;
@@ -2758,20 +2801,90 @@ body {
 }
 
 .git-branch-trigger-icon {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
   color: color-mix(in srgb, var(--text-2) 72%, var(--text-3));
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 28%, transparent))
+    drop-shadow(0 6px 10px color-mix(in srgb, var(--accent) 10%, transparent));
+  transition: transform var(--t-fast), filter var(--t-fast), color var(--t-fast);
 }
 
 .git-branch-trigger:hover:not(:disabled) .git-branch-trigger-icon,
 .git-branch-trigger[aria-expanded="true"] .git-branch-trigger-icon {
   color: color-mix(in srgb, var(--text-1) 84%, var(--accent) 16%);
+  transform: translateY(-0.5px) scale(1.04);
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 34%, transparent))
+    drop-shadow(0 8px 14px color-mix(in srgb, var(--accent) 16%, transparent));
 }
 
 .git-branch-trigger-icon svg {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.git-ui-icon {
+  display: block;
+  overflow: visible;
+}
+
+.git-ui-icon__track,
+.git-ui-icon__line,
+.git-ui-icon__link-track,
+.git-ui-icon__link-line,
+.git-ui-icon__fold,
+.git-ui-icon__mark,
+.git-ui-icon__gloss {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.git-branch-trigger-icon .git-ui-icon__track {
+  stroke: color-mix(in srgb, var(--bg-panel-strong) 84%, var(--border-strong));
+  stroke-width: 4.4;
+  opacity: 0.98;
+}
+
+.git-branch-trigger-icon .git-ui-icon__line {
+  stroke: color-mix(in srgb, var(--text-1) 50%, var(--accent) 50%);
+  stroke-width: 2.3;
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-shell {
+  fill: color-mix(in srgb, var(--bg-panel-strong) 90%, white 10%);
+  stroke: color-mix(in srgb, var(--border-strong) 50%, var(--accent) 50%);
+  stroke-width: 1.24;
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-shell--right {
+  fill: color-mix(in srgb, var(--bg-panel-strong) 78%, var(--accent) 22%);
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-core--top,
+.git-branch-trigger-icon .git-ui-icon__node-core--bottom {
+  fill: color-mix(in srgb, var(--text-2) 26%, var(--accent) 74%);
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-core--right {
+  fill: color-mix(in srgb, var(--accent) 78%, white 22%);
+}
+
+.git-branch-trigger-icon .git-ui-icon__node-shine {
+  fill: color-mix(in srgb, white 74%, transparent);
+  opacity: 0.78;
+}
+
+.git-branch-trigger:hover:not(:disabled) .git-ui-icon__line,
+.git-branch-trigger[aria-expanded="true"] .git-ui-icon__line {
+  stroke: color-mix(in srgb, var(--text-1) 44%, var(--accent) 56%);
+}
+
+.git-branch-trigger:hover:not(:disabled) .git-ui-icon__node-shell,
+.git-branch-trigger[aria-expanded="true"] .git-ui-icon__node-shell {
+  stroke: color-mix(in srgb, var(--border-strong) 44%, var(--accent) 56%);
 }
 
 .git-branch-trigger-label {
@@ -3969,7 +4082,7 @@ button:active:not(:disabled),
 .message-prompt--md code:not(.hljs),
 .message-answer--md code:not(.hljs),
 .message-reasoning__content--md code:not(.hljs) {
-  font-family: var(--font-mono);
+  font-family: var(--font-body-mono);
   font-size: .88em;
   background: var(--bg-inset);
   padding: 2px 6px;
@@ -4015,7 +4128,7 @@ button:active:not(:disabled),
 }
 
 .code-lang {
-  font-family: var(--font-mono);
+  font-family: var(--font-body-mono);
   font-size: var(--font-size-xs);
   color: var(--text-2);
   text-transform: lowercase;
@@ -4051,7 +4164,7 @@ button:active:not(:disabled),
   margin: 0;
   padding: 12px 14px;
   overflow-x: auto;
-  font-family: var(--font-mono);
+  font-family: var(--font-body-mono);
   font-size: var(--font-size-sm);
   line-height: 1.55;
   background: var(--bg-panel-strong);
@@ -4330,7 +4443,9 @@ button:active:not(:disabled),
   --shadow-lg: 0 22px 50px rgba(16, 26, 36, 0.12);
 
   --font: 'IBM Plex Sans', 'Avenir Next', 'Segoe UI Variable Text', 'SF Pro Text', 'Helvetica Neue', 'Noto Sans', sans-serif;
+  --font-body: 'Inter Variable', -apple-system, 'system-ui', 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', 'SF Mono', 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace;
+  --font-body-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
   --font-size-xs: 11px;
   --font-size-sm: 12px;
@@ -5346,6 +5461,17 @@ button:active:not(:disabled),
   background: var(--bg-panel);
 }
 
+.input-floating-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.input-floating-slot:empty {
+  display: none;
+}
+
 .input-wrapper {
   gap: 10px;
   padding: 10px 12px;
@@ -5432,6 +5558,336 @@ button:active:not(:disabled),
 .composer-attachment-btn__count {
   top: -4px;
   right: -4px;
+}
+
+.git-diff-widget {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.git-diff-widget--loading .git-diff-trigger {
+  opacity: 0.86;
+}
+
+.git-diff-trigger {
+  min-width: 0;
+  max-width: min(100%, 340px);
+  height: 34px;
+  padding: 0 11px 0 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: var(--r-full);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-panel-strong) 96%, transparent) 0%,
+    color-mix(in srgb, var(--bg-panel-strong) 84%, var(--bg-inset) 16%) 100%
+  );
+  box-shadow:
+    0 18px 28px -26px color-mix(in srgb, var(--text-1) 44%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast),
+    box-shadow var(--t-fast),
+    color var(--t-fast),
+    opacity var(--t-fast);
+}
+
+.git-diff-trigger:hover,
+.git-diff-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-panel-strong) 94%, var(--accent) 5%) 0%,
+    color-mix(in srgb, var(--bg-panel-strong) 80%, var(--accent) 10%) 100%
+  );
+  box-shadow:
+    0 24px 40px -32px color-mix(in srgb, var(--accent) 38%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 36%, transparent);
+}
+
+.git-diff-trigger-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--text-2) 76%, var(--accent) 24%);
+  flex: 0 0 auto;
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 30%, transparent))
+    drop-shadow(0 8px 14px color-mix(in srgb, var(--accent) 12%, transparent));
+  transition: transform var(--t-fast), filter var(--t-fast), color var(--t-fast);
+}
+
+.git-diff-trigger-icon svg,
+.git-diff-trigger-chevron svg,
+.git-diff-file-icon svg,
+.git-diff-panel-root-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.git-diff-trigger:hover .git-diff-trigger-icon,
+.git-diff-trigger[aria-expanded="true"] .git-diff-trigger-icon {
+  transform: translateY(-0.5px) scale(1.04);
+  filter:
+    drop-shadow(0 1px 0 color-mix(in srgb, white 34%, transparent))
+    drop-shadow(0 10px 16px color-mix(in srgb, var(--accent) 16%, transparent));
+}
+
+.git-diff-trigger-icon .git-ui-icon__link-track {
+  stroke: color-mix(in srgb, var(--bg-panel-strong) 86%, var(--border-strong));
+  stroke-width: 4.8;
+}
+
+.git-diff-trigger-icon .git-ui-icon__link-line {
+  stroke: color-mix(in srgb, var(--text-2) 26%, var(--accent) 74%);
+  stroke-width: 2.25;
+}
+
+.git-diff-trigger-icon .git-ui-icon__card {
+  stroke-width: 1.15;
+}
+
+.git-diff-trigger-icon .git-ui-icon__card--plus {
+  fill: color-mix(in srgb, var(--success) 12%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--success) 34%, var(--border));
+}
+
+.git-diff-trigger-icon .git-ui-icon__card--minus {
+  fill: color-mix(in srgb, var(--error) 11%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--error) 32%, var(--border));
+}
+
+.git-diff-trigger-icon .git-ui-icon__badge {
+  stroke-width: 0.95;
+}
+
+.git-diff-trigger-icon .git-ui-icon__badge--plus {
+  fill: color-mix(in srgb, var(--success) 24%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--success) 40%, transparent);
+}
+
+.git-diff-trigger-icon .git-ui-icon__badge--minus {
+  fill: color-mix(in srgb, var(--error) 22%, var(--bg-panel-strong));
+  stroke: color-mix(in srgb, var(--error) 36%, transparent);
+}
+
+.git-diff-trigger-icon .git-ui-icon__mark {
+  stroke-width: 1.65;
+}
+
+.git-diff-trigger-icon .git-ui-icon__mark--plus {
+  stroke: color-mix(in srgb, var(--success) 78%, white 22%);
+}
+
+.git-diff-trigger-icon .git-ui-icon__mark--minus {
+  stroke: color-mix(in srgb, var(--error) 80%, white 20%);
+}
+
+.git-diff-trigger-icon .git-ui-icon__gloss {
+  stroke: color-mix(in srgb, white 76%, transparent);
+  stroke-width: 0.9;
+  opacity: 0.84;
+}
+
+.git-diff-trigger-stats {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.git-diff-stat {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.git-diff-stat--added {
+  color: color-mix(in srgb, var(--success) 90%, white 10%);
+}
+
+.git-diff-stat--deleted {
+  color: color-mix(in srgb, var(--error) 92%, var(--text-1) 8%);
+}
+
+.git-diff-trigger-files {
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.git-diff-trigger-chevron {
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex: 0 0 auto;
+  transition: transform var(--t-fast), color var(--t-fast);
+}
+
+.git-diff-trigger:hover .git-diff-trigger-chevron,
+.git-diff-trigger[aria-expanded="true"] .git-diff-trigger-chevron {
+  color: var(--text-2);
+}
+
+.git-diff-trigger[aria-expanded="true"] .git-diff-trigger-chevron {
+  transform: rotate(90deg);
+}
+
+.git-diff-panel {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 97%, transparent);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.git-diff-panel-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.git-diff-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+
+.git-diff-file-row:last-child {
+  border-bottom: none;
+}
+
+.git-diff-file-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex: 0 0 auto;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  background: color-mix(in srgb, var(--bg-inset) 86%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 24%, transparent);
+}
+
+.git-diff-file-icon--glyph {
+  font-style: normal;
+  font-weight: 400;
+  font-size: calc(11px * var(--git-file-icon-scale, 1));
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--git-file-icon-color, var(--text-2));
+  border-color: color-mix(in srgb, var(--git-file-icon-color, var(--border)) 22%, var(--border));
+  background: color-mix(in srgb, var(--git-file-icon-color, var(--text-2)) 12%, var(--bg-panel-strong));
+}
+
+.git-diff-file-icon--fi {
+  font-family: 'Git Diff File Icons FI';
+}
+
+.git-diff-file-icon--mf {
+  font-family: 'Git Diff File Icons MF';
+}
+
+.git-diff-file-icon--fa {
+  font-family: 'Git Diff File Icons FA';
+}
+
+.git-diff-file-icon--octicons {
+  font-family: 'Git Diff File Icons Octicons';
+}
+
+.git-diff-panel-root-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex: 0 0 auto;
+}
+
+.git-diff-file-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.git-diff-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-1);
+}
+
+.git-diff-file-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.git-diff-file-stats {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.git-diff-file-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.git-diff-panel-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 82%, var(--bg-inset) 18%);
+  color: var(--text-3);
+}
+
+.git-diff-panel-root {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .thread-model-switch--composer .thread-model-trigger {
@@ -6417,6 +6873,22 @@ kbd {
 
   .input-area {
     padding: 10px 14px 14px;
+  }
+
+  .git-diff-trigger {
+    max-width: 100%;
+  }
+
+  .git-diff-panel {
+    width: 100%;
+  }
+
+  .git-diff-file-row {
+    align-items: flex-start;
+  }
+
+  .git-diff-file-stats {
+    max-width: 42%;
   }
 
   .input-meta-actions {

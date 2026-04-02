@@ -2,6 +2,9 @@
 
 ## ADR Index
 
+- ADR-072: Render git-diff expanded file rows with locally vendored suffix-based file icons. (Accepted)
+- ADR-071: Surface session-selected git diff summaries above the Web UI composer, including untracked files. (Accepted)
+- ADR-070: Expand embedded Web UI localization and repository READMEs to Spanish and French. (Accepted)
 - ADR-069: Keep active turns independent of individual SSE viewers and resume them through per-turn event streams. (Accepted)
 - ADR-068: Add browser-default English/Simplified Chinese localization to the embedded Web UI. (Accepted)
 - ADR-067: Persist ACP session usage snapshots and surface context-window pressure in the Web UI. (Accepted)
@@ -61,6 +64,88 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-072: Render Git-Diff Expanded File Rows With Locally Vendored Suffix-Based File Icons
+
+- Status: Accepted
+- Date: 2026-04-02
+- Context:
+  - ADR-071 added a session-scoped git diff summary chip and expandable per-file list above the Web UI composer.
+  - product now requires those expanded file rows to show recognizable file-type icons, while the embedded SPA must stay local-first and avoid runtime icon fetches from GitHub or external CDNs.
+  - the requested upstream source, `file-icons/vscode`, ships its icon theme as font glyphs plus palette metadata rather than a small SVG bundle.
+- Decision:
+  - locally vendor only the `woff2` font assets needed by the current git-diff surface and keep the upstream MIT license text in-repo with those files.
+  - resolve icons in the frontend from a curated basename/extension map:
+    - basename-first for special files such as `Dockerfile`, `.dockerignore`, `go.mod`, `go.sum`, `.bashrc`, and `.zshrc`.
+    - otherwise by the final lowercase file extension, so names such as `test.py` still resolve to the Python icon.
+  - render those glyphs inside subtle tinted tiles whose border/background derive from the icon color plus the active theme surface, and fall back to the existing generic file icon when no mapping exists.
+- Consequences:
+  - the expanded git-diff panel now reads more like a code workbench while remaining fully local and theme-aware.
+  - unknown or niche file types still render safely with the generic file icon instead of a missing/broken asset state.
+  - icon coverage is intentionally curated, so expanding support later is a frontend-only mapping change.
+- Alternatives considered:
+  - load icons directly from GitHub/raw URLs at runtime (rejected: weaker offline behavior, more latency, and an unnecessary external dependency).
+  - vendor the entire upstream icon theme and all mapping tables (rejected: much heavier than this narrow UI surface needs).
+  - draw a bespoke inline SVG icon set from scratch (rejected: slower to build and less aligned with the explicitly requested upstream visual source).
+
+## ADR-071: Surface Session-Selected Git Diff Summaries Above The Web UI Composer, Including Untracked Files
+
+- Status: Accepted
+- Date: 2026-04-02
+- Context:
+  - ADR-066 already established thread-level git repository inspection plus an in-composer branch pill/switcher.
+  - product now also requires a Kimi-style diff summary above the composer that reflects current working-tree changes for the selected session.
+  - the UI must not show anything for non-git directories or when the host does not have `git`, and the frontend must own polling instead of receiving pushed diff updates.
+- Decision:
+  - add `GET /v1/threads/{threadId}/git-diff` as a lightweight thread-scoped git capability endpoint.
+  - back the endpoint with direct host git commands:
+    - `git --no-pager diff --shortstat`
+    - `git --no-pager diff --numstat`
+    - `git ls-files --others --exclude-standard -z`
+  - parse those commands server-side into structured JSON (`summary`, per-file rows, `repoRoot`) so the frontend stays presentation-focused and does not need to parse raw git output.
+  - treat missing `git` binaries and non-repository `cwd` values as optional capability absence by returning `available=false` instead of surfacing a hard failure.
+  - keep the Web UI-side gating so polling still happens only when the user has chosen a concrete historical/live session, but do not require or echo `sessionId` at the API layer because the repository identity already comes from the thread `cwd`.
+  - in the embedded Web UI, poll every 15 seconds only for the active thread's selected session, force an immediate fetch on session switch, and hide the surface entirely when `available=false` or there are no tracked/untracked rows.
+- Consequences:
+  - the composer now exposes repository change pressure in the active session without adding backend push complexity or extra SSE events.
+  - git diff rendering remains consistent across browsers because parsing happens once on the backend.
+  - repositories with no tracked modifications still surface newly created untracked files, so the chip matches the user's visible working tree more closely.
+  - repositories with no visible modifications stay visually clean because the chip is omitted.
+- Alternatives considered:
+  - push git diff changes over SSE after every tool/file mutation (rejected: much higher coupling to agent behavior and no reliable signal for out-of-band filesystem edits).
+  - have the frontend shell out or parse raw git output directly (rejected: impossible in-browser and would duplicate parsing logic).
+  - use `git status --short` instead of `git diff --shortstat/--numstat` (rejected: product explicitly wants diff-based counts aligned with Kimi's presentation).
+
+## ADR-070: Expand Embedded Web UI Localization And Repository READMEs To Spanish And French
+
+- Status: Accepted
+- Date: 2026-04-01
+- Context:
+  - ADR-068 already established browser-local UI localization for English and Simplified Chinese.
+  - product now requires the embedded Web UI to also support Spanish and French without introducing any backend locale negotiation or server-side translation layer.
+  - repository onboarding docs also need equivalent Spanish and French entry points alongside the existing English and Simplified Chinese READMEs.
+- Decision:
+  - expand the frontend `language` preference to four supported values:
+    - `en`
+    - `zh-CN`
+    - `es`
+    - `fr`
+  - extend browser-locale detection so first load chooses the closest supported locale:
+    - any `zh-*` locale => `zh-CN`
+    - any `es-*` locale => `es`
+    - any `fr-*` locale => `fr`
+    - all other locales => `en`
+  - keep localization entirely client-side in the embedded Web UI store/settings flow.
+  - add `README.es.md` and `README.fr.md`, and cross-link all root README variants from each translated entry point.
+- Consequences:
+  - the embedded Web UI now covers four languages without changing HTTP/SSE/API contracts.
+  - users whose browsers prefer Spanish or French now get a better first-load default instead of falling straight back to English.
+  - repository landing docs are now available in English, Simplified Chinese, Spanish, and French.
+  - backend/provider-originated error payloads still remain untranslated and can still produce mixed-language surfaces.
+- Alternatives considered:
+  - introduce region-specific stored variants such as `es-ES`, `es-MX`, `fr-FR`, and `fr-CA` (rejected: unnecessary complexity for the current UI copy scope).
+  - add automatic machine-translated README generation in CI (rejected: poorer reviewability and weaker quality control over user-facing docs).
+  - keep README translations limited to English and Simplified Chinese while only translating the UI (rejected: incomplete onboarding for the requested languages).
 
 ## ADR-069: Keep Active Turns Independent Of Individual SSE Viewers And Resume Them Through Per-Turn Event Streams
 

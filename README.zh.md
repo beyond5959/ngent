@@ -4,6 +4,8 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/beyond5959/ngent)](https://go.dev/)
 [![License](https://img.shields.io/github/license/beyond5959/ngent)](LICENSE)
 
+[English](README.md) | [简体中文](README.zh.md) | [Español](README.es.md) | [Français](README.fr.md)
+
 > **兼容 ACP 协议 Agent 的 Web 服务封装**
 >
 > Ngent 将支持[智能体客户端协议（ACP）](https://github.com/beyond5959/acp-adapter)的命令行智能体封装为 Web 服务，让你可以通过 HTTP API 与 Web 界面轻松调用。
@@ -30,6 +32,7 @@ Ngent 是 **ACP 兼容智能体**（如 Codex、Kimi CLI、OpenCode 等）与 **
 - 🔌 **多智能体支持**：兼容任意 ACP 智能体（Codex、Kimi CLI、OpenCode 等）
 - 🌐 **Web API**：HTTP/JSON 端点，支持 SSE 流式响应
 - 🖥️ **内置界面**：Web 界面直接嵌入二进制文件，无需单独部署前端
+- 🌏 **多语言界面**：内置 Web UI 支持 English、简体中文、Español 和 Français
 - 🔒 **权限管控**：对智能体的文件/系统操作提供细粒度的审批机制
 - 💾 **持久化状态**：基于 SQLite 的会话历史，跨会话保留
 - 📱 **移动端友好**：生成二维码，方便同网络环境下的移动设备快速访问

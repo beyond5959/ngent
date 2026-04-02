@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +36,35 @@ type Status struct {
 	Detached      bool
 	Branches      []Branch
 }
+
+// DiffSummary captures aggregate diff counts for a worktree.
+type DiffSummary struct {
+	FilesChanged int
+	Insertions   int
+	Deletions    int
+}
+
+// DiffFile captures per-file diff counts for one worktree.
+type DiffFile struct {
+	Path      string
+	Added     int
+	Deleted   int
+	Binary    bool
+	Untracked bool
+}
+
+// DiffStatus captures the current visible diff state for one worktree.
+type DiffStatus struct {
+	RepoRoot string
+	Summary  DiffSummary
+	Files    []DiffFile
+}
+
+var (
+	shortstatFilesPattern      = regexp.MustCompile(`(\d+)\s+files?\s+changed`)
+	shortstatInsertionsPattern = regexp.MustCompile(`(\d+)\s+insertions?\(\+\)`)
+	shortstatDeletionsPattern  = regexp.MustCompile(`(\d+)\s+deletions?\(-\)`)
+)
 
 // Inspect loads local branch information for one working tree.
 func Inspect(ctx context.Context, cwd string) (Status, error) {
@@ -96,6 +127,67 @@ func Checkout(ctx context.Context, cwd, branch string) (Status, error) {
 	}
 
 	return Inspect(ctx, cwd)
+}
+
+// Diff loads the current visible working-tree diff summary for one worktree,
+// including untracked files.
+func Diff(ctx context.Context, cwd string) (DiffStatus, error) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		return DiffStatus{}, ErrGitUnavailable
+	}
+
+	repoRoot, err := repoRoot(ctx, gitPath, cwd)
+	if err != nil {
+		return DiffStatus{}, err
+	}
+
+	shortstatOut, stderr, err := runGit(ctx, gitPath, cwd, "--no-pager", "diff", "--shortstat")
+	if err != nil {
+		if looksLikeNotRepository(stderr) {
+			return DiffStatus{}, ErrNotRepository
+		}
+		return DiffStatus{}, fmt.Errorf("load diff shortstat: %w", err)
+	}
+
+	numstatOut, stderr, err := runGit(ctx, gitPath, cwd, "--no-pager", "diff", "--numstat")
+	if err != nil {
+		if looksLikeNotRepository(stderr) {
+			return DiffStatus{}, ErrNotRepository
+		}
+		return DiffStatus{}, fmt.Errorf("load diff numstat: %w", err)
+	}
+
+	untrackedOut, stderr, err := runGit(ctx, gitPath, cwd, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		if looksLikeNotRepository(stderr) {
+			return DiffStatus{}, ErrNotRepository
+		}
+		return DiffStatus{}, fmt.Errorf("load untracked files: %w", err)
+	}
+
+	summary, err := parseShortstat(shortstatOut)
+	if err != nil {
+		return DiffStatus{}, fmt.Errorf("parse diff shortstat: %w", err)
+	}
+	files, err := parseNumstat(numstatOut)
+	if err != nil {
+		return DiffStatus{}, fmt.Errorf("parse diff numstat: %w", err)
+	}
+	untrackedFiles := parseUntrackedFiles(untrackedOut)
+	if len(untrackedFiles) > 0 {
+		summary.FilesChanged += len(untrackedFiles)
+		files = append(files, untrackedFiles...)
+	}
+	if summary.FilesChanged == 0 && len(files) > 0 {
+		summary.FilesChanged = len(files)
+	}
+
+	return DiffStatus{
+		RepoRoot: repoRoot,
+		Summary:  summary,
+		Files:    files,
+	}, nil
 }
 
 func repoRoot(ctx context.Context, gitPath, cwd string) (string, error) {
@@ -206,6 +298,114 @@ func hasBranch(branches []Branch, branch string) bool {
 		}
 	}
 	return false
+}
+
+func parseShortstat(raw string) (DiffSummary, error) {
+	line := strings.TrimSpace(raw)
+	if line == "" {
+		return DiffSummary{}, nil
+	}
+
+	filesChanged, err := parseShortstatCount(shortstatFilesPattern, line)
+	if err != nil {
+		return DiffSummary{}, fmt.Errorf("files changed: %w", err)
+	}
+	insertions, err := parseShortstatCount(shortstatInsertionsPattern, line)
+	if err != nil {
+		return DiffSummary{}, fmt.Errorf("insertions: %w", err)
+	}
+	deletions, err := parseShortstatCount(shortstatDeletionsPattern, line)
+	if err != nil {
+		return DiffSummary{}, fmt.Errorf("deletions: %w", err)
+	}
+
+	return DiffSummary{
+		FilesChanged: filesChanged,
+		Insertions:   insertions,
+		Deletions:    deletions,
+	}, nil
+}
+
+func parseShortstatCount(pattern *regexp.Regexp, line string) (int, error) {
+	match := pattern.FindStringSubmatch(line)
+	if len(match) != 2 {
+		return 0, nil
+	}
+
+	value, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, fmt.Errorf("parse %q: %w", match[1], err)
+	}
+	return value, nil
+}
+
+func parseNumstat(raw string) ([]DiffFile, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	files := make([]DiffFile, 0)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("unexpected line %q", line)
+		}
+
+		path := strings.TrimSpace(parts[2])
+		if path == "" {
+			return nil, fmt.Errorf("missing path in line %q", line)
+		}
+
+		file := DiffFile{Path: path}
+		if parts[0] == "-" || parts[1] == "-" {
+			file.Binary = true
+			files = append(files, file)
+			continue
+		}
+
+		added, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil {
+			return nil, fmt.Errorf("parse added count in line %q: %w", line, err)
+		}
+		deleted, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return nil, fmt.Errorf("parse deleted count in line %q: %w", line, err)
+		}
+		file.Added = added
+		file.Deleted = deleted
+		files = append(files, file)
+	}
+
+	return files, nil
+}
+
+func parseUntrackedFiles(raw string) []DiffFile {
+	if raw == "" {
+		return nil
+	}
+
+	files := make([]DiffFile, 0)
+	seen := make(map[string]struct{})
+	for _, path := range strings.Split(raw, "\x00") {
+		if path == "" {
+			continue
+		}
+		if _, duplicate := seen[path]; duplicate {
+			continue
+		}
+		seen[path] = struct{}{}
+		files = append(files, DiffFile{
+			Path:      path,
+			Untracked: true,
+		})
+	}
+	return files
 }
 
 func runGit(ctx context.Context, gitPath, cwd string, args ...string) (stdout string, stderr string, err error) {

@@ -9,6 +9,7 @@ import {
   PERMISSION_TIMEOUT_MS,
   resolveMountedPermissionCard,
 } from './components/permission-card.ts'
+import { resolveGitDiffFileIcon } from './git-file-icons.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
 import type {
   Thread,
@@ -26,6 +27,7 @@ import type {
   SessionTranscriptMessage,
   ToolCall,
   MessageAttachment,
+  ThreadGitDiffInfo,
   ThreadGitInfo,
 } from './types.ts'
 import type {
@@ -176,12 +178,38 @@ const iconDotsHorizontal = `<svg width="16" height="16" viewBox="0 0 16 16" fill
   <circle cx="12.8" cy="8" r="1.5" fill="currentColor"/>
 </svg>`
 
-const iconGitBranch = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-  <circle cx="4" cy="3" r="1.35" fill="currentColor"/>
-  <circle cx="12" cy="6" r="1.35" fill="currentColor"/>
-  <circle cx="4" cy="13" r="1.35" fill="currentColor"/>
-  <path d="M4 4.85v6.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M4 6.15v1.05A1.8 1.8 0 0 0 5.8 9h4.85" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+const iconGitBranch = `<svg class="git-ui-icon git-ui-icon--branch" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path class="git-ui-icon__track" d="M8 7v10.5"/>
+  <path class="git-ui-icon__track" d="M8 8h2.8c3.15 0 5.7 2.55 5.7 5.7"/>
+  <path class="git-ui-icon__line" d="M8 7v10.5"/>
+  <path class="git-ui-icon__line" d="M8 8h2.8c3.15 0 5.7 2.55 5.7 5.7"/>
+  <circle class="git-ui-icon__node-shell" cx="8" cy="5" r="3"/>
+  <circle class="git-ui-icon__node-shell git-ui-icon__node-shell--right" cx="16.5" cy="13.7" r="3.3"/>
+  <circle class="git-ui-icon__node-shell" cx="8" cy="19" r="3"/>
+  <circle class="git-ui-icon__node-core git-ui-icon__node-core--top" cx="8" cy="5" r="1.15"/>
+  <circle class="git-ui-icon__node-core git-ui-icon__node-core--right" cx="16.5" cy="13.7" r="1.3"/>
+  <circle class="git-ui-icon__node-core git-ui-icon__node-core--bottom" cx="8" cy="19" r="1.15"/>
+  <circle class="git-ui-icon__node-shine" cx="6.85" cy="3.95" r="0.72"/>
+  <circle class="git-ui-icon__node-shine" cx="15.25" cy="12.3" r="0.78"/>
+  <circle class="git-ui-icon__node-shine" cx="6.85" cy="17.85" r="0.72"/>
+</svg>`
+
+const iconGitDiff = `<svg class="git-ui-icon git-ui-icon--diff" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path class="git-ui-icon__link-track" d="M10.75 9.25 13.35 11.85"/>
+  <path class="git-ui-icon__link-line" d="M10.75 9.25 13.35 11.85"/>
+  <rect class="git-ui-icon__card git-ui-icon__card--plus" x="4" y="4" width="8.6" height="8.6" rx="2.45"/>
+  <rect class="git-ui-icon__card git-ui-icon__card--minus" x="11.4" y="11.4" width="8.6" height="8.6" rx="2.45"/>
+  <rect class="git-ui-icon__badge git-ui-icon__badge--plus" x="5.75" y="5.85" width="4.9" height="4.9" rx="1.3"/>
+  <rect class="git-ui-icon__badge git-ui-icon__badge--minus" x="13.25" y="13.25" width="5.4" height="4.9" rx="1.3"/>
+  <path class="git-ui-icon__mark git-ui-icon__mark--plus" d="M8.2 7.1v2.35M7.02 8.28h2.36"/>
+  <path class="git-ui-icon__mark git-ui-icon__mark--minus" d="M14.8 15.7h2.32"/>
+  <path class="git-ui-icon__gloss" d="M6.35 5.15h3.15"/>
+  <path class="git-ui-icon__gloss" d="M13.85 12.55h3.55"/>
+</svg>`
+
+const iconFile = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 3v5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
 const iconFolder = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -220,6 +248,16 @@ interface ThreadGitState {
   error: string
 }
 
+interface ThreadGitDiffState {
+  available: boolean | null
+  sessionId: string
+  repoRoot: string
+  summary: ThreadGitDiffInfo['summary']
+  files: ThreadGitDiffInfo['files']
+  loading: boolean
+  error: string
+}
+
 interface ComposerAttachmentDraft {
   id: string
   file: File
@@ -241,11 +279,19 @@ const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 const composerDraftByScope = new Map<string, string>()
 const threadGitStateByThread = new Map<string, ThreadGitState>()
+const threadGitDiffStateByScope = new Map<string, ThreadGitDiffState>()
+const expandedThreadGitDiffScopes = new Set<string>()
+const pendingThreadGitDiffToggleScopes = new Set<string>()
 const sessionUsageByScope = new Map<string, SessionUsage>()
 const threadGitRequestSeqByThread = new Map<string, number>()
+const threadGitDiffRequestSeqByScope = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
+let threadGitDiffRequestSeq = 0
+const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 30_000
+let threadGitDiffPollTimer = 0
+let threadGitDiffPollScopeKey = ''
 const SESSION_ITEM_HOVER_PREVIEW_DELAY_MS = 120
 const SESSION_ITEM_HOVER_PREVIEW_CLASS = 'session-item--hover-preview'
 let sessionItemHoverPreviewTimer = 0
@@ -330,13 +376,43 @@ function emptyThreadGitState(): ThreadGitState {
   }
 }
 
+function emptyThreadGitDiffState(): ThreadGitDiffState {
+  return {
+    available: null,
+    sessionId: '',
+    repoRoot: '',
+    summary: {
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+    },
+    files: [],
+    loading: false,
+    error: '',
+  }
+}
+
 function threadGitState(threadId: string): ThreadGitState {
   return threadGitStateByThread.get(threadId) ?? emptyThreadGitState()
+}
+
+function threadGitDiffState(scopeKey: string): ThreadGitDiffState {
+  return threadGitDiffStateByScope.get(scopeKey) ?? emptyThreadGitDiffState()
 }
 
 function setThreadGitState(threadId: string, patch: Partial<ThreadGitState>): ThreadGitState {
   const next = { ...threadGitState(threadId), ...patch }
   threadGitStateByThread.set(threadId, next)
+  return next
+}
+
+function setThreadGitDiffState(scopeKey: string, patch: Partial<ThreadGitDiffState>): ThreadGitDiffState {
+  const next = { ...threadGitDiffState(scopeKey), ...patch }
+  if (next.summary.filesChanged <= 0 && !next.files.length) {
+    expandedThreadGitDiffScopes.delete(scopeKey)
+    pendingThreadGitDiffToggleScopes.delete(scopeKey)
+  }
+  threadGitDiffStateByScope.set(scopeKey, next)
   return next
 }
 
@@ -348,6 +424,22 @@ function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitSta
     detached: !!info.detached,
     repoRoot: info.repoRoot?.trim() || '',
     branches: [...(info.branches ?? [])],
+    loading: false,
+    error: '',
+  })
+}
+
+function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: ThreadGitDiffInfo): ThreadGitDiffState {
+  return setThreadGitDiffState(scopeKey, {
+    available: info.available,
+    sessionId: sessionID.trim(),
+    repoRoot: info.repoRoot?.trim() || '',
+    summary: {
+      filesChanged: info.summary?.filesChanged ?? 0,
+      insertions: info.summary?.insertions ?? 0,
+      deletions: info.summary?.deletions ?? 0,
+    },
+    files: [...(info.files ?? [])],
     loading: false,
     error: '',
   })
@@ -1278,6 +1370,13 @@ function selectedThreadSessionID(thread: Thread | null | undefined): string {
   return selectionSessionID(sessionSelectionFromScopeKey(threadChatScopeKey(thread)))
 }
 
+function selectedThreadGitDiffScopeKey(thread: Thread | null | undefined): string {
+  if (!thread) return ''
+  const sessionID = selectedThreadSessionID(thread)
+  if (!sessionID) return ''
+  return threadSessionScopeKey(thread.threadId, sessionID)
+}
+
 function buildThreadAgentOptionsWithSession(
   base: Record<string, unknown>,
   sessionID: string,
@@ -1412,6 +1511,10 @@ let lastRenderChatScopeKey = ''
 let lastRenderLanguage = store.get().language
 /** Chat scope keys whose filtered history was loaded. */
 const loadedHistoryScopeKeys = new Set<string>()
+/** Chat scope keys whose latest history load failed before any local messages were available. */
+const historyLoadErrorByScope = new Map<string, string>()
+/** Latest in-flight history request sequence for each chat scope key. */
+const historyLoadRequestSeqByScope = new Map<string, number>()
 /** Bound session scopes that were promoted from a temporary fresh-session scope. */
 const reboundFreshSessionScopeKeys = new Set<string>()
 /** Segment ids whose final Thinking panel is currently expanded in the UI. */
@@ -1422,6 +1525,7 @@ let openThreadActionMenuId: string | null = null
 let renamingThreadId: string | null = null
 let renamingThreadDraft = ''
 let sessionPanelExpanded = true
+let historyLoadRequestSeq = 0
 
 // ── Scroll helpers ────────────────────────────────────────────────────────
 
@@ -2147,6 +2251,7 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
     void loadThreadSessions(threadId)
     void loadThreadSlashCommands(threadId, true)
     void loadThreadGitState(threadId, { force: true })
+    void loadThreadGitDiff(threadId, capturedSessionID, { force: true })
     void loadSessionUsageForScope(threadId, capturedScopeKey, capturedSessionID)
     void syncSelectedSessionSelection(threadId)
 
@@ -3841,6 +3946,16 @@ async function handleDeleteThread(threadId: string): Promise<void> {
       loadedHistoryScopeKeys.delete(scopeKey)
     }
   })
+  Array.from(historyLoadErrorByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      historyLoadErrorByScope.delete(scopeKey)
+    }
+  })
+  Array.from(historyLoadRequestSeqByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      historyLoadRequestSeqByScope.delete(scopeKey)
+    }
+  })
   Array.from(reboundFreshSessionScopeKeys).forEach(scopeKey => {
     if (scopeKey.startsWith(threadScopePrefix)) {
       reboundFreshSessionScopeKeys.delete(scopeKey)
@@ -4106,8 +4221,12 @@ async function loadHistory(threadId: string): Promise<void> {
   const requestedSessionID = selectionSessionID(sessionSelectionFromScopeKey(requestedScopeKey))
   if (!requestedScopeKey) return
   if (!requestedSessionID && isFreshSessionScopeKey(requestedScopeKey)) return
+  const requestSeq = ++historyLoadRequestSeq
+  historyLoadRequestSeqByScope.set(requestedScopeKey, requestSeq)
+  historyLoadErrorByScope.delete(requestedScopeKey)
   try {
     const turns = await api.getHistory(threadId, requestedSessionID)
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
     const state = store.get()
     if (state.activeThreadId !== threadId) return
     const activeThread = state.threads.find(item => item.threadId === threadId)
@@ -4117,6 +4236,7 @@ async function loadHistory(threadId: string): Promise<void> {
     const filteredTurns = filterTurnsBySession(turns, requestedSessionID)
     const runningTurn = [...filteredTurns].reverse().find(turn => turn.status === 'running') ?? null
     const localMessages = await turnsToMessagesAsync(filteredTurns)
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
     const cachedMessages = state.messages[requestedScopeKey] ?? []
     let nextMessages = localMessages
     if (requestedSessionID) {
@@ -4130,6 +4250,7 @@ async function loadHistory(threadId: string): Promise<void> {
       } else {
         try {
           const replay = await api.getThreadSessionHistory(threadId, requestedSessionID)
+          if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
           const transcriptState = store.get()
           if (transcriptState.activeThreadId !== threadId) return
           const transcriptThread = transcriptState.threads.find(item => item.threadId === threadId)
@@ -4153,6 +4274,7 @@ async function loadHistory(threadId: string): Promise<void> {
             }).catch(() => {})
           }
         } catch {
+          if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
           nextMessages = localMessages
         }
       }
@@ -4160,6 +4282,7 @@ async function loadHistory(threadId: string): Promise<void> {
     nextMessages = hydrateMessagesFromCache(nextMessages, localMessages)
     nextMessages = hydrateMessagesFromCache(nextMessages, cachedMessages)
 
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
     const finalState = store.get()
     if (finalState.activeThreadId !== threadId) return
     const finalThread = finalState.threads.find(item => item.threadId === threadId)
@@ -4167,6 +4290,7 @@ async function loadHistory(threadId: string): Promise<void> {
     if (getScopeStreamState(requestedScopeKey)) return
 
     loadedHistoryScopeKeys.add(requestedScopeKey)
+    historyLoadErrorByScope.delete(requestedScopeKey)
     const nextStreamStates = { ...finalState.streamStates }
     if (runningTurn) {
       nextStreamStates[requestedScopeKey] = hydrateRunningTurnStreamScope(
@@ -4204,14 +4328,21 @@ async function loadHistory(threadId: string): Promise<void> {
       }
     }
   } catch {
-    if (store.get().activeThreadId !== threadId) return
-    if (threadChatScopeKey(store.get().threads.find(item => item.threadId === threadId)) !== requestedScopeKey) return
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
+    historyLoadErrorByScope.set(requestedScopeKey, t('failedToLoadHistory'))
+    const failureState = store.get()
+    if (failureState.activeThreadId !== threadId) return
+    if (threadChatScopeKey(failureState.threads.find(item => item.threadId === threadId)) !== requestedScopeKey) return
     // Show error only if no matching local history was already rendered.
-    if (!loadedHistoryScopeKeys.has(requestedScopeKey)) {
+    if (!loadedHistoryScopeKeys.has(requestedScopeKey) && !(failureState.messages[requestedScopeKey] ?? []).length) {
       const listEl = document.getElementById('message-list')
       if (listEl) {
         listEl.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">${escHtml(t('failedToLoadHistory'))}</div>`
       }
+    }
+  } finally {
+    if (historyLoadRequestSeqByScope.get(requestedScopeKey) === requestSeq) {
+      historyLoadRequestSeqByScope.delete(requestedScopeKey)
     }
   }
 }
@@ -5299,6 +5430,17 @@ function updateMessageList(): void {
   const thread   = threads.find(t => t.threadId === activeThreadId)
   const scopeKey = threadChatScopeKey(thread)
   const msgs     = messages[scopeKey] ?? []
+  const streamState = getScopeStreamState(scopeKey)
+  const historyLoadError = historyLoadErrorByScope.get(scopeKey)?.trim() ?? ''
+
+  if (!msgs.length && !loadedHistoryScopeKeys.has(scopeKey)) {
+    if (historyLoadError) {
+      listEl.innerHTML = `<div class="thread-list-empty" style="color:var(--error)">${escHtml(historyLoadError)}</div>`
+    } else {
+      listEl.innerHTML = `<div class="message-list-loading"><div class="loading-spinner"></div></div>`
+    }
+    return
+  }
 
   if (!msgs.length) {
     listEl.innerHTML = renderEmptyState(
@@ -5311,7 +5453,12 @@ function updateMessageList(): void {
     return
   }
 
-  if (shouldRenderMessageListAsync(msgs)) {
+  // Keep the persisted history stable before the live bubble is restored.
+  // Otherwise an async render can resume later and append older messages after
+  // the streaming bubble, which makes a spectator land below the active reply.
+  const restoringActiveStream = !!streamState && !hasMountedActiveStream(scopeKey)
+
+  if (!restoringActiveStream && shouldRenderMessageListAsync(msgs)) {
     void renderMessageListAsync(renderSeq, scopeKey, msgs)
     return
   }
@@ -5405,6 +5552,70 @@ function closeGitBranchMenu(): void {
   menuEl.hidden = true
 }
 
+function hasThreadGitDiffChanges(state: ThreadGitDiffState): boolean {
+  return state.available === true && state.summary.filesChanged > 0 && state.files.length > 0
+}
+
+function isThreadGitDiffExpanded(scopeKey: string): boolean {
+  return expandedThreadGitDiffScopes.has(scopeKey)
+}
+
+function setThreadGitDiffExpanded(scopeKey: string, expanded: boolean): void {
+  if (!scopeKey) return
+  if (expanded) {
+    expandedThreadGitDiffScopes.add(scopeKey)
+    return
+  }
+  expandedThreadGitDiffScopes.delete(scopeKey)
+}
+
+function setThreadGitDiffTogglePending(scopeKey: string, pending: boolean): void {
+  if (!scopeKey) return
+  if (pending) {
+    pendingThreadGitDiffToggleScopes.add(scopeKey)
+    return
+  }
+  pendingThreadGitDiffToggleScopes.delete(scopeKey)
+}
+
+function isThreadGitDiffTogglePending(scopeKey: string): boolean {
+  return pendingThreadGitDiffToggleScopes.has(scopeKey)
+}
+
+function closeThreadGitDiffPanel(threadId = store.get().activeThreadId ?? ''): void {
+  const activeThread = store.get().threads.find(item => item.threadId === threadId)
+  const scopeKey = selectedThreadGitDiffScopeKey(activeThread)
+  if (!scopeKey) return
+
+  if (!isThreadGitDiffExpanded(scopeKey)) return
+
+  setThreadGitDiffExpanded(scopeKey, false)
+  if (store.get().activeThreadId === threadId) {
+    syncThreadGitDiffControl(threadId)
+  }
+}
+
+function syncThreadGitDiffControl(threadId = store.get().activeThreadId ?? ''): void {
+  const slotEl = document.getElementById('thread-git-diff-slot')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const activeThreadId = store.get().activeThreadId ?? ''
+  if (!activeThreadId || threadId !== activeThreadId) {
+    slotEl.innerHTML = ''
+    return
+  }
+
+  const thread = store.get().threads.find(item => item.threadId === activeThreadId)
+  if (!thread) {
+    slotEl.innerHTML = ''
+    return
+  }
+
+  slotEl.innerHTML = renderThreadGitDiffControl(thread)
+  bindThreadGitDiffControl(thread)
+  updateInputState()
+}
+
 function syncThreadGitControl(threadId = store.get().activeThreadId ?? ''): void {
   const slotEl = document.getElementById('thread-git-slot')
   if (!(slotEl instanceof HTMLElement)) return
@@ -5437,6 +5648,119 @@ function syncSessionUsageControl(threadId = store.get().activeThreadId ?? ''): v
   }
 
   slotEl.innerHTML = renderSessionUsageControl(thread)
+}
+
+async function loadThreadGitDiff(
+  threadId: string,
+  sessionID: string,
+  options: { force?: boolean } = {},
+): Promise<ThreadGitDiffState> {
+  const normalizedThreadID = threadId.trim()
+  const normalizedSessionID = sessionID.trim()
+  if (!normalizedThreadID || !normalizedSessionID) {
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncThreadGitDiffControl(normalizedThreadID)
+    }
+    return emptyThreadGitDiffState()
+  }
+
+  const scopeKey = threadSessionScopeKey(normalizedThreadID, normalizedSessionID)
+  const cachedState = threadGitDiffState(scopeKey)
+  if (!options.force) {
+    if (cachedState.loading) return cachedState
+    if (cachedState.available !== null && cachedState.sessionId === normalizedSessionID) {
+      return cachedState
+    }
+  }
+
+  threadGitDiffRequestSeq += 1
+  const requestSeq = threadGitDiffRequestSeq
+  threadGitDiffRequestSeqByScope.set(scopeKey, requestSeq)
+  setThreadGitDiffState(scopeKey, {
+    sessionId: normalizedSessionID,
+    loading: true,
+    error: '',
+  })
+  if (store.get().activeThreadId === normalizedThreadID) {
+    syncThreadGitDiffControl(normalizedThreadID)
+  }
+
+  try {
+    const info = await api.getThreadGitDiff(normalizedThreadID)
+    if (threadGitDiffRequestSeqByScope.get(scopeKey) !== requestSeq) {
+      return threadGitDiffState(scopeKey)
+    }
+    const nextState = applyThreadGitDiffInfo(scopeKey, normalizedSessionID, info)
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncThreadGitDiffControl(normalizedThreadID)
+    }
+    return nextState
+  } catch (err) {
+    if (threadGitDiffRequestSeqByScope.get(scopeKey) !== requestSeq) {
+      return threadGitDiffState(scopeKey)
+    }
+
+    const message = err instanceof Error ? err.message : String(err)
+    const nextState = cachedState.available === true
+      ? setThreadGitDiffState(scopeKey, { loading: false, error: message })
+      : setThreadGitDiffState(scopeKey, {
+        available: false,
+        sessionId: normalizedSessionID,
+        repoRoot: '',
+        summary: {
+          filesChanged: 0,
+          insertions: 0,
+          deletions: 0,
+        },
+        files: [],
+        loading: false,
+        error: message,
+      })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncThreadGitDiffControl(normalizedThreadID)
+    }
+    return nextState
+  }
+}
+
+function loadSelectedThreadGitDiff(thread: Thread, options: { force?: boolean } = {}): Promise<ThreadGitDiffState> {
+  return loadThreadGitDiff(thread.threadId, selectedThreadSessionID(thread), options)
+}
+
+function stopThreadGitDiffPolling(): void {
+  if (threadGitDiffPollTimer) {
+    window.clearInterval(threadGitDiffPollTimer)
+  }
+  threadGitDiffPollTimer = 0
+  threadGitDiffPollScopeKey = ''
+}
+
+function syncThreadGitDiffPolling(): void {
+  const { activeThreadId, threads } = store.get()
+  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) ?? null : null
+  const scopeKey = selectedThreadGitDiffScopeKey(thread)
+  if (!thread || !scopeKey) {
+    stopThreadGitDiffPolling()
+    return
+  }
+  if (threadGitDiffPollTimer && threadGitDiffPollScopeKey === scopeKey) {
+    return
+  }
+
+  stopThreadGitDiffPolling()
+  threadGitDiffPollScopeKey = scopeKey
+  threadGitDiffPollTimer = window.setInterval(() => {
+    const latestState = store.get()
+    const activeThread = latestState.activeThreadId
+      ? latestState.threads.find(item => item.threadId === latestState.activeThreadId) ?? null
+      : null
+    const latestScopeKey = selectedThreadGitDiffScopeKey(activeThread)
+    if (!activeThread || !latestScopeKey || latestScopeKey !== threadGitDiffPollScopeKey) {
+      stopThreadGitDiffPolling()
+      return
+    }
+    void loadSelectedThreadGitDiff(activeThread, { force: true })
+  }, THREAD_GIT_DIFF_POLL_INTERVAL_MS)
 }
 
 async function loadThreadGitState(threadId: string, options: { force?: boolean } = {}): Promise<ThreadGitState> {
@@ -5570,6 +5894,50 @@ function bindThreadGitControl(threadId: string): void {
   }
   triggerEl.addEventListener('keydown', onEsc)
   menuEl.addEventListener('keydown', onEsc)
+}
+
+function bindThreadGitDiffControl(thread: Thread): void {
+  const widgetEl = document.getElementById('thread-git-diff') as HTMLDivElement | null
+  const triggerEl = document.getElementById('thread-git-diff-trigger') as HTMLButtonElement | null
+  if (!widgetEl || !triggerEl) return
+
+  const scopeKey = widgetEl.dataset.scopeKey?.trim() ?? ''
+  if (!scopeKey) return
+
+  triggerEl.addEventListener('click', () => {
+    const state = threadGitDiffState(scopeKey)
+    if (!hasThreadGitDiffChanges(state)) return
+    setThreadGitDiffTogglePending(scopeKey, true)
+  }, true)
+
+  triggerEl.addEventListener('click', event => {
+    event.preventDefault()
+    const state = threadGitDiffState(scopeKey)
+    if (!hasThreadGitDiffChanges(state)) {
+      setThreadGitDiffTogglePending(scopeKey, false)
+      return
+    }
+    setThreadGitDiffExpanded(scopeKey, !isThreadGitDiffExpanded(scopeKey))
+    syncThreadGitDiffControl(thread.threadId)
+    window.setTimeout(() => {
+      setThreadGitDiffTogglePending(scopeKey, false)
+    }, 0)
+  })
+
+  widgetEl.addEventListener('focusout', event => {
+    if (isThreadGitDiffTogglePending(scopeKey)) return
+    const related = event.relatedTarget as Node | null
+    if (!related || !widgetEl.contains(related)) {
+      closeThreadGitDiffPanel(thread.threadId)
+    }
+  })
+
+  triggerEl.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    closeThreadGitDiffPanel(thread.threadId)
+    triggerEl.focus()
+  })
 }
 
 function closeSlashCommandMenu(): void {
@@ -5871,6 +6239,94 @@ function getCurrentSessionTitle(thread: Thread): string {
   return t('newSession')
 }
 
+function renderThreadGitDiffStat(value: number, kind: 'added' | 'deleted'): string {
+  if (value <= 0) return ''
+  const label = kind === 'added' ? `+${value}` : `-${value}`
+  return `<span class="git-diff-stat git-diff-stat--${kind}">${escHtml(label)}</span>`
+}
+
+function renderThreadGitDiffFileStats(file: ThreadGitDiffInfo['files'][number]): string {
+  if (file.untracked) {
+    return `<span class="git-diff-file-badge">${escHtml(t('gitDiffNew'))}</span>`
+  }
+  if (file.binary) {
+    return `<span class="git-diff-file-badge">${escHtml(t('gitDiffBinary'))}</span>`
+  }
+
+  const added = renderThreadGitDiffStat(file.added ?? 0, 'added')
+  const deleted = renderThreadGitDiffStat(file.deleted ?? 0, 'deleted')
+  if (!added && !deleted) {
+    return `<span class="git-diff-file-badge">${escHtml(t('gitDiffChanged'))}</span>`
+  }
+  return `${added}${deleted}`
+}
+
+function renderThreadGitDiffFileIcon(path: string): string {
+  const icon = resolveGitDiffFileIcon(path)
+  if (!icon) {
+    return `<span class="git-diff-file-icon" aria-hidden="true">${iconFile}</span>`
+  }
+
+  return `<span class="git-diff-file-icon git-diff-file-icon--glyph git-diff-file-icon--${icon.font}" aria-hidden="true" style="--git-file-icon-color: ${icon.color}; --git-file-icon-scale: ${(icon.scale ?? 1).toFixed(2)};">${icon.glyph}</span>`
+}
+
+function renderThreadGitDiffControl(thread: Thread): string {
+  const sessionID = selectedThreadSessionID(thread)
+  if (!sessionID) return ''
+
+  const scopeKey = threadSessionScopeKey(thread.threadId, sessionID)
+  const state = threadGitDiffState(scopeKey)
+  if (!hasThreadGitDiffChanges(state)) return ''
+
+  const fileCountLabel = t('gitDiffFiles', { count: state.summary.filesChanged })
+  const expanded = isThreadGitDiffExpanded(scopeKey)
+  const fileRows = state.files.map(file => `
+      <div class="git-diff-file-row">
+        ${renderThreadGitDiffFileIcon(file.path)}
+        <div class="git-diff-file-copy">
+          <div class="git-diff-file-path" title="${escHtml(file.path)}">${escHtml(file.path)}</div>
+        </div>
+        <div class="git-diff-file-stats">
+          ${renderThreadGitDiffFileStats(file)}
+        </div>
+      </div>`).join('')
+  const panelHTML = expanded
+    ? `
+      <div class="git-diff-panel" id="thread-git-diff-panel" role="dialog" aria-label="${escHtml(t('gitDiffChangedFiles'))}">
+        <div class="git-diff-panel-list">${fileRows}</div>
+        <div class="git-diff-panel-footer">
+          <span class="git-diff-panel-root-icon" aria-hidden="true">${iconFolder}</span>
+          <span class="git-diff-panel-root" title="${escHtml(state.repoRoot)}">${escHtml(state.repoRoot)}</span>
+        </div>
+      </div>`
+    : ''
+
+  return `
+    <div
+      class="git-diff-widget${expanded ? ' git-diff-widget--expanded' : ''}${state.loading ? ' git-diff-widget--loading' : ''}"
+      id="thread-git-diff"
+      data-scope-key="${escHtml(scopeKey)}"
+    >
+      ${panelHTML}
+      <button
+        class="git-diff-trigger"
+        id="thread-git-diff-trigger"
+        type="button"
+        aria-expanded="${expanded ? 'true' : 'false'}"
+        aria-controls="thread-git-diff-panel"
+        title="${escHtml(expanded ? t('gitDiffHide') : t('gitDiffShow'))}"
+      >
+        <span class="git-diff-trigger-icon" aria-hidden="true">${iconGitDiff}</span>
+        <span class="git-diff-trigger-stats">
+          ${renderThreadGitDiffStat(state.summary.insertions, 'added')}
+          ${renderThreadGitDiffStat(state.summary.deletions, 'deleted')}
+          <span class="git-diff-trigger-files">${escHtml(fileCountLabel)}</span>
+        </span>
+        <span class="git-diff-trigger-chevron" aria-hidden="true">${iconChevronRight}</span>
+      </button>
+    </div>`
+}
+
 function renderThreadGitControl(threadId: string): string {
   const state = threadGitState(threadId)
   if (state.available !== true) return ''
@@ -6016,6 +6472,7 @@ function renderChatThread(thread: Thread): string {
 
     <div class="input-area">
       <div class="slash-command-menu" id="slash-command-menu" hidden></div>
+      <div class="input-floating-slot" id="thread-git-diff-slot">${renderThreadGitDiffControl(thread)}</div>
       <div class="input-wrapper">
         <div class="composer-attachments" id="composer-attachments">${renderComposerAttachmentsHTML(thread.threadId)}</div>
         <textarea
@@ -6111,6 +6568,7 @@ function updateChatArea(): void {
   activeStreamScopeKey = ''
 
   if (!thread) {
+    stopThreadGitDiffPolling()
     chat.innerHTML = renderChatEmpty()
     document.getElementById('new-thread-empty-btn')?.addEventListener('click', openNewThread)
     document.querySelector('.mobile-menu-btn')?.addEventListener('click', () => {
@@ -6164,10 +6622,13 @@ function updateChatArea(): void {
   bindSendHandler()
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
+  syncThreadGitDiffControl(thread.threadId)
   syncThreadGitControl(thread.threadId)
   syncSessionUsageControl(thread.threadId)
+  void loadSelectedThreadGitDiff(thread, { force: true })
   void loadThreadGitState(thread.threadId)
   void loadThreadSessionUsage(thread)
+  syncThreadGitDiffPolling()
 
   // Always reload history from server (keeps view fresh; guards against overwrites during streaming)
   void loadHistory(thread.threadId)
@@ -6921,6 +7382,9 @@ async function init(): Promise<void> {
     }
     if (!target?.closest('.git-branch-picker')) {
       closeGitBranchMenu()
+    }
+    if (!target?.closest('.git-diff-widget')) {
+      closeThreadGitDiffPanel()
     }
 
     if (!openThreadActionMenuId) return

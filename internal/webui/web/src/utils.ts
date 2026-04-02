@@ -51,17 +51,35 @@ export function formatRelativeTime(iso: string): string {
 
   const diffMs = Date.now() - d.getTime()
   const language = getLanguage()
+  const minutes = Math.floor(diffMs / 60_000)
+  const hours = Math.floor(diffMs / 3_600_000)
+  const days = Math.floor(diffMs / 86_400_000)
+
   if (language === 'zh-CN') {
     if (diffMs < 60_000) return '刚刚'
-    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}分钟前`
-    if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}小时前`
-    return `${Math.floor(diffMs / 86_400_000)}天前`
+    if (diffMs < 3_600_000) return `${minutes}分钟前`
+    if (diffMs < 86_400_000) return `${hours}小时前`
+    return `${days}天前`
+  }
+
+  if (language === 'es') {
+    if (diffMs < 60_000) return 'ahora mismo'
+    if (diffMs < 3_600_000) return `${minutes} min`
+    if (diffMs < 86_400_000) return `${hours} h`
+    return `${days} d`
+  }
+
+  if (language === 'fr') {
+    if (diffMs < 60_000) return "à l'instant"
+    if (diffMs < 3_600_000) return `${minutes} min`
+    if (diffMs < 86_400_000) return `${hours} h`
+    return `${days} j`
   }
 
   if (diffMs < 60_000) return 'just now'
-  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m`
-  if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h`
-  return `${Math.floor(diffMs / 86_400_000)}d`
+  if (diffMs < 3_600_000) return `${minutes}m`
+  if (diffMs < 86_400_000) return `${hours}h`
+  return `${days}d`
 }
 
 export function formatBytes(bytes: number): string {

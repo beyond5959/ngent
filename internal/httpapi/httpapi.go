@@ -572,6 +572,8 @@ func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, cl
 		s.handleThreadSlashCommands(w, r, clientID, threadID)
 	case "git":
 		s.handleThreadGit(w, r, clientID, threadID)
+	case "git-diff":
+		s.handleThreadGitDiff(w, r, threadID)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found", map[string]any{"path": r.URL.Path})
 	}
@@ -2372,6 +2374,35 @@ func (s *Server) handleThreadGit(w http.ResponseWriter, r *http.Request, clientI
 	}
 }
 
+func (s *Server) handleThreadGitDiff(w http.ResponseWriter, r *http.Request, threadID string) {
+	thread, ok := s.getAccessibleThread(r.Context(), threadID)
+	if !ok {
+		writeError(w, http.StatusNotFound, codeNotFound, "thread not found", map[string]any{})
+		return
+	}
+
+	if err := requireMethod(r, http.MethodGet); err != nil {
+		writeMethodNotAllowed(w, r)
+		return
+	}
+
+	status, err := gitutil.Diff(r.Context(), thread.CWD)
+	if err != nil {
+		if errors.Is(err, gitutil.ErrGitUnavailable) || errors.Is(err, gitutil.ErrNotRepository) {
+			writeJSON(w, http.StatusOK, unavailableThreadGitDiffResponse(thread.ThreadID))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to inspect git diff", map[string]any{
+			"threadId": thread.ThreadID,
+			"cwd":      thread.CWD,
+			"reason":   err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, threadGitDiffResponseForStatus(thread.ThreadID, status))
+}
+
 func (s *Server) handleGetThreadGit(w http.ResponseWriter, r *http.Request, thread storage.Thread) {
 	status, err := gitutil.Inspect(r.Context(), thread.CWD)
 	if err != nil {
@@ -2981,6 +3012,28 @@ type threadGitBranch struct {
 	Current bool   `json:"current"`
 }
 
+type threadGitDiffResponse struct {
+	ThreadID  string                 `json:"threadId"`
+	Available bool                   `json:"available"`
+	RepoRoot  string                 `json:"repoRoot,omitempty"`
+	Summary   threadGitDiffSummary   `json:"summary"`
+	Files     []threadGitDiffFileRow `json:"files,omitempty"`
+}
+
+type threadGitDiffSummary struct {
+	FilesChanged int `json:"filesChanged"`
+	Insertions   int `json:"insertions"`
+	Deletions    int `json:"deletions"`
+}
+
+type threadGitDiffFileRow struct {
+	Path      string `json:"path"`
+	Added     int    `json:"added"`
+	Deleted   int    `json:"deleted"`
+	Binary    bool   `json:"binary,omitempty"`
+	Untracked bool   `json:"untracked,omitempty"`
+}
+
 type turnHistoryResponse struct {
 	TurnID       string                 `json:"turnId"`
 	RequestText  string                 `json:"requestText"`
@@ -3132,6 +3185,13 @@ func unavailableThreadGitResponse(threadID string) threadGitResponse {
 	}
 }
 
+func unavailableThreadGitDiffResponse(threadID string) threadGitDiffResponse {
+	return threadGitDiffResponse{
+		ThreadID:  threadID,
+		Available: false,
+	}
+}
+
 func threadGitResponseForStatus(threadID string, status gitutil.Status) threadGitResponse {
 	branches := make([]threadGitBranch, 0, len(status.Branches))
 	for _, branch := range status.Branches {
@@ -3153,6 +3213,35 @@ func threadGitResponseForStatus(threadID string, status gitutil.Status) threadGi
 		CurrentBranch: status.CurrentBranch,
 		Detached:      status.Detached,
 		Branches:      branches,
+	}
+}
+
+func threadGitDiffResponseForStatus(threadID string, status gitutil.DiffStatus) threadGitDiffResponse {
+	files := make([]threadGitDiffFileRow, 0, len(status.Files))
+	for _, file := range status.Files {
+		path := strings.TrimSpace(file.Path)
+		if path == "" {
+			continue
+		}
+		files = append(files, threadGitDiffFileRow{
+			Path:      path,
+			Added:     file.Added,
+			Deleted:   file.Deleted,
+			Binary:    file.Binary,
+			Untracked: file.Untracked,
+		})
+	}
+
+	return threadGitDiffResponse{
+		ThreadID:  threadID,
+		Available: true,
+		RepoRoot:  status.RepoRoot,
+		Summary: threadGitDiffSummary{
+			FilesChanged: status.Summary.FilesChanged,
+			Insertions:   status.Summary.Insertions,
+			Deletions:    status.Summary.Deletions,
+		},
+		Files: files,
 	}
 }
 

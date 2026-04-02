@@ -280,4 +280,3 @@ func TestPrintQRCodeDoesNothingForEmptyURL(t *testing.T) {
 		t.Fatalf("printQRCode should write nothing for empty URL, got:\n%s", got)
 	}
 }
-

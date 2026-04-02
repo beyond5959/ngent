@@ -71,6 +71,109 @@ func TestCheckoutMissingBranch(t *testing.T) {
 	}
 }
 
+func TestDiff(t *testing.T) {
+	repo := newGitRepo(t)
+
+	appPath := filepath.Join(repo, "pkg", "app.txt")
+	if err := os.MkdirAll(filepath.Dir(appPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(): %v", err)
+	}
+	if err := os.WriteFile(appPath, []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(appPath): %v", err)
+	}
+	runGitCommand(t, repo, "add", "pkg/app.txt")
+	runGitCommand(t, repo, "commit", "--quiet", "-m", "add app")
+
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(README.md): %v", err)
+	}
+	if err := os.WriteFile(appPath, []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(appPath): %v", err)
+	}
+	untrackedPath := filepath.Join(repo, "docs", "todo.txt")
+	if err := os.MkdirAll(filepath.Dir(untrackedPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(untrackedPath): %v", err)
+	}
+	if err := os.WriteFile(untrackedPath, []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(untrackedPath): %v", err)
+	}
+
+	status, err := Diff(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Diff(): %v", err)
+	}
+
+	if got, want := evalPath(t, status.RepoRoot), evalPath(t, repo); got != want {
+		t.Fatalf("RepoRoot = %q, want %q", got, want)
+	}
+	if got, want := status.Summary.FilesChanged, 3; got != want {
+		t.Fatalf("Summary.FilesChanged = %d, want %d", got, want)
+	}
+	if got, want := status.Summary.Insertions, 1; got != want {
+		t.Fatalf("Summary.Insertions = %d, want %d", got, want)
+	}
+	if got, want := status.Summary.Deletions, 1; got != want {
+		t.Fatalf("Summary.Deletions = %d, want %d", got, want)
+	}
+	if got, want := len(status.Files), 3; got != want {
+		t.Fatalf("len(Files) = %d, want %d", got, want)
+	}
+
+	byPath := map[string]DiffFile{}
+	for _, file := range status.Files {
+		byPath[file.Path] = file
+	}
+
+	readme, ok := byPath["README.md"]
+	if !ok {
+		t.Fatalf("README.md not found in Files: %#v", status.Files)
+	}
+	if readme.Added != 1 || readme.Deleted != 0 || readme.Binary {
+		t.Fatalf("README.md diff = %#v, want Added=1 Deleted=0 Binary=false", readme)
+	}
+
+	app, ok := byPath["pkg/app.txt"]
+	if !ok {
+		t.Fatalf("pkg/app.txt not found in Files: %#v", status.Files)
+	}
+	if app.Added != 0 || app.Deleted != 1 || app.Binary {
+		t.Fatalf("pkg/app.txt diff = %#v, want Added=0 Deleted=1 Binary=false", app)
+	}
+
+	untracked, ok := byPath["docs/todo.txt"]
+	if !ok {
+		t.Fatalf("docs/todo.txt not found in Files: %#v", status.Files)
+	}
+	if untracked.Added != 0 || untracked.Deleted != 0 || untracked.Binary || !untracked.Untracked {
+		t.Fatalf("docs/todo.txt diff = %#v, want Added=0 Deleted=0 Binary=false Untracked=true", untracked)
+	}
+}
+
+func TestDiffCleanRepository(t *testing.T) {
+	repo := newGitRepo(t)
+
+	status, err := Diff(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Diff(): %v", err)
+	}
+
+	if status.Summary.FilesChanged != 0 || status.Summary.Insertions != 0 || status.Summary.Deletions != 0 {
+		t.Fatalf("Summary = %#v, want zero counts", status.Summary)
+	}
+	if len(status.Files) != 0 {
+		t.Fatalf("len(Files) = %d, want 0", len(status.Files))
+	}
+}
+
+func TestDiffNotRepository(t *testing.T) {
+	ensureGitAvailable(t)
+
+	_, err := Diff(context.Background(), t.TempDir())
+	if !errors.Is(err, ErrNotRepository) {
+		t.Fatalf("Diff() error = %v, want %v", err, ErrNotRepository)
+	}
+}
+
 func newGitRepo(t *testing.T) string {
 	t.Helper()
 

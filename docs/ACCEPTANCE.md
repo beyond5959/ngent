@@ -2,6 +2,27 @@
 
 This checklist defines executable acceptance checks for requirements 1-16.
 
+## Supplemental Web UI: Session Git Diff Summary
+
+- Operation:
+  - open a thread whose `cwd` is inside a git repository and switch to a concrete session id (not `New session`).
+  - modify one or more tracked files in that repository and create at least one untracked file.
+  - verify the composer immediately requests `/v1/threads/{threadId}/git-diff?sessionId=...`, shows the summary chip above the input, and refreshes again within 15 seconds while the same session remains selected.
+  - expand the chip and verify the per-file list matches tracked rows from `git --no-pager diff --numstat` plus the repository's untracked files.
+  - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
+- Expected:
+  - polling only happens when the active thread has a selected concrete session id.
+  - session switches trigger an immediate refetch.
+  - untracked files increase the chip's file count and appear in the expanded list with a dedicated "New" badge even when insertions/deletions remain zero.
+  - repeated clicks on the summary chip expand and collapse the panel immediately, without waiting for the next poll response.
+  - non-git/unavailable-git environments return no visible diff surface.
+  - clean repositories also omit the chip instead of showing a zero-state badge.
+- Verification command:
+  - `go test ./internal/gitutil -run TestDiff -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadGitDiffRequiresSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - manual browser check against a repository-backed thread/session
+
 ## Supplemental Web UI: Language Selection
 
 - Operation:

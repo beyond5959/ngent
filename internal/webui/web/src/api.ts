@@ -5,6 +5,7 @@ import type {
   ConfigOption,
   ModelOption,
   SessionInfo,
+  ThreadGitDiffInfo,
   SessionUsage,
   SessionTranscriptMessage,
   SlashCommand,
@@ -82,6 +83,14 @@ interface ThreadGitResponse {
   currentBranch?: string
   detached?: boolean
   branches?: ThreadGitInfo['branches']
+}
+interface ThreadGitDiffResponse {
+  threadId: string
+  sessionId: string
+  available: boolean
+  repoRoot?: string
+  summary?: ThreadGitDiffInfo['summary']
+  files?: ThreadGitDiffInfo['files']
 }
 interface CancelTurnResponse    { turnId: string; threadId: string; status: string }
 interface DeleteThreadResponse  { threadId: string; status: string }
@@ -265,6 +274,33 @@ class ApiClient {
       currentBranch: data.currentBranch?.trim() || undefined,
       detached: !!data.detached,
       branches: data.branches ?? [],
+    }
+  }
+
+  /** GET /v1/threads/{threadId}/git-diff */
+  async getThreadGitDiff(threadId: string, sessionId: string): Promise<ThreadGitDiffInfo> {
+    const params = new URLSearchParams({ sessionId: sessionId.trim() })
+    const data = await this.request<ThreadGitDiffResponse>(
+      'GET',
+      `/v1/threads/${encodeURIComponent(threadId)}/git-diff?${params.toString()}`,
+    )
+    return {
+      threadId: data.threadId,
+      sessionId: data.sessionId?.trim() || sessionId.trim(),
+      available: !!data.available,
+      repoRoot: data.repoRoot?.trim() || undefined,
+      summary: {
+        filesChanged: data.summary?.filesChanged ?? 0,
+        insertions: data.summary?.insertions ?? 0,
+        deletions: data.summary?.deletions ?? 0,
+      },
+      files: (data.files ?? []).map(file => ({
+        path: file.path?.trim() || '',
+        added: file.added ?? 0,
+        deleted: file.deleted ?? 0,
+        binary: !!file.binary,
+        untracked: !!file.untracked,
+      })).filter(file => !!file.path),
     }
   }
 

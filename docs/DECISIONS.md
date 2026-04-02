@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-071: Surface session-selected git diff summaries above the Web UI composer, including untracked files. (Accepted)
 - ADR-070: Expand embedded Web UI localization and repository READMEs to Spanish and French. (Accepted)
 - ADR-069: Keep active turns independent of individual SSE viewers and resume them through per-turn event streams. (Accepted)
 - ADR-068: Add browser-default English/Simplified Chinese localization to the embedded Web UI. (Accepted)
@@ -62,6 +63,34 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-071: Surface Session-Selected Git Diff Summaries Above The Web UI Composer, Including Untracked Files
+
+- Status: Accepted
+- Date: 2026-04-02
+- Context:
+  - ADR-066 already established thread-level git repository inspection plus an in-composer branch pill/switcher.
+  - product now also requires a Kimi-style diff summary above the composer that reflects current working-tree changes for the selected session.
+  - the UI must not show anything for non-git directories or when the host does not have `git`, and the frontend must own polling instead of receiving pushed diff updates.
+- Decision:
+  - add `GET /v1/threads/{threadId}/git-diff?sessionId=...` as a lightweight thread-scoped git capability endpoint.
+  - back the endpoint with direct host git commands:
+    - `git --no-pager diff --shortstat`
+    - `git --no-pager diff --numstat`
+    - `git ls-files --others --exclude-standard -z`
+  - parse those commands server-side into structured JSON (`summary`, per-file rows, `repoRoot`) so the frontend stays presentation-focused and does not need to parse raw git output.
+  - treat missing `git` binaries and non-repository `cwd` values as optional capability absence by returning `available=false` instead of surfacing a hard failure.
+  - require a non-empty `sessionId` query parameter so the Web UI only polls when the user has chosen a concrete historical/live session.
+  - in the embedded Web UI, poll every 15 seconds only for the active thread's selected session, force an immediate fetch on session switch, and hide the surface entirely when `available=false` or there are no tracked/untracked rows.
+- Consequences:
+  - the composer now exposes repository change pressure in the active session without adding backend push complexity or extra SSE events.
+  - git diff rendering remains consistent across browsers because parsing happens once on the backend.
+  - repositories with no tracked modifications still surface newly created untracked files, so the chip matches the user's visible working tree more closely.
+  - repositories with no visible modifications stay visually clean because the chip is omitted.
+- Alternatives considered:
+  - push git diff changes over SSE after every tool/file mutation (rejected: much higher coupling to agent behavior and no reliable signal for out-of-band filesystem edits).
+  - have the frontend shell out or parse raw git output directly (rejected: impossible in-browser and would duplicate parsing logic).
+  - use `git status --short` instead of `git diff --shortstat/--numstat` (rejected: product explicitly wants diff-based counts aligned with Kimi's presentation).
 
 ## ADR-070: Expand Embedded Web UI Localization And Repository READMEs To Spanish And French
 

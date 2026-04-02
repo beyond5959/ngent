@@ -87,9 +87,11 @@
 - Status: Open
 - Severity: Low
 - Affects: the embedded Web UI on different desktop/mobile browsers and operating systems
-- Symptom: typography, subtle contrast steps, and spacing can look slightly different depending on locally available system fonts, font rendering, and display calibration
-- Workaround: use a modern browser with good system-font rendering; functional behavior remains unchanged even when the exact presentation shifts slightly
-- Follow-up plan: consider lightweight visual regression snapshots and/or optional bundled local fonts if exact cross-platform visual parity becomes a product requirement
+- Symptom:
+  - assistant reply prose now ships with a bundled `Inter Variable` body font for closer Kimi-style transcript rendering, but CJK fallback glyphs, code rendering details, and the rest of the shell chrome still depend on host/browser font rasterization.
+  - typography, subtle contrast steps, and spacing can therefore still look slightly different across browsers, operating systems, and displays even though behavior stays the same.
+- Workaround: use a modern browser with good font rendering; functional behavior remains unchanged even when the exact presentation shifts slightly
+- Follow-up plan: consider lightweight visual regression snapshots and, only if exact parity becomes a product requirement, broader bundled font coverage beyond the assistant-body surface
 
 - ID: KI-034
 - Title: Human-readable stderr logs are less machine-friendly than JSON logs

@@ -79,6 +79,29 @@ export interface ThreadGitInfo {
   branches: GitBranchInfo[]
 }
 
+export interface ThreadGitDiffSummary {
+  filesChanged: number
+  insertions: number
+  deletions: number
+}
+
+export interface ThreadGitDiffFile {
+  path: string
+  added: number
+  deleted: number
+  binary?: boolean
+  untracked?: boolean
+}
+
+export interface ThreadGitDiffInfo {
+  threadId: string
+  sessionId: string
+  available: boolean
+  repoRoot?: string
+  summary: ThreadGitDiffSummary
+  files: ThreadGitDiffFile[]
+}
+
 export interface SessionUsage {
   sessionId: string
   updatedAt?: string

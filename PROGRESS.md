@@ -14,12 +14,11 @@ This file is the source of milestone progress, validation commands, and next act
 ## Latest Update (2026-04-02)
 
 - `Post-M8` session-scoped Web UI git diff summary and file-change panel completed:
-  - added `GET /v1/threads/{threadId}/git-diff?sessionId=...`, backed by `internal/gitutil`, which parses `git --no-pager diff --shortstat`, `git --no-pager diff --numstat`, and untracked file paths from `git ls-files --others --exclude-standard -z` for the thread working tree.
+  - added `GET /v1/threads/{threadId}/git-diff`, backed by `internal/gitutil`, which parses `git --no-pager diff --shortstat`, `git --no-pager diff --numstat`, and untracked file paths from `git ls-files --others --exclude-standard -z` for the thread working tree.
   - the endpoint is fail-soft like the existing git branch API:
     - if `git` is unavailable, it returns `available=false`.
     - if the thread `cwd` is not inside a git repository, it returns `available=false`.
-    - a missing `sessionId` is still rejected as `INVALID_ARGUMENT`.
-  - the embedded Web UI now polls this endpoint every 15 seconds only when the active thread has a selected concrete session id, immediately refetches when the user switches sessions, and refreshes again after turn completion.
+  - the embedded Web UI now polls this endpoint every 15 seconds only when the active thread has a selected concrete session id, immediately refetches when the user switches sessions, and refreshes again after turn completion, but the API itself no longer requires or echoes `sessionId`.
   - when tracked or untracked working-tree changes exist, the composer now shows a Kimi-style change-summary chip above the input; expanding it reveals the per-file rows and repository root, and untracked files render with a dedicated "New" badge.
   - follow-up fix: the Web UI now preserves the backend `untracked` flag during API normalization, so untracked rows actually render as the dedicated "New" badge instead of falling back to "Changed".
   - follow-up fix: the chip now tracks pending self-toggles separately from polled diff data, so the trigger's own `focusout` during DOM re-render no longer reopens the panel and repeated real clicks open/close it immediately.

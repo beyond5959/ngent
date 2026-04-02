@@ -95,7 +95,6 @@ export interface ThreadGitDiffFile {
 
 export interface ThreadGitDiffInfo {
   threadId: string
-  sessionId: string
   available: boolean
   repoRoot?: string
   summary: ThreadGitDiffSummary

@@ -97,14 +97,14 @@
   - product now also requires a Kimi-style diff summary above the composer that reflects current working-tree changes for the selected session.
   - the UI must not show anything for non-git directories or when the host does not have `git`, and the frontend must own polling instead of receiving pushed diff updates.
 - Decision:
-  - add `GET /v1/threads/{threadId}/git-diff?sessionId=...` as a lightweight thread-scoped git capability endpoint.
+  - add `GET /v1/threads/{threadId}/git-diff` as a lightweight thread-scoped git capability endpoint.
   - back the endpoint with direct host git commands:
     - `git --no-pager diff --shortstat`
     - `git --no-pager diff --numstat`
     - `git ls-files --others --exclude-standard -z`
   - parse those commands server-side into structured JSON (`summary`, per-file rows, `repoRoot`) so the frontend stays presentation-focused and does not need to parse raw git output.
   - treat missing `git` binaries and non-repository `cwd` values as optional capability absence by returning `available=false` instead of surfacing a hard failure.
-  - require a non-empty `sessionId` query parameter so the Web UI only polls when the user has chosen a concrete historical/live session.
+  - keep the Web UI-side gating so polling still happens only when the user has chosen a concrete historical/live session, but do not require or echo `sessionId` at the API layer because the repository identity already comes from the thread `cwd`.
   - in the embedded Web UI, poll every 15 seconds only for the active thread's selected session, force an immediate fetch on session switch, and hide the surface entirely when `available=false` or there are no tracked/untracked rows.
 - Consequences:
   - the composer now exposes repository change pressure in the active session without adding backend push complexity or extra SSE events.

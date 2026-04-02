@@ -573,7 +573,7 @@ func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, cl
 	case "git":
 		s.handleThreadGit(w, r, clientID, threadID)
 	case "git-diff":
-		s.handleThreadGitDiff(w, r, clientID, threadID)
+		s.handleThreadGitDiff(w, r, threadID)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found", map[string]any{"path": r.URL.Path})
 	}
@@ -2374,7 +2374,7 @@ func (s *Server) handleThreadGit(w http.ResponseWriter, r *http.Request, clientI
 	}
 }
 
-func (s *Server) handleThreadGitDiff(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
+func (s *Server) handleThreadGitDiff(w http.ResponseWriter, r *http.Request, threadID string) {
 	thread, ok := s.getAccessibleThread(r.Context(), threadID)
 	if !ok {
 		writeError(w, http.StatusNotFound, codeNotFound, "thread not found", map[string]any{})
@@ -2386,28 +2386,21 @@ func (s *Server) handleThreadGitDiff(w http.ResponseWriter, r *http.Request, cli
 		return
 	}
 
-	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionId"))
-	if sessionID == "" {
-		writeError(w, http.StatusBadRequest, codeInvalidArgument, "sessionId is required", map[string]any{"field": "sessionId"})
-		return
-	}
-
 	status, err := gitutil.Diff(r.Context(), thread.CWD)
 	if err != nil {
 		if errors.Is(err, gitutil.ErrGitUnavailable) || errors.Is(err, gitutil.ErrNotRepository) {
-			writeJSON(w, http.StatusOK, unavailableThreadGitDiffResponse(thread.ThreadID, sessionID))
+			writeJSON(w, http.StatusOK, unavailableThreadGitDiffResponse(thread.ThreadID))
 			return
 		}
 		writeError(w, http.StatusInternalServerError, codeInternal, "failed to inspect git diff", map[string]any{
-			"threadId":  thread.ThreadID,
-			"sessionId": sessionID,
-			"cwd":       thread.CWD,
-			"reason":    err.Error(),
+			"threadId": thread.ThreadID,
+			"cwd":      thread.CWD,
+			"reason":   err.Error(),
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, threadGitDiffResponseForStatus(thread.ThreadID, sessionID, status))
+	writeJSON(w, http.StatusOK, threadGitDiffResponseForStatus(thread.ThreadID, status))
 }
 
 func (s *Server) handleGetThreadGit(w http.ResponseWriter, r *http.Request, thread storage.Thread) {
@@ -3021,7 +3014,6 @@ type threadGitBranch struct {
 
 type threadGitDiffResponse struct {
 	ThreadID  string                 `json:"threadId"`
-	SessionID string                 `json:"sessionId"`
 	Available bool                   `json:"available"`
 	RepoRoot  string                 `json:"repoRoot,omitempty"`
 	Summary   threadGitDiffSummary   `json:"summary"`
@@ -3193,10 +3185,9 @@ func unavailableThreadGitResponse(threadID string) threadGitResponse {
 	}
 }
 
-func unavailableThreadGitDiffResponse(threadID, sessionID string) threadGitDiffResponse {
+func unavailableThreadGitDiffResponse(threadID string) threadGitDiffResponse {
 	return threadGitDiffResponse{
 		ThreadID:  threadID,
-		SessionID: sessionID,
 		Available: false,
 	}
 }
@@ -3225,7 +3216,7 @@ func threadGitResponseForStatus(threadID string, status gitutil.Status) threadGi
 	}
 }
 
-func threadGitDiffResponseForStatus(threadID, sessionID string, status gitutil.DiffStatus) threadGitDiffResponse {
+func threadGitDiffResponseForStatus(threadID string, status gitutil.DiffStatus) threadGitDiffResponse {
 	files := make([]threadGitDiffFileRow, 0, len(status.Files))
 	for _, file := range status.Files {
 		path := strings.TrimSpace(file.Path)
@@ -3243,7 +3234,6 @@ func threadGitDiffResponseForStatus(threadID, sessionID string, status gitutil.D
 
 	return threadGitDiffResponse{
 		ThreadID:  threadID,
-		SessionID: sessionID,
 		Available: true,
 		RepoRoot:  status.RepoRoot,
 		Summary: threadGitDiffSummary{

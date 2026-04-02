@@ -429,10 +429,10 @@ function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitSta
   })
 }
 
-function applyThreadGitDiffInfo(scopeKey: string, info: ThreadGitDiffInfo): ThreadGitDiffState {
+function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: ThreadGitDiffInfo): ThreadGitDiffState {
   return setThreadGitDiffState(scopeKey, {
     available: info.available,
-    sessionId: info.sessionId?.trim() || '',
+    sessionId: sessionID.trim(),
     repoRoot: info.repoRoot?.trim() || '',
     summary: {
       filesChanged: info.summary?.filesChanged ?? 0,
@@ -5430,6 +5430,7 @@ function updateMessageList(): void {
   const thread   = threads.find(t => t.threadId === activeThreadId)
   const scopeKey = threadChatScopeKey(thread)
   const msgs     = messages[scopeKey] ?? []
+  const streamState = getScopeStreamState(scopeKey)
   const historyLoadError = historyLoadErrorByScope.get(scopeKey)?.trim() ?? ''
 
   if (!msgs.length && !loadedHistoryScopeKeys.has(scopeKey)) {
@@ -5452,7 +5453,12 @@ function updateMessageList(): void {
     return
   }
 
-  if (shouldRenderMessageListAsync(msgs)) {
+  // Keep the persisted history stable before the live bubble is restored.
+  // Otherwise an async render can resume later and append older messages after
+  // the streaming bubble, which makes a spectator land below the active reply.
+  const restoringActiveStream = !!streamState && !hasMountedActiveStream(scopeKey)
+
+  if (!restoringActiveStream && shouldRenderMessageListAsync(msgs)) {
     void renderMessageListAsync(renderSeq, scopeKey, msgs)
     return
   }
@@ -5680,11 +5686,11 @@ async function loadThreadGitDiff(
   }
 
   try {
-    const info = await api.getThreadGitDiff(normalizedThreadID, normalizedSessionID)
+    const info = await api.getThreadGitDiff(normalizedThreadID)
     if (threadGitDiffRequestSeqByScope.get(scopeKey) !== requestSeq) {
       return threadGitDiffState(scopeKey)
     }
-    const nextState = applyThreadGitDiffInfo(scopeKey, info)
+    const nextState = applyThreadGitDiffInfo(scopeKey, normalizedSessionID, info)
     if (store.get().activeThreadId === normalizedThreadID) {
       syncThreadGitDiffControl(normalizedThreadID)
     }

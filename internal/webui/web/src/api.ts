@@ -86,7 +86,6 @@ interface ThreadGitResponse {
 }
 interface ThreadGitDiffResponse {
   threadId: string
-  sessionId: string
   available: boolean
   repoRoot?: string
   summary?: ThreadGitDiffInfo['summary']
@@ -278,15 +277,13 @@ class ApiClient {
   }
 
   /** GET /v1/threads/{threadId}/git-diff */
-  async getThreadGitDiff(threadId: string, sessionId: string): Promise<ThreadGitDiffInfo> {
-    const params = new URLSearchParams({ sessionId: sessionId.trim() })
+  async getThreadGitDiff(threadId: string): Promise<ThreadGitDiffInfo> {
     const data = await this.request<ThreadGitDiffResponse>(
       'GET',
-      `/v1/threads/${encodeURIComponent(threadId)}/git-diff?${params.toString()}`,
+      `/v1/threads/${encodeURIComponent(threadId)}/git-diff`,
     )
     return {
       threadId: data.threadId,
-      sessionId: data.sessionId?.trim() || sessionId.trim(),
       available: !!data.available,
       repoRoot: data.repoRoot?.trim() || undefined,
       summary: {

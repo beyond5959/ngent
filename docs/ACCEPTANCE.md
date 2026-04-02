@@ -7,7 +7,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Operation:
   - open a thread whose `cwd` is inside a git repository and switch to a concrete session id (not `New session`).
   - modify one or more tracked files in that repository and create at least one untracked file.
-  - verify the composer immediately requests `/v1/threads/{threadId}/git-diff?sessionId=...`, shows the summary chip above the input, and refreshes again within 15 seconds while the same session remains selected.
+  - verify the composer immediately requests `/v1/threads/{threadId}/git-diff`, shows the summary chip above the input, and refreshes again within 15 seconds while the same session remains selected.
   - expand the chip and verify the per-file list matches tracked rows from `git --no-pager diff --numstat` plus the repository's untracked files.
   - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
 - Expected:
@@ -21,7 +21,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - clean repositories also omit the chip instead of showing a zero-state badge.
 - Verification command:
   - `go test ./internal/gitutil -run TestDiff -count=1`
-  - `go test ./internal/httpapi -run 'TestThreadGitDiffRequiresSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles' -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadGitDiffDoesNotRequireSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles' -count=1`
   - `cd internal/webui/web && npm run build`
   - manual browser check against a repository-backed thread/session
 
@@ -159,7 +159,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/httpapi -run TestTurnSessionUsageUpdateSSEHistoryAndCache -count=1`
   - `go test ./internal/agents/codex -run 'TestNotifyCachedSessionUsagePromotesRawID|TestConsumeCodexReplayUpdateNormalizesSessionUsageID' -count=1`
   - `cd internal/webui/web && npm run build`
-  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the session list, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, uncached existing-session switches keep the spinner visible until history resolves, unsent textarea content survives both session/agent switches and turn completion rebuilds, and refreshing or opening the same thread in another browser during an active turn keeps the same session visible and the live response continues instead of being cancelled
+  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the session list, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, uncached existing-session switches keep the spinner visible until history resolves, unsent textarea content survives both session/agent switches and turn completion rebuilds, and refreshing or opening the same thread in another browser during an active turn keeps the same session visible, keeps the live response pinned to the bottom of the message list, and continues streaming instead of being cancelled
 
 ## Global Gate
 

@@ -2479,7 +2479,7 @@ func TestThreadGitStatusAndSwitchBranch(t *testing.T) {
 	}
 }
 
-func TestThreadGitDiffRequiresSessionID(t *testing.T) {
+func TestThreadGitDiffDoesNotRequireSessionID(t *testing.T) {
 	repo := newGitRepoForHTTPTest(t)
 	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
 
@@ -2492,10 +2492,20 @@ func TestThreadGitDiffRequiresSessionID(t *testing.T) {
 		nil,
 		map[string]string{"X-Client-ID": "client-a"},
 	)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
 	}
-	assertErrorCode(t, rr.Body.Bytes(), codeInvalidArgument)
+
+	var body map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := stringField(body, "threadId"), threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if _, ok := body["sessionId"]; ok {
+		t.Fatalf("response unexpectedly included sessionId: %v", body["sessionId"])
+	}
 }
 
 func TestThreadGitDiffUnavailableForNonRepository(t *testing.T) {
@@ -2507,7 +2517,7 @@ func TestThreadGitDiffUnavailableForNonRepository(t *testing.T) {
 		t,
 		h,
 		http.MethodGet,
-		"/v1/threads/"+threadID+"/git-diff?sessionId=sess-1",
+		"/v1/threads/"+threadID+"/git-diff",
 		nil,
 		map[string]string{"X-Client-ID": "client-a"},
 	)
@@ -2517,7 +2527,6 @@ func TestThreadGitDiffUnavailableForNonRepository(t *testing.T) {
 
 	var body struct {
 		ThreadID  string `json:"threadId"`
-		SessionID string `json:"sessionId"`
 		Available bool   `json:"available"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
@@ -2525,9 +2534,6 @@ func TestThreadGitDiffUnavailableForNonRepository(t *testing.T) {
 	}
 	if got, want := body.ThreadID, threadID; got != want {
 		t.Fatalf("threadId = %q, want %q", got, want)
-	}
-	if got, want := body.SessionID, "sess-1"; got != want {
-		t.Fatalf("sessionId = %q, want %q", got, want)
 	}
 	if body.Available {
 		t.Fatal("available = true, want false")
@@ -2566,7 +2572,7 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 		t,
 		h,
 		http.MethodGet,
-		"/v1/threads/"+threadID+"/git-diff?sessionId=sess-1",
+		"/v1/threads/"+threadID+"/git-diff",
 		nil,
 		map[string]string{"X-Client-ID": "client-a"},
 	)
@@ -2576,7 +2582,6 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 
 	var body struct {
 		ThreadID  string `json:"threadId"`
-		SessionID string `json:"sessionId"`
 		Available bool   `json:"available"`
 		RepoRoot  string `json:"repoRoot"`
 		Summary   struct {
@@ -2597,9 +2602,6 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 	}
 	if got, want := body.ThreadID, threadID; got != want {
 		t.Fatalf("threadId = %q, want %q", got, want)
-	}
-	if got, want := body.SessionID, "sess-1"; got != want {
-		t.Fatalf("sessionId = %q, want %q", got, want)
 	}
 	if !body.Available {
 		t.Fatal("available = false, want true")

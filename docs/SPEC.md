@@ -544,21 +544,21 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 ### 15.5 Web UI
 
 - Layout:
-  - left edge: permanently expanded agent/thread rail plus a collapsible session panel for the active thread.
+  - left edge: one permanently expanded grouped thread/session rail.
   - center: chat.
-  - the agent/thread rail stays permanently expanded and always shows full thread rows and thread action controls; `New agent` sits below the list rather than in the header.
-- Session panel behavior:
-  - lives between the agent rail and the chat area instead of on the right edge.
-  - stays hidden until an active thread is selected, so the initial empty state does not reserve session-panel width.
-  - when expanded, shows the active thread title, provider badge, project path, and a full-width `New session` action before the session list.
-  - can collapse independently into a fully retracted state with no residual strip left in the layout.
-  - on desktop, collapse/expand is triggered from a hover-revealed button on the chat panel's left edge instead of from a persistent control inside the session panel header.
-  - loads the first page automatically when a thread becomes active and the session panel is expanded.
-  - shows `Show more` when `nextCursor` is present.
-  - highlights the currently selected `sessionId` with a stronger active surface and accent-tinted text hierarchy so the active row remains obvious in the compact workbench list styling without needing a separate badge.
-  - offers `New session` to clear `sessionId`.
+  - the left rail always shows full thread rows and thread action controls; `New agent` sits below the list rather than in the header.
+- Grouped thread/session rail behavior:
+  - each thread renders as a neutral grouped header with that thread's ACP sessions listed directly underneath.
+  - the grouped header uses the provider/agent icon as its leading glyph and does not show `updatedAt` time.
+  - there is no dedicated session column and no independent session-drawer collapse/expand affordance.
+  - the rail loads the first page of session data automatically for visible thread groups.
+  - each thread shows at most 10 visible sessions at first render.
+  - `Show more` reveals the next chunk and continues using backend `nextCursor` pagination when more provider pages exist.
+  - the currently selected `sessionId` for the active thread is highlighted inline under that thread header; thread headers themselves do not have a selected state.
+  - each thread header offers `New session` to clear `sessionId`; session-list refresh is exposed from that thread's overflow menu.
   - when the active thread is already unbound, `New session` still rotates into a fresh client-side scope so the composer starts blank instead of reusing the previous anonymous buffer.
-  - refreshes after turns complete so newly created/bound sessions appear in the list.
+  - session switching from another thread's group activates that thread and the selected session in one step.
+  - refreshes after turns complete so newly created/bound sessions appear in the grouped rail.
   - applies live `session_info_update.title` notifications to the matching session row immediately and keeps that runtime title override until a later notification replaces it.
   - skips server history hydration for that temporary fresh-session scope until a real ACP session id is bound back into the thread.
   - filters empty cancelled placeholders from empty-session history replay so page reload does not resurrect abandoned pre-bind attempts.

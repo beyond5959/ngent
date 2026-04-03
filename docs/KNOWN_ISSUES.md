@@ -26,7 +26,7 @@
 - Workaround:
   - switch into the running session whose plan you want to inspect; the card rehydrates from persisted `plan_update` events and resumes live updates.
 - Follow-up plan:
-  - evaluate whether the thread list or session rail eventually needs a compact cross-thread live-plan indicator for background sessions.
+  - evaluate whether the grouped left rail eventually needs a compact cross-thread live-plan indicator for background sessions.
 
 - ID: KI-048
 - Title: Git-diff file icons currently cover a curated subset of common file types
@@ -96,15 +96,15 @@
   - evaluate whether ngent should eventually add an explicit optional namespace/project isolation flag instead of relying on browser-local identifiers.
 
 - ID: KI-044
-- Title: Session history rail can still become dense on threads with very large provider catalogs
+- Title: Grouped left rail can still become dense on threads with very large provider session catalogs
 - Status: Open
 - Severity: Low
 - Affects: Web UI threads whose providers return long session lists for the current working directory
 - Symptom:
-  - the redesign makes session rows more compact, but the left session rail is still a straight scrollable list with truncation and no in-rail filtering/search.
-  - on threads with many historical sessions, scanning the rail can still feel dense even though the panel now recedes visually.
+  - the redesign now groups sessions directly under each thread header, but the left rail is still a straight scrollable list with truncation and no in-rail filtering/search.
+  - on threads with many historical sessions, scanning the grouped rail can still feel dense even though the separate session drawer is gone.
 - Workaround:
-  - collapse the session rail when it is not needed, or rely on the provider's recent-session ordering near the top of the list.
+  - rely on the provider's recent-session ordering near the top of each thread group and use `Show more` only when older sessions are needed.
 - Follow-up plan:
   - evaluate adding optional session search/grouping if large-history threads remain common in real usage.
 
@@ -315,16 +315,16 @@
 - Severity: Medium
 - Affects: threads that select an existing ACP `sessionId` from the Web UI/API
 - Symptom: ngent now caches prior provider transcript snapshots in SQLite for `GET /v1/threads/{threadId}/session-history`, but that replay is still not imported into SQLite `turns/events`; history APIs remain source-of-truth only for hub-created turns.
-- Workaround: use the session sidebar replay for provider-owned historical context, but rely on persisted hub `/history` for turns created through ngent itself.
+- Workaround: use the grouped session-list replay for provider-owned historical context, but rely on persisted hub `/history` for turns created through ngent itself.
 - Follow-up plan: evaluate importing selected provider transcript into local persisted history, or exposing an explicit merged-history view, without duplicating future hub-originated turns.
 
 - ID: KI-022
-- Title: Codex session sidebar titles can still show provider wrapper text
+- Title: Codex grouped session-list titles can still show provider wrapper text
 - Status: Open
 - Severity: Low
-- Affects: Codex `session/list` entries rendered in the Web UI session sidebar
+- Affects: Codex `session/list` entries rendered in the Web UI grouped left rail
 - Symptom: Codex provider metadata and replayed transcript can expose long wrapper-generated text such as `[Conversation Summary] ... [Current User Input] ...` or IDE context blocks because ngent now shows the raw provider-owned ACP replay.
-- Workaround: use the thread title or the most recent visible turn content when the sidebar label or replayed prompt body is noisy.
+- Workaround: use the thread title or the most recent visible turn content when the grouped-rail session label or replayed prompt body is noisy.
 - Follow-up plan: normalize Codex `session/list` display titles in the backend, likely by preferring the first replayable user prompt over raw provider preview text when available.
 
 - ID: KI-023
@@ -334,7 +334,7 @@
 - Affects: newly created Kimi sessions bound through ngent ACP turns
 - Symptom:
   - a just-created Kimi `sessionId` can be resumed successfully through ACP `session/load`, but may still be absent from Kimi's own `session/list`, `kimi export`, and local `~/.kimi/sessions/*/<sessionId>` files for a while.
-  - ngent can continue the bound session on the same or another thread if the `sessionId` is already known, but the session sidebar may not show the new session immediately after creation.
+  - ngent can continue the bound session on the same or another thread if the `sessionId` is already known, but the grouped left rail may not show the new session immediately after creation.
 - Workaround:
   - continue using the bound `sessionId` directly in ngent even if Kimi's own session browser has not caught up yet.
   - retry session browsing later after Kimi finishes persisting its own session index/files.

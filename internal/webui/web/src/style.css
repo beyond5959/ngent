@@ -4430,7 +4430,7 @@ button:active:not(:disabled),
 
   --scrollbar-thumb: rgba(75, 91, 104, 0.28);
 
-  --sidebar-w: 272px;
+  --sidebar-w: 318px;
   --session-sidebar-w: 264px;
   --header-h: 72px;
 
@@ -7024,5 +7024,370 @@ kbd {
 
   .modal-footer {
     padding: 12px 16px 16px;
+  }
+}
+
+/* ===== 2026-04 Sidebar Session Merge ===== */
+.sidebar {
+  transition: width var(--t-base), min-width var(--t-base), margin-right var(--t-base), opacity var(--t-base), transform var(--t-base), border-color var(--t-fast), box-shadow var(--t-fast), background var(--t-fast);
+}
+
+.sidebar.sidebar--collapsed {
+  width: 0;
+  min-width: 0;
+  margin-right: -10px;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-10px);
+}
+
+.sidebar.sidebar--collapsed::before {
+  opacity: 0;
+}
+
+.sidebar.sidebar--collapsed > * {
+  opacity: 0;
+}
+
+.chat-sidebar-toggle-zone {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 20px;
+  z-index: 4;
+}
+
+.chat-sidebar-toggle-zone::before {
+  display: none;
+}
+
+.chat-sidebar-toggle-btn {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 40px;
+  padding: 0;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  line-height: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-6px, -50%);
+  transition: opacity var(--t-fast), transform var(--t-fast), background var(--t-fast), border-color var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.chat-sidebar-toggle-btn svg {
+  transition: transform var(--t-fast);
+}
+
+.chat-sidebar-toggle-btn[data-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.chat-sidebar-toggle-zone:hover .chat-sidebar-toggle-btn,
+.chat-sidebar-toggle-zone:focus-within .chat-sidebar-toggle-btn {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(0, -50%);
+}
+
+.chat-sidebar-toggle-btn:hover:not(:disabled) {
+  background: var(--bg-panel-strong);
+  border-color: var(--border-strong);
+  color: var(--text-1);
+}
+
+.thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 2px 8px;
+}
+
+.thread-group {
+  padding: 3px 4px 4px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.thread-item {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.thread-item::before {
+  display: none;
+}
+
+.thread-item:hover,
+.thread-item--active,
+.thread-item--menu-open {
+  background: transparent;
+  transform: none;
+  box-shadow: none;
+}
+
+.thread-item-main {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.thread-item-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2);
+  box-shadow: none;
+}
+
+[data-theme="dark"] .thread-item-avatar {
+  background: transparent;
+}
+
+.thread-item-avatar--icon .thread-item-avatar-icon {
+  width: 100%;
+  height: 100%;
+  border-radius: 5px;
+}
+
+.thread-item-body {
+  gap: 3px;
+}
+
+.thread-item-row {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.thread-item-title {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-1);
+}
+
+.thread-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.thread-item-agent {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.thread-item-actions {
+  align-items: flex-start;
+  gap: 4px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.thread-item-menu-trigger {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.thread-group .thread-item:hover .thread-item-menu-trigger,
+.thread-group .thread-item:focus-within .thread-item-menu-trigger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.thread-group .thread-item--menu-open .thread-item-menu-trigger,
+.thread-group .thread-item-menu-trigger[aria-expanded='true'],
+.thread-group .thread-item-menu-trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-strong) 84%, transparent);
+  color: var(--text-1);
+}
+
+.thread-item-actions .btn {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.thread-item-actions .btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.thread-group-sessions {
+  padding-left: 24px;
+  margin-top: 1px;
+}
+
+.thread-group-sessions-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-group .session-list {
+  gap: 1px;
+}
+
+.thread-group .session-item {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.thread-group .session-item:not(.session-item--active):not(.session-item--hover-preview):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-inset) 92%, transparent);
+  border-color: transparent;
+  transform: none;
+}
+
+.thread-group .session-item--hover-preview {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong));
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.thread-group .session-item--hover-preview {
+  transform: none;
+}
+
+.thread-group .session-item--active {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 15%, var(--bg-panel-strong)) 0%, color-mix(in srgb, var(--accent) 8%, var(--bg-panel-strong)) 100%);
+  border-color: transparent;
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--accent) 42%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.thread-group .session-item-main {
+  gap: 10px;
+}
+
+.thread-group .session-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.thread-group .session-item-meta {
+  font-size: 12px;
+}
+
+.thread-group .session-item--hover-preview .session-item-title {
+  color: var(--text-1);
+}
+
+.thread-group .session-item--hover-preview .session-item-meta {
+  color: var(--text-2);
+}
+
+.thread-group .session-item--active .session-item-title {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-1));
+  font-weight: 600;
+}
+
+.thread-group .session-item--active .session-item-meta {
+  color: color-mix(in srgb, var(--accent) 58%, var(--text-2));
+}
+
+.thread-group .session-status-indicator {
+  width: 14px;
+  height: 14px;
+}
+
+.thread-group .session-status-indicator .thread-status-spinner {
+  width: 10px;
+  height: 10px;
+}
+
+.thread-group .session-show-more-btn {
+  align-self: flex-start;
+  margin-left: 10px;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.thread-group .session-show-more-btn:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-1);
+}
+
+.thread-group .session-panel-empty {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.thread-group .session-panel-inline-error {
+  padding-left: 10px;
+  text-align: left;
+}
+
+@media (max-width: 768px) {
+  .sidebar.sidebar--collapsed {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    margin-right: 0;
+    background: var(--sidebar-bg);
+    border-color: var(--border);
+    box-shadow: none;
+    backdrop-filter: blur(22px);
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .sidebar.sidebar--collapsed::before {
+    opacity: 1;
+  }
+
+  .sidebar.sidebar--collapsed > * {
+    opacity: 1;
+  }
+
+  .chat-sidebar-toggle-zone {
+    display: none;
+  }
+
+  .thread-list {
+    gap: 2px;
+    padding: 0 1px 8px;
   }
 }

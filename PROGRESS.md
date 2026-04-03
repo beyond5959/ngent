@@ -13,6 +13,23 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-04-03)
 
+- `Post-M8` Web UI merged thread/session left rail completed:
+  - removed the dedicated middle session drawer and its chat-edge collapse toggle; the workspace now uses one left navigation column plus the main chat area.
+  - the left rail now renders each thread as a grouped header with its ACP session rows directly underneath, closer to Codex App's project/session browsing model while preserving the existing thread-based backend model.
+  - session switching now activates the clicked thread and selected session in one step, so choosing a historical session from another thread opens the correct transcript immediately instead of briefly rendering that thread's default session first.
+  - each thread group now shows at most 10 sessions at first render; `Show more` expands the next chunk and still honors backend `nextCursor` pagination when additional provider pages exist.
+  - per-thread `New session`, refresh, loading indicators, session-title live updates, and post-turn session-list refresh behavior were all retained inside the merged grouped rail.
+  - follow-up polish: thread headers no longer show relative timestamps or any selected/highlighted state; only session rows carry selection styling.
+  - follow-up polish: session refresh moved out of the inline header controls into the thread three-dot overflow menu, and the grouped thread header now uses the agent/provider icon as its leading visual instead of a generic folder glyph.
+  - follow-up polish: thread-group hover/background feedback was removed so only session rows react on hover, thread-header actions now stay visible without hover reveal, and inter-group spacing was tightened so the rail reads as one continuous list.
+  - follow-up polish: the thread overflow trigger is now permanently visible like `New session`, active session rows use a stronger accent treatment for clearer selection, and the rail side padding was reduced so content sits closer to the panel edge.
+  - follow-up polish: thread-header overflow buttons now react only to direct button hover instead of inheriting whole-row hover feedback, the rail padding/indent was tightened again, thread headers no longer show a streaming spinner for active sessions, and the active-session left accent line was softened.
+  - follow-up polish: the old chat-edge collapse handle pattern that previously controlled the session drawer now controls the merged threads rail, so the left thread/session panel can collapse and expand with the same hover-reveal affordance.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+## Previous Update (2026-04-03)
+
 - `Post-M8` Web UI live-plan bottom overlay completed:
   - ACP `sessionUpdate:"plan"` updates no longer render inside the assistant transcript bubble or finalized history message.
   - the embedded Web UI now renders the current running turn's latest plan as an ephemeral bottom-floating card anchored above the chat input, so users can track step progress without scrolling back to the top of a long reply.

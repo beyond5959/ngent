@@ -422,7 +422,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
 
-## Requirement 23: ACP Session Sidebar and Resume
+## Requirement 23: ACP Session Grouped Rail and Resume
 
 - Operation:
   - create a thread/agent in the Web UI or API.
@@ -434,25 +434,28 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - the backend proxies ACP `session/list` through `GET /v1/threads/{threadId}/sessions`.
   - response includes `supported`, `sessions`, and `nextCursor`.
   - for providers that replay transcript over ACP `session/load`, the first `GET /v1/threads/{threadId}/session-history?sessionId=...` warms sqlite `session_transcript_cache`, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
-  - the Web UI renders a left-side collapsible session panel beside a permanently expanded agent rail.
-  - when no agent/thread is selected yet, the session panel stays hidden and does not reserve layout width.
-  - when collapsed, the session panel fully retracts and does not leave behind a visible strip.
-  - on desktop, the session panel collapse/expand affordance is exposed from a hover-revealed control on the chat panel's left edge instead of from the panel header.
-  - the expanded session panel shows the active thread title, agent metadata, project path, and a `New session` entry above the session list.
-  - the agent rail exposes the thread list plus a `New agent` button below it.
-  - first-page session load happens when an active thread is selected and the session panel is expanded.
-  - `Show more` pagination appears when `nextCursor` is present.
-  - `New session` action that clears the selected `sessionId`.
+  - the Web UI renders one left grouped rail where each thread header shows its session rows directly underneath.
+  - there is no dedicated session column and no chat-edge session-drawer collapse control.
+  - each thread header uses the agent/provider icon as its leading visual and does not show a thread-level relative timestamp.
+  - the agent rail still exposes the thread list plus a `New agent` button below it.
+  - first-page session load happens automatically for visible thread groups.
+  - each thread group shows at most 10 sessions initially.
+  - `Show more` reveals the next chunk and uses backend `nextCursor` pagination when more provider pages exist.
+  - each thread header exposes `New session`, while session refresh is available from the thread three-dot overflow menu.
+  - only session rows have an active/selected visual state; thread headers/groups do not.
   - repeated `New session` clicks while the thread is still unbound must still open a blank fresh-session view instead of reusing the prior anonymous buffer.
+  - selecting an existing session from another thread group activates that thread and selected session in one step.
   - selecting an existing session requests provider-owned transcript replay before the next turn.
   - turn SSE emits `session_bound`, and the thread persists `agentOptions.sessionId`.
-  - when an ACP agent emits `session/update` with `sessionUpdate="session_info_update"` and a non-null `title`, turn SSE emits `session_info_update` and the Web UI uses that title for the matching `sessionId` in the session sidebar.
+  - when an ACP agent emits `session/update` with `sessionUpdate="session_info_update"` and a non-null `title`, turn SSE emits `session_info_update` and the Web UI uses that title for the matching `sessionId` in the grouped rail.
   - once a thread is session-bound, subsequent prompt building no longer injects prior local turns into the provider prompt.
   - cancelled turns that never emitted `session_bound` and never produced visible response text do not reappear when the user opens a newer fresh session or reloads the thread.
 - Verification commands (executed 2026-03-13):
   - `go test ./internal/httpapi -run 'TestThreadSessionsListEndpoint|TestTurnSessionBoundPersistsSessionIDAndSkipsContextInjection|TestNewSessionResetSkipsContextInjection' -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
+- Additional verification commands (executed 2026-04-03 after grouped-left-rail refactor):
+  - `cd internal/webui/web && npm run build`
 - Additional verification commands (executed 2026-03-12):
   - `go test ./internal/agents/kimi -run 'SessionTranscript' -count=1`
   - `go test ./internal/agents/opencode -run 'SessionTranscript' -count=1`

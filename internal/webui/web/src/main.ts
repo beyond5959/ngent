@@ -107,11 +107,6 @@ const iconSlashCommand = `<svg width="14" height="14" viewBox="0 0 24 24" fill="
   <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" stroke="currentColor" stroke-width="1.7"/>
 </svg>`
 
-const iconRefresh = `<svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-  <path d="M12.5 7.5a5 5 0 1 1-1.47-3.53" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M12.5 2.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>`
-
 const iconSparkles = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
   <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M20 2v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -274,8 +269,8 @@ interface RenderableSessionUsage extends SessionUsage {
 
 const sessionPanelStateByThread = new Map<string, SessionPanelState>()
 const sessionPanelRequestSeqByThread = new Map<string, number>()
-const sessionPanelScrollTopByThread = new Map<string, number>()
 const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
+const visibleSessionCountByThread = new Map<string, number>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 const composerDraftByScope = new Map<string, string>()
 const threadGitStateByThread = new Map<string, ThreadGitState>()
@@ -290,8 +285,10 @@ let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
 let threadGitDiffRequestSeq = 0
 const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 30_000
+const INLINE_SESSION_PAGE_SIZE = 10
 let threadGitDiffPollTimer = 0
 let threadGitDiffPollScopeKey = ''
+let sidebarCollapsed = false
 const SESSION_ITEM_HOVER_PREVIEW_DELAY_MS = 120
 const SESSION_ITEM_HOVER_PREVIEW_CLASS = 'session-item--hover-preview'
 let sessionItemHoverPreviewTimer = 0
@@ -1524,7 +1521,6 @@ const expandedToolCallSegmentIds = new Set<string>()
 let openThreadActionMenuId: string | null = null
 let renamingThreadId: string | null = null
 let renamingThreadDraft = ''
-let sessionPanelExpanded = true
 let historyLoadRequestSeq = 0
 
 // ── Scroll helpers ────────────────────────────────────────────────────────
@@ -1703,6 +1699,10 @@ function getThreadMenuTrigger(threadId: string): HTMLButtonElement | null {
 function renderThreadActionPopover(thread: Thread): string {
   const isOpen = openThreadActionMenuId === thread.threadId
   if (!isOpen) return ''
+  const sessionState = sessionPanelState(thread.threadId)
+  const refreshLabel = sessionState.loading || sessionState.loadingMore
+    ? t('refreshingSessions')
+    : t('refreshSessions')
 
   if (renamingThreadId === thread.threadId) {
     return `
@@ -1729,6 +1729,15 @@ function renderThreadActionPopover(thread: Thread): string {
 
   return `
     <div class="thread-action-popover thread-action-menu" data-thread-id="${escHtml(thread.threadId)}" role="menu" aria-label="${escHtml(t('agentActions'))}">
+      <button
+        class="thread-action-menu-item"
+        type="button"
+        data-thread-id="${escHtml(thread.threadId)}"
+        data-action="refresh"
+        role="menuitem"
+        ${sessionState.loading || sessionState.loadingMore ? 'disabled' : ''}>
+        ${escHtml(refreshLabel)}
+      </button>
       <button class="thread-action-menu-item" type="button" data-thread-id="${escHtml(thread.threadId)}" data-action="rename" role="menuitem">
         ${escHtml(t('rename'))}
       </button>
@@ -1799,6 +1808,12 @@ function renderThreadActionLayer(): void {
       e.stopPropagation()
       const id = btn.dataset.threadId ?? ''
       if (!id) return
+      if (btn.dataset.action === 'refresh') {
+        resetThreadActionMenuState()
+        updateThreadList()
+        void loadThreadSessions(id)
+        return
+      }
       if (btn.dataset.action === 'rename') {
         beginRenameThread(id)
         return
@@ -2607,6 +2622,18 @@ function setSessionPanelState(threadId: string, next: SessionPanelState): void {
   }
 }
 
+function visibleSessionCount(threadId: string): number {
+  return visibleSessionCountByThread.get(threadId) ?? INLINE_SESSION_PAGE_SIZE
+}
+
+function resetVisibleSessionCount(threadId: string): void {
+  visibleSessionCountByThread.delete(threadId)
+}
+
+function expandVisibleSessionCount(threadId: string): void {
+  visibleSessionCountByThread.set(threadId, visibleSessionCount(threadId) + INLINE_SESSION_PAGE_SIZE)
+}
+
 function dedupeSessionItems(items: SessionInfo[]): SessionInfo[] {
   const deduped: SessionInfo[] = []
   const indexes = new Map<string, number>()
@@ -2783,6 +2810,7 @@ async function loadThreadSessions(threadId: string, append = false): Promise<voi
       error: '',
     })
   } else {
+    resetVisibleSessionCount(threadId)
     setSessionPanelState(threadId, {
       ...current,
       loading: true,
@@ -2818,26 +2846,28 @@ async function loadThreadSessions(threadId: string, append = false): Promise<voi
       error: message,
     })
   }
-
-  if (store.get().activeThreadId === threadId) {
-    updateSessionPanel()
-  }
+  updateSessionPanel()
 }
 
 async function switchThreadSession(thread: Thread, nextSessionID: string): Promise<void> {
+  const state = store.get()
   const targetSessionID = nextSessionID.trim()
-  const currentSelection = sessionSelectionFromScopeKey(threadChatScopeKey(thread))
-  if (targetSessionID && currentSelection === targetSessionID) return
+  const isActiveThread = state.activeThreadId === thread.threadId
+  const currentSelection = isActiveThread ? sessionSelectionFromScopeKey(threadChatScopeKey(thread)) : ''
+  if (isActiveThread && targetSessionID && currentSelection === targetSessionID) return
   if (sessionSwitchingThreads.has(thread.threadId)) return
 
   const targetSelection = targetSessionID || `@fresh:${generateUUID()}`
-  const state = store.get()
   const nextMessages = targetSessionID
     ? state.messages
     : activateFreshSessionScope(thread.threadId, state.messages, targetSelection)
   setSelectedSessionOverride(thread.threadId, targetSelection)
   clearSelectedSessionOverrideIfSynced(thread)
-  store.set({ messages: nextMessages })
+  store.set({
+    activeThreadId: thread.threadId,
+    messages: nextMessages,
+    threadCompletionBadges: omitThreadCompletionBadge(state.threadCompletionBadges, thread.threadId),
+  })
 
   if (hasThreadStream(thread.threadId)) {
     if (store.get().activeThreadId === thread.threadId) {
@@ -2936,12 +2966,13 @@ interface SessionPanelRenderData {
   disabled: boolean
   refreshDisabled: boolean
   loadingSessionIDSet: Set<string>
+  showMoreMode: 'loaded' | 'remote' | ''
 }
 
 function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
-  const { streamStates } = store.get()
+  const { activeThreadId, streamStates } = store.get()
   const state = sessionPanelState(thread.threadId)
-  const selectedSessionID = selectedThreadSessionID(thread)
+  const selectedSessionID = activeThreadId === thread.threadId ? selectedThreadSessionID(thread) : ''
   const switching = sessionSwitchingThreads.has(thread.threadId)
   const disabled = switching
   const refreshDisabled = disabled || state.loading || state.loadingMore
@@ -2959,19 +2990,23 @@ function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
   if (selectedSessionID && !knownIDs.has(selectedSessionID)) {
     prependEphemeralSession(sessions, knownIDs, selectedSessionID)
   }
+  const showMoreMode = sessions.length > visibleSessionCount(thread.threadId)
+    ? 'loaded'
+    : (state.nextCursor ? 'remote' : '')
 
   return {
     state,
-    sessions,
+    sessions: sessions.slice(0, visibleSessionCount(thread.threadId)),
     selectedSessionID,
     disabled,
     refreshDisabled,
     loadingSessionIDSet: new Set(loadingSessionIDs),
+    showMoreMode,
   }
 }
 
 function renderSessionPanelBody(data: SessionPanelRenderData): string {
-  const { state, sessions, selectedSessionID, disabled, loadingSessionIDSet } = data
+  const { state, sessions, selectedSessionID, disabled, loadingSessionIDSet, showMoreMode } = data
 
   if (state.loading && !sessions.length) {
     return `<div class="session-panel-empty">${escHtml(t('loadingSessions'))}</div>`
@@ -2990,8 +3025,12 @@ function renderSessionPanelBody(data: SessionPanelRenderData): string {
         loadingSessionIDSet.has(item.sessionId),
       )).join('')
     : `<div class="session-panel-empty">${escHtml(t('noPreviousSessions'))}</div>`
-  const showMoreHTML = state.nextCursor
-    ? `<button class="btn btn-ghost session-show-more-btn" type="button" ${state.loadingMore || disabled ? 'disabled' : ''}>
+  const showMoreHTML = showMoreMode
+    ? `<button
+        class="btn btn-ghost session-show-more-btn"
+        type="button"
+        data-show-more-mode="${escHtml(showMoreMode)}"
+        ${state.loadingMore || disabled ? 'disabled' : ''}>
         ${escHtml(state.loadingMore ? t('loadingEllipsis') : t('showMore'))}
       </button>`
     : ''
@@ -3020,52 +3059,10 @@ function sessionPanelBodyRenderKey(data: SessionPanelRenderData): string {
     nextCursor: data.state.nextCursor,
     selectedSessionID: data.selectedSessionID,
     disabled: data.disabled,
+    showMoreMode: data.showMoreMode,
     sessionsKey,
     loadingKey,
   })
-}
-
-function renderSessionPanelHeader(thread: Thread, data: SessionPanelRenderData): string {
-  const title = threadTitle(thread)
-  const agentName = agentDisplayName(thread.agent ?? '')
-  const refreshLabel = data.state.loading ? t('refreshingSessions') : t('refreshSessions')
-
-  return `
-    <div class="session-panel-header">
-      <div class="session-panel-section-label">${escHtml(t('sessionHistory'))}</div>
-      <div class="session-panel-heading-row">
-        <div class="session-panel-heading-copy">
-          <div class="session-panel-title-row">
-            <h3 class="session-panel-title" title="${escHtml(title)}">
-              <span class="session-panel-title__text">${escHtml(title)}</span>
-            </h3>
-            <span class="session-panel-agent">${escHtml(agentName)}</span>
-          </div>
-          <div class="session-panel-subtitle" title="${escHtml(thread.cwd)}">
-            ${renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')}
-          </div>
-        </div>
-        <div class="session-panel-actions">
-          <button
-            class="btn btn-icon session-refresh-btn ${data.state.loading ? 'session-refresh-btn--loading' : ''}"
-            type="button"
-            title="${refreshLabel}"
-            aria-label="${refreshLabel}"
-            ${data.refreshDisabled ? 'disabled' : ''}>
-            ${iconRefresh}
-          </button>
-        </div>
-      </div>
-      <button
-        class="btn btn-ghost session-new-btn session-new-btn--full"
-        type="button"
-        title="${escHtml(t('newSession'))}"
-        aria-label="${escHtml(t('newSession'))}"
-        ${data.disabled ? 'disabled' : ''}>
-        ${iconPlus}
-        <span>${escHtml(t('newSession'))}</span>
-      </button>
-    </div>`
 }
 
 function clearSessionItemHoverPreviewTimer(): void {
@@ -3109,7 +3106,9 @@ function scheduleSessionItemHoverPreview(btn: HTMLButtonElement): void {
 function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
   const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
   if (refreshBtn) {
-    refreshBtn.onclick = () => {
+    refreshBtn.onclick = event => {
+      event.preventDefault()
+      event.stopPropagation()
       clearSessionItemHoverPreview()
       void loadThreadSessions(thread.threadId)
     }
@@ -3117,7 +3116,9 @@ function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
 
   const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
   if (newSessionBtn) {
-    newSessionBtn.onclick = () => {
+    newSessionBtn.onclick = event => {
+      event.preventDefault()
+      event.stopPropagation()
       clearSessionItemHoverPreview()
       void switchThreadSession(thread, '')
     }
@@ -3126,7 +3127,8 @@ function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
   el.querySelectorAll<HTMLButtonElement>('.session-item[data-session-id]').forEach(btn => {
     btn.onclick = () => {
       const sessionID = btn.dataset.sessionId?.trim() ?? ''
-      if (!sessionID || sessionID === selectedThreadSessionID(thread)) return
+      const isActiveThread = store.get().activeThreadId === thread.threadId
+      if (!sessionID || (isActiveThread && sessionID === selectedThreadSessionID(thread))) return
       clearSessionItemHoverPreview()
       void switchThreadSession(thread, sessionID)
     }
@@ -3142,44 +3144,14 @@ function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
   if (showMoreBtn) {
     showMoreBtn.onclick = () => {
       clearSessionItemHoverPreview()
+      const mode = showMoreBtn.dataset.showMoreMode === 'loaded' ? 'loaded' : 'remote'
+      expandVisibleSessionCount(thread.threadId)
+      if (mode === 'loaded') {
+        updateSessionPanel()
+        return
+      }
       void loadThreadSessions(thread.threadId, true)
     }
-  }
-}
-
-function syncSessionPanelHeader(el: HTMLElement, thread: Thread, data: SessionPanelRenderData): void {
-  const title = threadTitle(thread)
-  const titleEl = el.querySelector<HTMLElement>('.session-panel-title')
-  const titleTextEl = titleEl?.querySelector<HTMLElement>('.session-panel-title__text')
-  if (titleEl) titleEl.title = title
-  if (titleTextEl && titleTextEl.textContent !== title) {
-    titleTextEl.textContent = title
-  }
-
-  const agentName = agentDisplayName(thread.agent ?? '')
-  const agentEl = el.querySelector<HTMLElement>('.session-panel-agent')
-  if (agentEl && agentEl.textContent !== agentName) {
-    agentEl.textContent = agentName
-  }
-
-  const subtitleEl = el.querySelector<HTMLElement>('.session-panel-subtitle')
-  if (subtitleEl && subtitleEl.title !== thread.cwd) {
-    subtitleEl.title = thread.cwd
-    subtitleEl.innerHTML = renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')
-  }
-
-  const refreshLabel = data.state.loading ? t('refreshingSessions') : t('refreshSessions')
-  const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
-  if (refreshBtn) {
-    refreshBtn.classList.toggle('session-refresh-btn--loading', data.state.loading)
-    refreshBtn.title = refreshLabel
-    refreshBtn.setAttribute('aria-label', refreshLabel)
-    refreshBtn.disabled = data.refreshDisabled
-  }
-
-  const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
-  if (newSessionBtn) {
-    newSessionBtn.disabled = data.disabled
   }
 }
 
@@ -3194,83 +3166,8 @@ function prependEphemeralSession(
   sessions.unshift({ sessionId: normalized, title: normalized })
 }
 
-function renderSessionPanel(): string {
-  const { activeThreadId, threads } = store.get()
-  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
-  if (!thread) {
-    return ''
-  }
-
-  const data = resolveSessionPanelRenderData(thread)
-  const bodyKey = sessionPanelBodyRenderKey(data)
-
-  return `
-    ${renderSessionPanelHeader(thread, data)}
-    <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
-      ${renderSessionPanelBody(data)}
-    </div>`
-}
-
 function updateSessionPanel(): void {
-  const el = document.getElementById('session-sidebar')
-  if (!el) return
-
-  const renderedThreadID = el.dataset.threadId?.trim() ?? ''
-  const previousBody = el.querySelector<HTMLElement>('.session-panel-body')
-  if (renderedThreadID && previousBody) {
-    sessionPanelScrollTopByThread.set(renderedThreadID, previousBody.scrollTop)
-  }
-
-  const { activeThreadId, threads } = store.get()
-  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
-
-  if (!thread) {
-    clearSessionItemHoverPreview()
-    delete el.dataset.threadId
-    el.innerHTML = ''
-    syncSidebarChrome()
-    return
-  }
-
-  syncSidebarChrome()
-  const data = resolveSessionPanelRenderData(thread)
-  const state = data.state
-  const bodyKey = sessionPanelBodyRenderKey(data)
-  const canPatchExisting = renderedThreadID === thread.threadId
-    && !!el.querySelector('.session-panel-header')
-    && !!el.querySelector('.session-panel-body')
-
-  if (!canPatchExisting) {
-    clearSessionItemHoverPreview()
-    el.innerHTML = `${renderSessionPanelHeader(thread, data)}
-      <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
-        ${renderSessionPanelBody(data)}
-      </div>`
-    el.dataset.threadId = thread.threadId
-    const nextBody = el.querySelector<HTMLElement>('.session-panel-body')
-    if (nextBody) {
-      nextBody.scrollTop = sessionPanelScrollTopByThread.get(thread.threadId) ?? 0
-    }
-  } else {
-    el.dataset.threadId = thread.threadId
-    syncSessionPanelHeader(el, thread, data)
-    const bodyEl = el.querySelector<HTMLElement>('.session-panel-body')
-    if (bodyEl && bodyEl.dataset.renderKey !== bodyKey) {
-      clearSessionItemHoverPreview()
-      const currentScrollTop = bodyEl.scrollTop
-      bodyEl.innerHTML = renderSessionPanelBody(data)
-      bodyEl.dataset.renderKey = bodyKey
-      bodyEl.scrollTop = currentScrollTop
-    }
-  }
-
-  if (sessionPanelExpanded && state.supported === null && !state.loading && !state.loadingMore && !state.error) {
-    void loadThreadSessions(thread.threadId)
-  }
-
-  syncSessionPanelTitleOverflow(el)
-  syncSessionPanelSubtitleOverflow(el)
-  bindSessionPanelControls(el, thread)
+  updateThreadList()
 }
 
 // ── Thread list rendering ─────────────────────────────────────────────────
@@ -3291,41 +3188,67 @@ function threadTitle(thread: Thread): string {
   return thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd
 }
 
-function syncSidebarChrome(): void {
-  const sidebar = document.getElementById('sidebar')
-  if (sidebar) {
-    sidebar.classList.add('sidebar--expanded')
-  }
+function sidebarToggleLabel(): string {
+  return sidebarCollapsed ? t('expandThreads') : t('collapseThreads')
+}
 
-  const { activeThreadId, threads } = store.get()
-  const hasActiveThread = !!(activeThreadId && threads.some(thread => thread.threadId === activeThreadId))
-  const sessionSidebar = document.getElementById('session-sidebar')
-  if (sessionSidebar) {
-    sessionSidebar.hidden = !hasActiveThread
-    sessionSidebar.classList.toggle('session-sidebar--expanded', hasActiveThread && sessionPanelExpanded)
-    sessionSidebar.classList.toggle('session-sidebar--collapsed', hasActiveThread && !sessionPanelExpanded)
-  }
+function renderSidebarToggle(): string {
+  const label = sidebarToggleLabel()
+  const expanded = sidebarCollapsed ? 'false' : 'true'
+  return `
+    <div class="chat-sidebar-toggle-zone">
+      <button
+        class="btn chat-sidebar-toggle-btn"
+        id="sidebar-toggle-btn"
+        type="button"
+        data-expanded="${expanded}"
+        aria-expanded="${expanded}"
+        aria-controls="sidebar"
+        aria-label="${escHtml(label)}"
+        title="${escHtml(label)}"
+      >
+        ${iconChevronRight}
+      </button>
+    </div>`
+}
 
-  document.querySelectorAll<HTMLButtonElement>('.chat-session-toggle-btn').forEach(btn => {
-    const label = sessionPanelExpanded ? 'Collapse session list' : 'Expand session list'
-    btn.setAttribute('aria-label', label)
-    btn.setAttribute('title', label)
-    btn.setAttribute('aria-expanded', sessionPanelExpanded ? 'true' : 'false')
-    btn.dataset.expanded = sessionPanelExpanded ? 'true' : 'false'
+function toggleSidebarCollapsed(force?: boolean): void {
+  sidebarCollapsed = typeof force === 'boolean' ? force : !sidebarCollapsed
+  if (resetThreadActionMenuState()) {
+    updateThreadList()
+  }
+  syncSidebarChrome()
+  requestAnimationFrame(() => {
+    syncThreadTitleOverflow()
+    syncActivePlanCardLayout()
   })
 }
 
-function setSessionPanelExpanded(expanded: boolean): void {
-  const next = !!expanded
-  if (sessionPanelExpanded === next) {
-    syncSidebarChrome()
-    return
+function bindSidebarToggle(): void {
+  document.getElementById('sidebar-toggle-btn')?.addEventListener('click', e => {
+    e.preventDefault()
+    toggleSidebarCollapsed()
+  })
+}
+
+function syncSidebarChrome(): void {
+  const sidebar = document.getElementById('sidebar')
+  const desktop = window.innerWidth > 768
+  const expanded = !desktop || !sidebarCollapsed
+
+  if (sidebar) {
+    sidebar.classList.toggle('sidebar--expanded', expanded)
+    sidebar.classList.toggle('sidebar--collapsed', desktop && !expanded)
   }
 
-  sessionPanelExpanded = next
-  syncSidebarChrome()
-  requestAnimationFrame(() => syncActivePlanCardLayout())
-  updateSessionPanel()
+  const label = desktop && sidebarCollapsed ? t('expandThreads') : t('collapseThreads')
+  document.querySelectorAll<HTMLButtonElement>('.chat-sidebar-toggle-btn').forEach(btn => {
+    const expandedValue = expanded ? 'true' : 'false'
+    btn.dataset.expanded = expandedValue
+    btn.setAttribute('aria-expanded', expandedValue)
+    btn.setAttribute('aria-label', label)
+    btn.title = label
+  })
 }
 
 type ConfigPickerState = 'loading' | 'empty' | 'ready'
@@ -3635,18 +3558,6 @@ function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): stri
   return escHtml((agentId || 'A').slice(0, 1).toUpperCase())
 }
 
-function hasAgentAvatarIcon(agentId: string): boolean {
-  const normalized = (agentId || '').trim().toLowerCase()
-  return normalized === 'codex'
-    || normalized === 'gemini'
-    || normalized === 'claude'
-    || normalized === 'cursor'
-    || normalized === 'kimi'
-    || normalized === 'opencode'
-    || normalized === 'qwen'
-    || normalized === 'blackbox'
-}
-
 type ThreadActivityIndicator = 'loading' | 'done' | null
 
 function renderThreadStatusIndicator(status: ThreadActivityIndicator): string {
@@ -3694,44 +3605,6 @@ function syncThreadTitleOverflow(scope: ParentNode = document): void {
   })
 }
 
-function syncSessionPanelSubtitleOverflow(scope: ParentNode = document): void {
-  scope.querySelectorAll<HTMLElement>('.session-panel-subtitle').forEach(subtitleEl => {
-    const textEl = subtitleEl.querySelector<HTMLElement>('.session-panel-subtitle__text')
-    if (!textEl) return
-
-    subtitleEl.dataset.overflowing = 'false'
-    subtitleEl.style.removeProperty('--session-panel-subtitle-overflow')
-    subtitleEl.style.removeProperty('--session-panel-subtitle-scroll-duration')
-
-    const overflowPx = Math.max(0, Math.ceil(textEl.scrollWidth - subtitleEl.clientWidth))
-    if (overflowPx <= 6) return
-
-    const durationMs = Math.min(5200, Math.max(1800, overflowPx * 16))
-    subtitleEl.dataset.overflowing = 'true'
-    subtitleEl.style.setProperty('--session-panel-subtitle-overflow', `${overflowPx}px`)
-    subtitleEl.style.setProperty('--session-panel-subtitle-scroll-duration', `${(durationMs / 1000).toFixed(2)}s`)
-  })
-}
-
-function syncSessionPanelTitleOverflow(scope: ParentNode = document): void {
-  scope.querySelectorAll<HTMLElement>('.session-panel-title').forEach(titleEl => {
-    const textEl = titleEl.querySelector<HTMLElement>('.session-panel-title__text')
-    if (!textEl) return
-
-    titleEl.dataset.overflowing = 'false'
-    titleEl.style.removeProperty('--session-panel-title-overflow')
-    titleEl.style.removeProperty('--session-panel-title-scroll-duration')
-
-    const overflowPx = Math.max(0, Math.ceil(textEl.scrollWidth - titleEl.clientWidth))
-    if (overflowPx <= 6) return
-
-    const durationMs = Math.min(5000, Math.max(1700, overflowPx * 14))
-    titleEl.dataset.overflowing = 'true'
-    titleEl.style.setProperty('--session-panel-title-overflow', `${overflowPx}px`)
-    titleEl.style.setProperty('--session-panel-title-scroll-duration', `${(durationMs / 1000).toFixed(2)}s`)
-  })
-}
-
 function renderSessionStatusIndicator(loading: boolean): string {
   if (!loading) return ''
   return `
@@ -3745,49 +3618,58 @@ function renderSessionStatusIndicator(loading: boolean): string {
       </span>`
 }
 
-function renderThreadItem(
-  thread: Thread,
-  activeId: string | null,
-  activityIndicator: ThreadActivityIndicator,
-): string {
-  const isActive = thread.threadId === activeId
+function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndicator): string {
   const isMenuOpen = openThreadActionMenuId === thread.threadId
-  const hasIconAvatar = hasAgentAvatarIcon(thread.agent ?? '')
-  const avatar = renderAgentAvatar(thread.agent ?? '', 'thread')
+  const data = resolveSessionPanelRenderData(thread)
   const displayTitle = threadTitle(thread)
   const displayAgent = agentDisplayName(thread.agent ?? '')
-  const relTime = thread.updatedAt ? formatRelativeTime(thread.updatedAt) : ''
+  const agentAvatar = renderAgentAvatar(thread.agent ?? '', 'thread')
+  const bodyKey = sessionPanelBodyRenderKey(data)
 
   return `
-    <div class="thread-item ${isActive ? 'thread-item--active' : ''} ${isMenuOpen ? 'thread-item--menu-open' : ''}"
-         data-thread-id="${escHtml(thread.threadId)}"
-         role="button"
-         tabindex="0"
-         aria-label="${escHtml(displayTitle)}">
-      <div class="thread-item-main">
-        <div class="thread-item-avatar ${hasIconAvatar ? 'thread-item-avatar--icon' : (isActive ? '' : 'thread-item-avatar--inactive')}">${avatar}</div>
-        <div class="thread-item-body">
-          <div class="thread-item-row">
-            <div class="thread-item-title" title="${escHtml(displayTitle)}">
-              <span class="thread-item-title__text">${escHtml(displayTitle)}</span>
+    <section class="thread-group" data-thread-id="${escHtml(thread.threadId)}">
+      <div class="thread-item ${isMenuOpen ? 'thread-item--menu-open' : ''}"
+           data-thread-id="${escHtml(thread.threadId)}"
+           role="button"
+           tabindex="0"
+           aria-label="${escHtml(displayTitle)}">
+        <div class="thread-item-main">
+          <div class="thread-item-avatar thread-item-avatar--icon" aria-hidden="true">${agentAvatar}</div>
+          <div class="thread-item-body">
+            <div class="thread-item-row">
+              <div class="thread-item-title" title="${escHtml(displayTitle)}">
+                <span class="thread-item-title__text">${escHtml(displayTitle)}</span>
+              </div>
             </div>
-            ${relTime ? `<span class="thread-item-time">${escHtml(relTime)}</span>` : ''}
-          </div>
-          <div class="thread-item-meta">
-            <span class="thread-item-agent">${escHtml(displayAgent)}</span>
-            ${renderThreadStatusIndicator(activityIndicator)}
+            <div class="thread-item-meta">
+              <span class="thread-item-agent">${escHtml(displayAgent)}</span>
+              ${renderThreadStatusIndicator(activityIndicator)}
+            </div>
           </div>
         </div>
+        <div class="thread-item-actions">
+          <button
+            class="btn btn-ghost btn-sm session-new-btn"
+            type="button"
+            title="${escHtml(t('newSession'))}"
+            aria-label="${escHtml(t('newSession'))}"
+            ${data.disabled ? 'disabled' : ''}>
+            ${iconPlus}
+          </button>
+          <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
+                  data-thread-id="${escHtml(thread.threadId)}"
+                  aria-expanded="${isMenuOpen ? 'true' : 'false'}"
+                  aria-label="${escHtml(t('agentActions'))}">
+            ${iconDotsHorizontal}
+          </button>
+        </div>
       </div>
-      <div class="thread-item-actions">
-        <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
-                data-thread-id="${escHtml(thread.threadId)}"
-                aria-expanded="${isMenuOpen ? 'true' : 'false'}"
-                aria-label="${escHtml(t('agentActions'))}">
-          ${iconDotsHorizontal}
-        </button>
+      <div class="thread-group-sessions" data-render-key="${escHtml(bodyKey)}">
+        <div class="thread-group-sessions-body">
+          ${renderSessionPanelBody(data)}
+        </div>
       </div>
-    </div>`
+    </section>`
 }
 
 function renderThreadListEmptyState(): string {
@@ -3803,7 +3685,7 @@ function updateThreadList(): void {
   const el = document.getElementById('thread-list')
   if (!el) return
 
-  const { threads, activeThreadId, streamStates, threadCompletionBadges } = store.get()
+  const { threads, activeThreadId, threadCompletionBadges } = store.get()
   const filtered = threads
   const countEl = document.getElementById('thread-count')
   if (countEl) countEl.textContent = String(filtered.length)
@@ -3817,11 +3699,10 @@ function updateThreadList(): void {
   el.innerHTML = filtered
     .map(t => {
       const isActive = t.threadId === activeThreadId
-      const activityIndicator: ThreadActivityIndicator = (t.hasActiveSession
-        || Object.values(streamStates).some(streamState => streamState.threadId === t.threadId))
-        ? 'loading'
-        : (!isActive && threadCompletionBadges[t.threadId] ? 'done' : null)
-      return renderThreadItem(t, activeThreadId, activityIndicator)
+      const activityIndicator: ThreadActivityIndicator = !isActive && threadCompletionBadges[t.threadId]
+        ? 'done'
+        : null
+      return renderThreadItem(t, activityIndicator)
     })
     .join('')
 
@@ -3839,7 +3720,11 @@ function updateThreadList(): void {
   el.querySelectorAll<HTMLElement>('.thread-item').forEach(item => {
     const handler = (event?: Event) => {
       const target = event?.target as HTMLElement | null
-      if (target?.closest('.thread-item-menu-trigger') || target?.closest('.thread-action-popover')) return
+      if (
+        target?.closest('.thread-item-menu-trigger')
+        || target?.closest('.session-new-btn')
+        || target?.closest('.thread-action-popover')
+      ) return
       const id = item.dataset.threadId ?? ''
       activateThread(id)
       // Close mobile sidebar on thread select
@@ -3851,8 +3736,22 @@ function updateThreadList(): void {
     })
   })
 
+  el.querySelectorAll<HTMLElement>('.thread-group[data-thread-id]').forEach(groupEl => {
+    const threadId = groupEl.dataset.threadId?.trim() ?? ''
+    const thread = filtered.find(item => item.threadId === threadId)
+    if (!thread) return
+    bindSessionPanelControls(groupEl, thread)
+  })
+
   syncThreadTitleOverflow(el)
   renderThreadActionLayer()
+
+  filtered.forEach(thread => {
+    const state = sessionPanelState(thread.threadId)
+    if (state.supported === null && !state.loading && !state.loadingMore && !state.error) {
+      void loadThreadSessions(thread.threadId)
+    }
+  })
 }
 
 async function handleRenameThread(threadId: string, nextTitle: string): Promise<void> {
@@ -3964,8 +3863,8 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   })
   sessionPanelStateByThread.delete(threadId)
   sessionPanelRequestSeqByThread.delete(threadId)
-  sessionPanelScrollTopByThread.delete(threadId)
   sessionTitleOverridesByThread.delete(threadId)
+  visibleSessionCountByThread.delete(threadId)
   threadGitStateByThread.delete(threadId)
   threadGitRequestSeqByThread.delete(threadId)
   sessionSwitchingThreads.delete(threadId)
@@ -6093,6 +5992,7 @@ function selectSlashCommand(commandName: string): void {
 
 function renderChatEmpty(): string {
   return `
+    ${renderSidebarToggle()}
     <div class="workspace-landing">
       <div class="workspace-landing__panel">
         <div class="workspace-landing__eyebrow">${escHtml(t('workspaceEyebrow'))}</div>
@@ -6433,16 +6333,7 @@ function renderChatThread(thread: Thread): string {
   const isSwitching = threadConfigSwitching.has(thread.threadId)
 
   return `
-    <div class="chat-session-toggle-zone" id="chat-session-toggle-zone">
-      <button
-        class="btn btn-icon chat-session-toggle-btn"
-        id="chat-session-toggle-btn"
-        type="button"
-      >
-        ${iconChevronRight}
-      </button>
-    </div>
-
+    ${renderSidebarToggle()}
     <div class="chat-header">
       <div class="chat-header-left">
         <button class="btn btn-icon mobile-menu-btn" aria-label="${escHtml(t('openMenu'))}">${iconMenu}</button>
@@ -6570,6 +6461,7 @@ function updateChatArea(): void {
     stopThreadGitDiffPolling()
     chat.innerHTML = renderChatEmpty()
     document.getElementById('new-thread-empty-btn')?.addEventListener('click', openNewThread)
+    bindSidebarToggle()
     document.querySelector('.mobile-menu-btn')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('sidebar--open')
     })
@@ -6578,13 +6470,9 @@ function updateChatArea(): void {
   }
 
   chat.innerHTML = renderChatThread(thread)
+  bindSidebarToggle()
   document.querySelector('.mobile-menu-btn')?.addEventListener('click', () => {
     document.getElementById('sidebar')?.classList.toggle('sidebar--open')
-  })
-  document.getElementById('chat-session-toggle-btn')?.addEventListener('click', event => {
-    event.preventDefault()
-    event.stopPropagation()
-    setSessionPanelExpanded(!sessionPanelExpanded)
   })
   syncSidebarChrome()
 
@@ -7231,8 +7119,7 @@ function openNewThread(): void {
 function renderShell(): void {
   const root = document.getElementById('app')
   if (!root) return
-  const { activeThreadId, threads } = store.get()
-  const activeThread = activeThreadId ? threads.find(thread => thread.threadId === activeThreadId) ?? null : null
+  const { threads } = store.get()
 
   root.innerHTML = `
     <div class="layout-shell">
@@ -7276,10 +7163,6 @@ function renderShell(): void {
           <div class="thread-action-layer" id="thread-action-layer" hidden></div>
         </aside>
 
-        <aside class="session-sidebar" id="session-sidebar" ${activeThread ? '' : 'hidden'}>
-          ${activeThread ? renderSessionPanel() : ''}
-        </aside>
-
         <main class="chat" id="chat">
           ${renderChatEmpty()}
         </main>
@@ -7289,6 +7172,7 @@ function renderShell(): void {
   document.getElementById('settings-btn')?.addEventListener('click', () => settingsPanel.open())
   document.getElementById('new-thread-btn')?.addEventListener('click', openNewThread)
   document.getElementById('new-thread-empty-btn')?.addEventListener('click', openNewThread)
+  bindSidebarToggle()
 
   syncSidebarChrome()
 }
@@ -7296,7 +7180,6 @@ function renderShell(): void {
 function rerenderAppShell(): void {
   renderShell()
   updateThreadList()
-  updateSessionPanel()
   updateChatArea()
 }
 
@@ -7367,9 +7250,8 @@ async function init(): Promise<void> {
   }
   document.getElementById('thread-list')?.addEventListener('scroll', repositionThreadActionLayer, { passive: true })
   window.addEventListener('resize', repositionThreadActionLayer)
+  window.addEventListener('resize', debounce(() => syncSidebarChrome(), 120))
   window.addEventListener('resize', debounce(() => syncThreadTitleOverflow(), 120))
-  window.addEventListener('resize', debounce(() => syncSessionPanelTitleOverflow(), 120))
-  window.addEventListener('resize', debounce(() => syncSessionPanelSubtitleOverflow(), 120))
   window.addEventListener('resize', debounce(() => syncActivePlanCardLayout(), 120))
   document.addEventListener('click', e => {
     const target = e.target as HTMLElement | null
@@ -7413,7 +7295,6 @@ async function init(): Promise<void> {
     }
 
     updateThreadList()
-    updateSessionPanel()
 
     if (threadChanged || shouldRefreshForScopeChange) {
       lastRenderThreadId = activeThreadId

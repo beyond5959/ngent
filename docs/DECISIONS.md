@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-074: Merge thread and session browsing into one grouped left rail. (Accepted)
 - ADR-073: Render live ACP plan updates as an ephemeral bottom overlay instead of transcript history. (Accepted)
 - ADR-072: Render git-diff expanded file rows with locally vendored suffix-based file icons. (Accepted)
 - ADR-071: Surface session-selected git diff summaries above the Web UI composer, including untracked files. (Accepted)
@@ -65,6 +66,35 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-074: Merge Thread And Session Browsing Into One Grouped Left Rail
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-049 and ADR-050 moved session browsing onto the left side of the workspace, but the resulting two-column navigation still kept thread selection and session selection visually separate.
+  - product now requires the left side to behave closer to Codex App's grouped project list:
+    - one left rail only.
+    - each thread/project header followed immediately by its recent sessions.
+    - no dedicated session drawer and no separate collapse affordance.
+  - the existing backend session APIs, paging contract, and thread/session runtime model remain valid and do not need schema changes.
+- Decision:
+  - keep `GET /v1/threads/{threadId}/sessions`, `nextCursor`, `PATCH /v1/threads/{threadId}` session binding, and fresh-session scope semantics exactly as they are.
+  - in the embedded Web UI, render one left navigation rail where each thread row becomes a grouped header and its ACP session rows render inline beneath that header.
+  - remove the dedicated session sidebar column and the chat-edge hover toggle used to collapse/expand it.
+  - keep per-thread `New session`, refresh, and live title updates inside each grouped thread block, but expose refresh from the thread overflow menu instead of as a dedicated inline control.
+  - remove persistent selected styling from thread headers/groups; only session rows carry the active selection state.
+  - use the provider/agent icon as the leading grouped-thread glyph instead of a generic folder icon.
+  - cap the initially visible rows to 10 sessions per thread in the Web UI and use `Show more` to reveal the next chunk while still honoring backend `nextCursor` pagination when additional provider pages exist.
+- Consequences:
+  - thread and session context are scanned together in one place, so switching to another thread's historical session is a single visual/interaction step.
+  - chat width increases because the middle session drawer no longer reserves a second navigation column.
+  - thread headers now read as neutral group labels rather than a second competing selection state next to the actual selected session.
+  - the backend remains unchanged; the grouping and 10-row initial cap are frontend concerns layered on top of the existing session-list API.
+- Alternatives considered:
+  - keep the two-column left layout and only restyle it (rejected: does not satisfy the requested Codex-style grouped browsing model).
+  - keep the separate session drawer but auto-expand it for every thread (rejected: still preserves the wrong interaction model and wastes horizontal space).
+  - move grouping/paging into a new backend endpoint (rejected: unnecessary because current thread/session APIs already provide the required data).
 
 ## ADR-073: Render Live ACP Plan Updates As An Ephemeral Bottom Overlay Instead Of Transcript History
 
@@ -446,7 +476,7 @@
 
 - Status: Accepted
 - Date: 2026-03-19
-- Current-status note: the left rail decision in this ADR still stands, and the later 2026-03-26 Web UI polish kept the same single collapsible secondary panel model while refining the session-panel affordance into a chat-edge hover handle with a full-retract collapsed state.
+- Current-status note: the permanently expanded left-rail part of this ADR still stands, but ADR-074 later removed the separate session drawer entirely and merged session browsing back into the same grouped left rail.
 - Context:
   - ADR-049 introduced a collapsible compact agent rail to mimic OpenCode's left-most project strip more closely.
   - in follow-up product review, that compact state was judged less useful than expected because the ngent left column represents full agent/thread items rather than tiny project icons, and collapsing it hid search plus thread metadata too aggressively.
@@ -470,7 +500,7 @@
 
 - Status: Accepted
 - Date: 2026-03-19
-- Current-status note: this ADR established the left-side two-column navigation model, but its compact agent-rail default was later superseded by ADR-050, and the original slim-strip session collapse affordance was later replaced by a full-collapse chat-edge hover control in the 2026-03-26 Web UI polish.
+- Current-status note: this ADR established the first left-side session-navigation move, but its two-column left layout was later superseded by ADR-074, which merged thread and session browsing back into one grouped left rail.
 - Context:
   - the Web UI had been using a wide left thread list plus a separate right session sidebar.
   - users wanted the navigation model to feel closer to OpenCode's web UI, where project/session browsing sits on the left side of the workspace and the first column can collapse into a compact rail.

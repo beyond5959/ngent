@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-076: Make grouped thread session lists collapsible from the leading agent glyph. (Accepted)
 - ADR-075: Decorate thread session-list responses with cross-client active-session state. (Accepted)
 - ADR-074: Merge thread and session browsing into one grouped left rail. (Accepted)
 - ADR-073: Render live ACP plan updates as an ephemeral bottom overlay instead of transcript history. (Accepted)
@@ -67,6 +68,31 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-076: Make Grouped Thread Session Lists Collapsible From The Leading Agent Glyph
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-074 already merged thread and session browsing into one grouped left rail, but every thread group always rendered its inline session list expanded.
+  - once several threads each expose multiple recent sessions, the rail becomes visually dense and harder to scan, especially when the user only needs the thread header as a waypoint into the main chat pane.
+  - product now requires a Codex-style interaction where the thread's leading agent glyph also acts as the disclosure control:
+    - expanded at rest still looks like the provider avatar.
+    - hover/focus reveals a down-chevron affordance for collapse.
+    - collapsed groups keep a right-chevron visible so the hidden sessions remain discoverable.
+- Decision:
+  - keep the backend thread/session APIs, paging, and runtime model unchanged; this is a Web UI-only behavior layered on top of the existing grouped rail.
+  - treat collapse state as browser-local per-thread UI state keyed by `threadId`, independent from thread selection, session binding, or provider session data.
+  - collapse only the inline session-list region for that thread group; keep the thread header itself, `New session`, and overflow actions available even while the group is collapsed.
+  - automatically reopen a collapsed group when the user explicitly starts `New session` from that thread header so the fresh session can surface immediately.
+- Consequences:
+  - dense thread/session rails become easier to scan without adding a second navigation drawer back into the layout.
+  - the leading glyph now carries both branding and disclosure affordance, so the UI stays compact without adding another dedicated expand/collapse column.
+  - because the state is browser-local UI state and not persisted server-side, full-page reloads currently reset all groups back to expanded.
+- Alternatives considered:
+  - add a dedicated disclosure column before every thread (rejected: adds visual weight and wastes horizontal space in an already compact rail).
+  - persist collapsed state in backend thread metadata (rejected: this is presentation state, not shared thread/domain state).
+  - collapse groups automatically based on active selection only (rejected: removes user control and makes the rail jump unexpectedly during navigation).
 
 ## ADR-075: Decorate Thread Session-List Responses With Cross-Client Active-Session State
 

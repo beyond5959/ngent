@@ -220,6 +220,7 @@ const threadConfigSwitching = new Set<string>()
 const sessionSwitchingThreads = new Set<string>()
 const freshSessionNonceByThread = new Map<string, string>()
 const selectedSessionOverrideByThread = new Map<string, string>()
+const collapsedThreadIds = new Set<string>()
 let slashCommandSelectedIndex = 0
 
 interface SessionPanelState {
@@ -1625,26 +1626,6 @@ function markThreadCompletionBadge(threadId: string): void {
       ...state.threadCompletionBadges,
       [threadId]: true,
     },
-  })
-}
-
-function activateThread(threadId: string): void {
-  if (!threadId) return
-  const state = store.get()
-  const clearedThreadActions = resetThreadActionMenuState()
-  const nextThreadCompletionBadges = omitThreadCompletionBadge(state.threadCompletionBadges, threadId)
-  if (threadId === state.activeThreadId) {
-    if (nextThreadCompletionBadges !== state.threadCompletionBadges) {
-      store.set({ threadCompletionBadges: nextThreadCompletionBadges })
-    } else if (clearedThreadActions) {
-      updateThreadList()
-    }
-    return
-  }
-
-  store.set({
-    activeThreadId: threadId,
-    threadCompletionBadges: nextThreadCompletionBadges,
   })
 }
 
@@ -3128,6 +3109,7 @@ function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
       event.preventDefault()
       event.stopPropagation()
       clearSessionItemHoverPreview()
+      setThreadSessionsCollapsed(thread.threadId, false)
       void switchThreadSession(thread, '')
     }
   }
@@ -3194,6 +3176,26 @@ function skeletonItems(): string {
 function threadTitle(thread: Thread): string {
   if (thread.title) return thread.title
   return thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd
+}
+
+function isThreadSessionsCollapsed(threadId: string): boolean {
+  return collapsedThreadIds.has(threadId.trim())
+}
+
+function setThreadSessionsCollapsed(threadId: string, collapsed: boolean): void {
+  const normalizedThreadID = threadId.trim()
+  if (!normalizedThreadID) return
+  if (collapsed) {
+    collapsedThreadIds.add(normalizedThreadID)
+    return
+  }
+  collapsedThreadIds.delete(normalizedThreadID)
+}
+
+function toggleThreadSessionsCollapsed(threadId: string): boolean {
+  const nextCollapsed = !isThreadSessionsCollapsed(threadId)
+  setThreadSessionsCollapsed(threadId, nextCollapsed)
+  return nextCollapsed
 }
 
 function sidebarToggleLabel(): string {
@@ -3660,21 +3662,32 @@ function renderSessionStatusIndicator(loading: boolean): string {
 
 function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndicator): string {
   const isMenuOpen = openThreadActionMenuId === thread.threadId
+  const collapsed = isThreadSessionsCollapsed(thread.threadId)
   const data = resolveSessionPanelRenderData(thread)
   const displayTitle = threadTitle(thread)
   const displayAgent = agentDisplayName(thread.agent ?? '')
   const agentAvatar = renderAgentAvatar(thread.agent ?? '', 'thread')
   const bodyKey = sessionPanelBodyRenderKey(data)
+  const sessionPanelId = `thread-sessions-${thread.threadId}`
+  const toggleLabel = collapsed ? t('expandSessionHistory') : t('collapseSessionHistory')
 
   return `
-    <section class="thread-group" data-thread-id="${escHtml(thread.threadId)}">
-      <div class="thread-item ${isMenuOpen ? 'thread-item--menu-open' : ''}"
-           data-thread-id="${escHtml(thread.threadId)}"
-           role="button"
-           tabindex="0"
-           aria-label="${escHtml(displayTitle)}">
-        <div class="thread-item-main">
-          <div class="thread-item-avatar thread-item-avatar--icon" aria-hidden="true">${agentAvatar}</div>
+    <section class="thread-group ${collapsed ? 'thread-group--collapsed' : ''}" data-thread-id="${escHtml(thread.threadId)}">
+      <div class="thread-item ${isMenuOpen ? 'thread-item--menu-open' : ''}" data-thread-id="${escHtml(thread.threadId)}">
+        <button
+          class="thread-item-main"
+          type="button"
+          data-thread-id="${escHtml(thread.threadId)}"
+          aria-controls="${escHtml(sessionPanelId)}"
+          aria-expanded="${collapsed ? 'false' : 'true'}"
+          aria-label="${escHtml(toggleLabel)}"
+          title="${escHtml(toggleLabel)}">
+          <span
+            class="thread-item-toggle ${collapsed ? 'thread-item-toggle--collapsed' : ''}"
+            aria-hidden="true">
+            <span class="thread-item-toggle-avatar thread-item-avatar thread-item-avatar--icon" aria-hidden="true">${agentAvatar}</span>
+            <span class="thread-item-toggle-chevron" aria-hidden="true">${iconChevronRight}</span>
+          </span>
           <div class="thread-item-body">
             <div class="thread-item-row">
               <div class="thread-item-title" title="${escHtml(displayTitle)}">
@@ -3686,7 +3699,7 @@ function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndic
               ${renderThreadStatusIndicator(activityIndicator)}
             </div>
           </div>
-        </div>
+        </button>
         <div class="thread-item-actions">
           <button
             class="btn btn-ghost btn-sm session-new-btn"
@@ -3704,12 +3717,39 @@ function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndic
           </button>
         </div>
       </div>
-      <div class="thread-group-sessions" data-render-key="${escHtml(bodyKey)}">
+      <div
+        class="thread-group-sessions"
+        id="${escHtml(sessionPanelId)}"
+        data-render-key="${escHtml(bodyKey)}"
+        ${collapsed ? 'hidden aria-hidden="true"' : 'aria-hidden="false"'}>
         <div class="thread-group-sessions-body">
           ${renderSessionPanelBody(data)}
         </div>
       </div>
     </section>`
+}
+
+function syncThreadGroupCollapsedUI(groupEl: HTMLElement, collapsed: boolean): void {
+  groupEl.classList.toggle('thread-group--collapsed', collapsed)
+
+  const toggleLabel = collapsed ? t('expandSessionHistory') : t('collapseSessionHistory')
+  const triggerBtn = groupEl.querySelector<HTMLButtonElement>('.thread-item-main[data-thread-id]')
+  if (triggerBtn) {
+    triggerBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+    triggerBtn.setAttribute('aria-label', toggleLabel)
+    triggerBtn.title = toggleLabel
+  }
+
+  const toggleIconEl = groupEl.querySelector<HTMLElement>('.thread-item-toggle')
+  if (toggleIconEl) {
+    toggleIconEl.classList.toggle('thread-item-toggle--collapsed', collapsed)
+  }
+
+  const sessionsEl = groupEl.querySelector<HTMLElement>('.thread-group-sessions')
+  if (sessionsEl) {
+    sessionsEl.hidden = collapsed
+    sessionsEl.setAttribute('aria-hidden', collapsed ? 'true' : 'false')
+  }
 }
 
 function renderThreadListEmptyState(): string {
@@ -3727,6 +3767,12 @@ function updateThreadList(): void {
 
   const { threads, activeThreadId, threadCompletionBadges } = store.get()
   const filtered = threads
+  const threadIdSet = new Set(filtered.map(thread => thread.threadId))
+  Array.from(collapsedThreadIds).forEach(threadId => {
+    if (!threadIdSet.has(threadId)) {
+      collapsedThreadIds.delete(threadId)
+    }
+  })
   const countEl = document.getElementById('thread-count')
   if (countEl) countEl.textContent = String(filtered.length)
 
@@ -3757,22 +3803,20 @@ function updateThreadList(): void {
     btn.addEventListener('keydown', e => e.stopPropagation())
   })
 
-  el.querySelectorAll<HTMLElement>('.thread-item').forEach(item => {
-    const handler = (event?: Event) => {
-      const target = event?.target as HTMLElement | null
-      if (
-        target?.closest('.thread-item-menu-trigger')
-        || target?.closest('.session-new-btn')
-        || target?.closest('.thread-action-popover')
-      ) return
-      const id = item.dataset.threadId ?? ''
-      activateThread(id)
-      // Close mobile sidebar on thread select
-      document.getElementById('sidebar')?.classList.remove('sidebar--open')
-    }
-    item.addEventListener('click', handler)
-    item.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') handler(e)
+  el.querySelectorAll<HTMLButtonElement>('.thread-item-main[data-thread-id]').forEach(btn => {
+    btn.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      clearSessionItemHoverPreview()
+      const id = btn.dataset.threadId ?? ''
+      if (!id) return
+      const nextCollapsed = toggleThreadSessionsCollapsed(id)
+      const groupEl = btn.closest<HTMLElement>('.thread-group')
+      if (!groupEl) {
+        updateThreadList()
+        return
+      }
+      syncThreadGroupCollapsedUI(groupEl, nextCollapsed)
     })
   })
 
@@ -3905,6 +3949,7 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   sessionPanelRequestSeqByThread.delete(threadId)
   sessionTitleOverridesByThread.delete(threadId)
   visibleSessionCountByThread.delete(threadId)
+  collapsedThreadIds.delete(threadId)
   threadGitStateByThread.delete(threadId)
   threadGitRequestSeqByThread.delete(threadId)
   sessionSwitchingThreads.delete(threadId)

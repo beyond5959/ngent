@@ -15,6 +15,19 @@
 
 ## Open Issues
 
+- ID: KI-051
+- Title: Grouped thread session-collapse state resets after a full page reload
+- Status: Open
+- Severity: Low
+- Affects: browser users who manually collapse one or more thread groups in the embedded Web UI left rail
+- Symptom:
+  - each thread group now supports collapsing its inline session list from the leading agent glyph, but that state currently lives only in browser-local runtime memory.
+  - refreshing the page or reopening the Web UI expands every thread group again, even if the user had intentionally collapsed several of them before.
+- Workaround:
+  - re-collapse the desired thread groups after reload; the behavior remains stable during ordinary in-page re-renders while the browser tab stays open.
+- Follow-up plan:
+  - evaluate whether the collapse map should be persisted in browser local storage without turning it into shared server-side thread metadata.
+
 - ID: KI-050
 - Title: Cross-client session-row activity spinner is refreshed on fetch, not pushed live to already-open browsers
 - Status: Open

@@ -6657,6 +6657,10 @@ kbd {
   transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
 
+.thread-group--collapsed {
+  padding-bottom: 2px;
+}
+
 .thread-item {
   padding: 0;
   border: 0;
@@ -6679,6 +6683,89 @@ kbd {
 .thread-item-main {
   align-items: flex-start;
   gap: 10px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  appearance: none;
+}
+
+.thread-item-main:focus-visible {
+  outline: none;
+}
+
+.thread-item-toggle {
+  --thread-toggle-rotation: 90deg;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.thread-item-main:hover .thread-item-toggle,
+.thread-item-main:focus-visible .thread-item-toggle,
+.thread-item-toggle:hover {
+  background: color-mix(in srgb, var(--bg-panel-strong) 84%, transparent);
+  color: var(--text-1);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.thread-item-toggle-avatar,
+.thread-item-toggle-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--t-fast), transform var(--t-base), color var(--t-fast);
+}
+
+.thread-item-toggle-avatar {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.thread-item-toggle-chevron {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transform: rotate(var(--thread-toggle-rotation)) scale(0.82);
+}
+
+.thread-item-toggle-chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+.thread-item-main:hover .thread-item-toggle-avatar,
+.thread-item-main:focus-visible .thread-item-toggle-avatar,
+.thread-item-toggle:hover .thread-item-toggle-avatar {
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+.thread-item-main:hover .thread-item-toggle-chevron,
+.thread-item-main:focus-visible .thread-item-toggle-chevron,
+.thread-item-toggle:hover .thread-item-toggle-chevron,
+.thread-item-toggle:focus-visible .thread-item-toggle-chevron {
+  opacity: 1;
+  transform: rotate(var(--thread-toggle-rotation)) scale(1);
+}
+
+.thread-item-toggle--collapsed {
+  --thread-toggle-rotation: 0deg;
+  color: var(--text-3);
 }
 
 .thread-item-avatar {
@@ -6778,6 +6865,14 @@ kbd {
 .thread-group-sessions {
   padding-left: 24px;
   margin-top: 1px;
+}
+
+.thread-group--collapsed .thread-group-sessions {
+  margin-top: 0;
+}
+
+.thread-group-sessions[hidden] {
+  display: none;
 }
 
 .thread-group-sessions-body {

@@ -13,6 +13,18 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-04-03)
 
+- `Post-M8` grouped thread-session collapse affordance completed:
+  - the embedded Web UI grouped left rail now lets each thread collapse or expand its own inline session list without affecting other threads.
+  - the leading agent glyph now doubles as the collapse toggle:
+    - expanded groups keep the provider avatar at rest and switch to a down-chevron affordance on hover/focus.
+    - collapsed groups keep a right-chevron visible so hidden sessions remain discoverable.
+  - toggling collapse preserves the existing thread activation flow, overflow menu, and `New session` action; starting a new session auto-expands that thread again so the fresh session row can appear immediately.
+  - no backend/API/runtime behavior changed; this is a browser-local Web UI interaction update layered on top of the existing grouped rail.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+## Previous Update (2026-04-03)
+
 - `Post-M8` cross-client active session spinner visibility completed:
   - `GET /v1/threads/{threadId}/sessions` now decorates each returned session row with `isActive` when that concrete `(thread, session)` scope currently owns a live turn.
   - the response still prepends the thread's currently bound `sessionId`, so even if the upstream provider session catalog is stale, a newly opened browser can still see the active session row and its loading spinner.

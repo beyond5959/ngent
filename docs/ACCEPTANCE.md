@@ -2,6 +2,22 @@
 
 This checklist defines executable acceptance checks for requirements 1-16.
 
+## Supplemental Web UI: Collapsible Grouped Session Lists
+
+- Operation:
+  - open the embedded Web UI with at least one thread that already has session rows visible in the grouped left rail.
+  - hover or focus the thread's leading agent glyph and verify the avatar switches to a disclosure chevron.
+  - click that glyph to collapse the thread's inline session list, then click it again to expand.
+  - while the group is collapsed, use the same thread header's `New session` action.
+- Expected:
+  - expanded groups show the provider avatar at rest and a down-chevron affordance on hover/focus.
+  - collapsed groups hide only that thread's inline session list and keep a right-chevron visible so the disclosure state remains obvious.
+  - collapsing one thread does not affect the other thread groups, and the thread header itself still activates the chat as before.
+  - invoking `New session` from a collapsed thread re-expands that group so the new/fresh session can appear immediately.
+- Verification command:
+  - `cd internal/webui/web && npm run build`
+  - manual browser check against a thread with multiple session rows
+
 ## Supplemental Web UI: Cross-Client Active Session Spinner
 
 - Operation:

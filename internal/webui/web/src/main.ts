@@ -285,15 +285,17 @@ let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
 let threadGitDiffRequestSeq = 0
 const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 30_000
-const INLINE_SESSION_PAGE_SIZE = 10
+const INLINE_SESSION_PAGE_SIZE = 5
 let threadGitDiffPollTimer = 0
 let threadGitDiffPollScopeKey = ''
 let sidebarCollapsed = false
+const SIDEBAR_LAYOUT_SYNC_PROPERTIES = new Set(['width', 'min-width', 'margin-right', 'transform'])
 const SESSION_ITEM_HOVER_PREVIEW_DELAY_MS = 120
 const SESSION_ITEM_HOVER_PREVIEW_CLASS = 'session-item--hover-preview'
 let sessionItemHoverPreviewTimer = 0
 let pendingSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
 let activeSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
+let pendingSidebarLayoutSyncCleanup: (() => void) | null = null
 
 function cloneConfigOptions(options: ConfigOption[]): ConfigOption[] {
   return options.map(option => ({
@@ -3192,6 +3194,37 @@ function sidebarToggleLabel(): string {
   return sidebarCollapsed ? t('expandThreads') : t('collapseThreads')
 }
 
+function syncSidebarDependentLayout(): void {
+  syncThreadTitleOverflow()
+  syncActivePlanCardLayout()
+}
+
+function queueSidebarDependentLayoutSync(): void {
+  requestAnimationFrame(() => {
+    syncSidebarDependentLayout()
+  })
+
+  pendingSidebarLayoutSyncCleanup?.()
+  pendingSidebarLayoutSyncCleanup = null
+
+  const sidebar = document.getElementById('sidebar')
+  if (!sidebar) return
+
+  const onTransitionEnd = (event: Event) => {
+    const transitionEvent = event as TransitionEvent
+    if (transitionEvent.target !== sidebar) return
+    if (!SIDEBAR_LAYOUT_SYNC_PROPERTIES.has(transitionEvent.propertyName)) return
+    pendingSidebarLayoutSyncCleanup?.()
+    pendingSidebarLayoutSyncCleanup = null
+    syncSidebarDependentLayout()
+  }
+
+  sidebar.addEventListener('transitionend', onTransitionEnd)
+  pendingSidebarLayoutSyncCleanup = () => {
+    sidebar.removeEventListener('transitionend', onTransitionEnd)
+  }
+}
+
 function renderSidebarToggle(): string {
   const label = sidebarToggleLabel()
   const expanded = sidebarCollapsed ? 'false' : 'true'
@@ -3218,10 +3251,7 @@ function toggleSidebarCollapsed(force?: boolean): void {
     updateThreadList()
   }
   syncSidebarChrome()
-  requestAnimationFrame(() => {
-    syncThreadTitleOverflow()
-    syncActivePlanCardLayout()
-  })
+  queueSidebarDependentLayoutSync()
 }
 
 function bindSidebarToggle(): void {
@@ -3595,7 +3625,11 @@ function syncThreadTitleOverflow(scope: ParentNode = document): void {
     titleEl.style.removeProperty('--thread-title-overflow')
     titleEl.style.removeProperty('--thread-title-scroll-duration')
 
-    const overflowPx = Math.max(0, Math.ceil(textEl.scrollWidth - titleEl.clientWidth))
+    const titleWidth = Math.ceil(titleEl.clientWidth)
+    const textWidth = Math.ceil(textEl.scrollWidth)
+    if (titleWidth <= 0 || textWidth <= 0) return
+
+    const overflowPx = Math.max(0, textWidth - titleWidth)
     if (overflowPx <= 6) return
 
     const durationMs = Math.min(5000, Math.max(1600, overflowPx * 14))

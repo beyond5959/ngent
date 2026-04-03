@@ -85,12 +85,12 @@
   - keep per-thread `New session`, refresh, and live title updates inside each grouped thread block, but expose refresh from the thread overflow menu instead of as a dedicated inline control.
   - remove persistent selected styling from thread headers/groups; only session rows carry the active selection state.
   - use the provider/agent icon as the leading grouped-thread glyph instead of a generic folder icon.
-  - cap the initially visible rows to 10 sessions per thread in the Web UI and use `Show more` to reveal the next chunk while still honoring backend `nextCursor` pagination when additional provider pages exist.
+  - cap the initially visible rows to 5 sessions per thread in the Web UI and use `Show more` to reveal the next chunk while still honoring backend `nextCursor` pagination when additional provider pages exist.
 - Consequences:
   - thread and session context are scanned together in one place, so switching to another thread's historical session is a single visual/interaction step.
   - chat width increases because the middle session drawer no longer reserves a second navigation column.
   - thread headers now read as neutral group labels rather than a second competing selection state next to the actual selected session.
-  - the backend remains unchanged; the grouping and 10-row initial cap are frontend concerns layered on top of the existing session-list API.
+  - the backend remains unchanged; the grouping and 5-row initial cap are frontend concerns layered on top of the existing session-list API.
 - Alternatives considered:
   - keep the two-column left layout and only restyle it (rejected: does not satisfy the requested Codex-style grouped browsing model).
   - keep the separate session drawer but auto-expand it for every thread (rejected: still preserves the wrong interaction model and wastes horizontal space).

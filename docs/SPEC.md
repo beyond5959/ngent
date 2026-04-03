@@ -31,6 +31,7 @@ Modules:
   - on history load, the Web UI can hydrate a still-running turn from persisted turn events, restore its live bubble/pending permissions, and then reattach to the per-turn SSE stream so browser refreshes do not cancel or visually lose the active response.
   - when the active running turn has `plan_update` entries, the Web UI renders the latest plan snapshot as an ephemeral bottom-floating card outside the transcript list; that card is hydrated from persisted running-turn events for refresh/secondary-browser recovery and disappears again once the turn finishes.
   - when a history load restores a running turn for a scope that does not yet have a mounted live bubble, the Web UI must finish rendering persisted messages before mounting that bubble, even for long/heavy transcripts that would normally use async list rendering; this keeps spectator/reconnect views anchored on the active reply instead of below it.
+  - when the grouped left rail collapses or reopens, the Web UI must recompute thread-title overflow after layout settles so short titles do not inherit stale marquee state from zero-width collapsed measurements.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active thread also has a selected concrete session id, the composer can additionally poll `/v1/threads/{threadId}/git-diff` every 15 seconds and show a Kimi-style working-tree summary chip above the input; expanding it reveals parsed tracked `numstat` rows, untracked-file rows, and the repository root, while clean/non-git/unavailable-git cases render nothing.
   - expanded git-diff rows can also show curated basename/extension-based type icons sourced from locally vendored `file-icons/vscode` font assets; unknown file types fall back to the generic file icon.
@@ -544,15 +545,16 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 ### 15.5 Web UI
 
 - Layout:
-  - left edge: one permanently expanded grouped thread/session rail.
+  - left edge: one grouped thread/session rail.
   - center: chat.
-  - the left rail always shows full thread rows and thread action controls; `New agent` sits below the list rather than in the header.
+  - on desktop, the whole left rail can collapse/reopen from the chat-left hover affordance; there is no separate session drawer or independent session-only collapse control.
+  - when expanded, the left rail shows full thread rows and thread action controls; `New agent` sits below the list rather than in the header.
 - Grouped thread/session rail behavior:
   - each thread renders as a neutral grouped header with that thread's ACP sessions listed directly underneath.
   - the grouped header uses the provider/agent icon as its leading glyph and does not show `updatedAt` time.
   - there is no dedicated session column and no independent session-drawer collapse/expand affordance.
   - the rail loads the first page of session data automatically for visible thread groups.
-  - each thread shows at most 10 visible sessions at first render.
+  - each thread shows at most 5 visible sessions at first render.
   - `Show more` reveals the next chunk and continues using backend `nextCursor` pagination when more provider pages exist.
   - the currently selected `sessionId` for the active thread is highlighted inline under that thread header; thread headers themselves do not have a selected state.
   - each thread header offers `New session` to clear `sessionId`; session-list refresh is exposed from that thread's overflow menu.

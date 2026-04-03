@@ -7,14 +7,14 @@ Ngent 的 Web UI 是随 Go 二进制分发的内嵌 no-framework Vite + TypeScri
 
 ## 2. 当前界面骨架
 
-- 桌面端采用三段式工作区：
-  - 左侧 `Threads` 导航栏，负责线程切换和创建入口。
-  - 中间可收起的 `Session History` 辅助栏，负责会话浏览与 `New session`。
-  - 右侧主聊天工作区，承担头部元信息、消息流、输入区和流式状态。
+- 桌面端采用两段式工作区：
+  - 左侧为可折叠的分组 `Threads` 导航 rail；每个 thread header 下面直接内联该 thread 的 session 行，负责线程/会话切换、`New session`、session 刷新与线程操作。
+  - 右侧为主聊天工作区，承担头部元信息、消息流、输入区、底部浮动计划卡和流式状态。
+- 不再保留独立的 `Session History` 中间栏；thread 和 session 在同一条左侧 rail 中分组呈现。
 - 无活跃线程时，主区展示一个锚定式空态面板，只保留一个主操作 `New Agent`。
 - `New Agent` 弹窗采用 working-directory-first 流程：先选绝对路径，再选 Agent，`Advanced options` 折叠显示。
 - `Settings` 为浏览器级抽屉，只负责 `Server URL`、`Bearer Token`、`Theme`。
-- 移动端会折叠侧栏，但保持同一套信息层级，不靠“单纯隐藏桌面元素”维持布局。
+- 移动端会折叠这条合并后的左侧 rail，但保持同一套信息层级，不靠“单纯隐藏桌面元素”维持布局。
 
 ## 3. 行为约束
 
@@ -26,7 +26,7 @@ Ngent 的 Web UI 是随 Go 二进制分发的内嵌 no-framework Vite + TypeScri
   - 不能退回 `EventSource`
 - 只有 finalized agent 文本才走 Markdown 渲染；流式中的消息气泡只能写入 `textContent`。
 - 任何通过 `innerHTML` 注入的 Markdown 结果都必须继续调用 `bindMarkdownControls(...)`。
-- 如果调整 DOM 结构，必须同步迁移现有查询选择器与事件绑定，不能破坏线程切换、session 浏览、发送、取消、权限审批、附件、设置面板等交互。
+- 如果调整 DOM 结构，必须同步迁移现有查询选择器与事件绑定，不能破坏线程切换、分组 session 浏览、发送、取消、权限审批、附件、设置面板等交互。
 
 ## 4. 技术架构
 
@@ -45,7 +45,7 @@ Ngent 的 Web UI 是随 Go 二进制分发的内嵌 no-framework Vite + TypeScri
 
 | 文件 | 角色 |
 |---|---|
-| `internal/webui/web/src/main.ts` | 应用入口、Shell 渲染、线程/session/消息/输入区 DOM 绑定、流式生命周期协调 |
+| `internal/webui/web/src/main.ts` | 应用入口、Shell 渲染、分组 thread/session rail、消息区/输入区 DOM 绑定、流式生命周期协调 |
 | `internal/webui/web/src/style.css` | 视觉 token、布局、主题、组件样式、Markdown/代码块排版 |
 | `internal/webui/web/src/api.ts` | `/v1/*` API 调用、错误归一化、兼容性请求头 |
 | `internal/webui/web/src/sse.ts` | POST SSE 解析、turn 事件分发、断开/终止处理 |
@@ -61,7 +61,7 @@ Ngent 的 Web UI 是随 Go 二进制分发的内嵌 no-framework Vite + TypeScri
   - `ngent:authToken`
   - `ngent:serverUrl`
   - `ngent:theme`
-- 历史消息、线程列表、session 列表、流式状态、输入草稿、附件草稿都不持久化到 `localStorage`。
+- 历史消息、线程列表、分组 rail 所需的 session 列表、流式状态、输入草稿、附件草稿都不持久化到 `localStorage`。
 - 启动时会清理旧的 `ngent:clientId` 遗留值；浏览器不再暴露可编辑的 Client ID 设置。
 
 ## 7. API 映射
@@ -84,7 +84,7 @@ Ngent 的 Web UI 是随 Go 二进制分发的内嵌 no-framework Vite + TypeScri
 
 - Web UI 使用简洁的 icon + wordmark，不复用 CLI 的 ASCII `NGENT` 品牌块。
 - 去除背景网格、装饰性 orb、重玻璃感、普遍悬浮 hover、过度胶囊化 badge。
-- 主聊天区是视觉中心；线程栏和 session 栏退后为辅助信息层。
-- 线程与 session 使用工具型列表，而不是整屏卡片堆叠。
+- 主聊天区是视觉中心；合并后的 thread/session rail 退后为辅助信息层。
+- 线程与 session 在同一条分组 rail 中使用工具型列表呈现，而不是拆成多个主容器或整屏卡片堆叠。
 - 输入区更接近编辑器工作面板，而不是大圆角聊天气泡。
 - reasoning / plan / tool call / permission / markdown 采用统一的文档式分区语言，用排版和边界区分，不靠一堆不一致的卡片外观。

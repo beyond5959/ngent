@@ -512,7 +512,7 @@
 - Title: BLACKBOX ACP currently lacks session resume and catalog discovery surfaces
 - Status: Open
 - Severity: Medium
-- Affects: `blackbox` threads, `/session-history`, session sidebar browsing, and model picker/catalog endpoints for BLACKBOX
+- Affects: `blackbox` threads, `/session-history`, grouped-rail session browsing, and model picker/catalog endpoints for BLACKBOX
 - Symptom:
   - local probing on 2026-03-22 against `blackbox 1.2.47` showed `initialize` advertising `agentCapabilities.loadSession=false`.
   - real `session/load` currently returns `-32601 method not found`.
@@ -557,12 +557,12 @@
 ## Recently Closed
 
 - ID: KI-042
-- Title: Web UI session sidebar raised 409 conflicts while another session was still streaming
+- Title: Web UI session browsing raised 409 conflicts while another session was still streaming
 - Status: Closed
 - Severity: Medium
 - Affects: switching between sessions in the Web UI while the thread already has an active turn
 - Symptom:
-  - choosing another session from the sidebar previously always issued `PATCH /v1/threads/{threadId}` immediately.
+  - choosing another session from the session browser previously always issued `PATCH /v1/threads/{threadId}` immediately.
   - if any turn in that thread was still active, the server returned `409 thread has an active turn`, so even read-only session browsing produced an error dialog.
 - Workaround:
   - none; fixed on 2026-03-26 by separating local viewed-session state from backend thread session binding and deferring backend sync until the thread is idle.

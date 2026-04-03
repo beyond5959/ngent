@@ -32,7 +32,7 @@ Ngent sert de passerelle entre des **agents compatibles ACP** (comme Codex, Kimi
 
 - 🔌 **Support multi-agents** : fonctionne avec n'importe quel agent compatible ACP (Codex, Kimi CLI, OpenCode, etc.)
 - 🌐 **API web** : endpoints HTTP/JSON avec Server-Sent Events (SSE) pour les réponses en streaming
-- 🖥️ **UI intégrée** : aucun déploiement frontend séparé n'est nécessaire, l'interface web est embarquée dans le binaire avec support pour English, 简体中文, Español et Français
+- 🖥️ **UI intégrée** : aucun déploiement frontend séparé n'est nécessaire, l'interface web est embarquée dans le binaire avec support pour plusieurs langues
 - 🔒 **Contrôle des permissions** : système d'approbation fin pour les opérations fichiers/système
 - 💾 **État persistant** : historique des conversations basé sur SQLite entre les sessions
 - 📱 **Compatible mobile** : QR code pour un accès facile depuis un appareil du même réseau

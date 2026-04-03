@@ -6,6 +6,7 @@ import type {
   ModelOption,
   SessionInfo,
   ThreadGitDiffInfo,
+  ThreadGitDiffFileDetail,
   SessionUsage,
   SessionTranscriptMessage,
   SlashCommand,
@@ -90,6 +91,16 @@ interface ThreadGitDiffResponse {
   repoRoot?: string
   summary?: ThreadGitDiffInfo['summary']
   files?: ThreadGitDiffInfo['files']
+}
+interface ThreadGitDiffFileResponse {
+  threadId: string
+  available: boolean
+  repoRoot?: string
+  path?: string
+  supported: boolean
+  kind?: ThreadGitDiffFileDetail['kind']
+  content?: string
+  reason?: ThreadGitDiffFileDetail['reason']
 }
 interface CancelTurnResponse    { turnId: string; threadId: string; status: string }
 interface DeleteThreadResponse  { threadId: string; status: string }
@@ -297,7 +308,26 @@ class ApiClient {
         deleted: file.deleted ?? 0,
         binary: !!file.binary,
         untracked: !!file.untracked,
+        viewable: !!file.viewable,
       })).filter(file => !!file.path),
+    }
+  }
+
+  /** GET /v1/threads/{threadId}/git-diff-file */
+  async getThreadGitDiffFile(threadId: string, path: string): Promise<ThreadGitDiffFileDetail> {
+    const data = await this.request<ThreadGitDiffFileResponse>(
+      'GET',
+      `/v1/threads/${encodeURIComponent(threadId)}/git-diff-file?path=${encodeURIComponent(path)}`,
+    )
+    return {
+      threadId: data.threadId,
+      available: !!data.available,
+      repoRoot: data.repoRoot?.trim() || undefined,
+      path: data.path?.trim() || path.trim(),
+      supported: !!data.supported,
+      kind: data.kind,
+      content: typeof data.content === 'string' ? data.content : undefined,
+      reason: data.reason,
     }
   }
 

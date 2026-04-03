@@ -718,6 +718,35 @@ body {
   background: var(--bg-panel);
 }
 
+.git-diff-preview-shell {
+  position: relative;
+  width: min(560px, 38vw);
+  min-width: min(560px, 38vw);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+  animation: panel-slide-in var(--t-base) ease;
+}
+
+.git-diff-preview-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 120px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 100%);
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.git-diff-preview-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
 .session-list {
   display: flex;
   flex-direction: column;
@@ -3021,6 +3050,16 @@ button:active:not(:disabled),
     padding: 18px 14px 20px;
   }
 
+  .git-diff-preview-shell {
+    position: fixed;
+    inset: 8px 8px 8px auto;
+    z-index: 110;
+    width: min(560px, calc(100vw - 16px));
+    min-width: 0;
+    border-radius: 20px;
+    box-shadow: var(--shadow-md);
+  }
+
   .input-area {
     padding: 12px 14px 14px;
   }
@@ -4257,6 +4296,12 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.git-diff-preview-shell {
+  background: var(--bg-panel-strong);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
 .sidebar-header {
   align-items: center;
   justify-content: flex-start;
@@ -5336,12 +5381,38 @@ button:active:not(:disabled),
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 11px 14px;
+  border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: background var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
 }
 
 .git-diff-file-row:last-child {
   border-bottom: none;
+}
+
+.git-diff-file-row:not(.git-diff-file-row--disabled):hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong));
+}
+
+.git-diff-file-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.git-diff-file-row--active {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, var(--bg-panel-strong)) 0%, color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong)) 100%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.git-diff-file-row--disabled {
+  opacity: 0.64;
+  cursor: not-allowed;
 }
 
 .git-diff-file-icon {
@@ -5451,6 +5522,220 @@ button:active:not(:disabled),
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.git-diff-drawer {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel-strong) 98%, transparent), color-mix(in srgb, var(--bg-panel) 86%, transparent));
+  overflow: hidden;
+}
+
+.git-diff-drawer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-strong) 84%, transparent);
+}
+
+.git-diff-drawer__copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.git-diff-drawer__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.git-diff-drawer__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.git-diff-drawer__title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.git-diff-drawer__badge {
+  padding: 5px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel-strong));
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-1) 24%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.git-diff-drawer__repo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-3);
+}
+
+.git-diff-drawer__repo-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.git-diff-drawer__repo-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.git-diff-drawer__close {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 84%, transparent);
+  color: var(--text-2);
+}
+
+.git-diff-drawer__close:hover {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel-strong));
+}
+
+.git-diff-drawer__body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+}
+
+.git-diff-drawer__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 180px;
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px dashed color-mix(in srgb, var(--border) 90%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 82%, transparent);
+  color: var(--text-2);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.git-diff-drawer__empty--loading {
+  flex-direction: column;
+}
+
+.git-diff-drawer__empty--loading .loading-spinner {
+  margin: 0;
+}
+
+.git-diff-drawer__empty--error {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 22%, var(--border));
+  background: color-mix(in srgb, var(--error) 8%, var(--bg-panel-strong));
+}
+
+.git-diff-drawer__code {
+  min-width: max-content;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg) 84%, var(--bg-panel-strong));
+  overflow: hidden;
+}
+
+.git-diff-drawer__line {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: stretch;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-1);
+}
+
+.git-diff-drawer__line + .git-diff-drawer__line {
+  border-top: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+}
+
+.git-diff-drawer__line-no {
+  padding: 8px 10px 8px 12px;
+  border-right: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  color: var(--text-3);
+  text-align: right;
+  user-select: none;
+}
+
+.git-diff-drawer__line-text {
+  display: block;
+  padding: 8px 14px;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.git-diff-drawer__line--meta {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong));
+}
+
+.git-diff-drawer__line--meta .git-diff-drawer__line-text {
+  color: color-mix(in srgb, var(--accent) 64%, var(--text-1));
+}
+
+.git-diff-drawer__line--hunk {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel-strong));
+}
+
+.git-diff-drawer__line--hunk .git-diff-drawer__line-text {
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-1));
+}
+
+.git-diff-drawer__line--added {
+  background: color-mix(in srgb, var(--success) 12%, var(--bg-panel-strong));
+}
+
+.git-diff-drawer__line--added .git-diff-drawer__line-text {
+  color: color-mix(in srgb, var(--success) 88%, var(--text-1) 12%);
+}
+
+.git-diff-drawer__line--deleted {
+  background: color-mix(in srgb, var(--error) 10%, var(--bg-panel-strong));
+}
+
+.git-diff-drawer__line--deleted .git-diff-drawer__line-text {
+  color: color-mix(in srgb, var(--error) 86%, var(--text-1) 14%);
 }
 
 .thread-model-switch--composer .thread-model-trigger {

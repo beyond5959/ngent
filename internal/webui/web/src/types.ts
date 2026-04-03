@@ -92,6 +92,7 @@ export interface ThreadGitDiffFile {
   deleted: number
   binary?: boolean
   untracked?: boolean
+  viewable?: boolean
 }
 
 export interface ThreadGitDiffInfo {
@@ -100,6 +101,17 @@ export interface ThreadGitDiffInfo {
   repoRoot?: string
   summary: ThreadGitDiffSummary
   files: ThreadGitDiffFile[]
+}
+
+export interface ThreadGitDiffFileDetail {
+  threadId: string
+  available: boolean
+  repoRoot?: string
+  path: string
+  supported: boolean
+  kind?: 'diff' | 'file'
+  content?: string
+  reason?: 'binary' | 'non_text'
 }
 
 export interface SessionUsage {

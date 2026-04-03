@@ -54,6 +54,19 @@
 - Follow-up plan:
   - evaluate whether the grouped left rail eventually needs a compact cross-thread live-plan indicator for background sessions.
 
+- ID: KI-049
+- Title: Git-diff drawer preview is intentionally limited to tracked patches and new text files
+- Status: Open
+- Severity: Low
+- Affects: Web UI users opening the per-file git-diff drawer for staged-only additions, binary assets, or other non-text untracked files
+- Symptom:
+  - tracked working-tree changes preview correctly through `git diff`, and new untracked text files preview through their current file contents.
+  - binary/non-text untracked rows stay disabled, and staged-only additions that do not appear in the existing working-tree diff summary still have no drawer entry.
+- Workaround:
+  - inspect binary assets with external tooling, or stage/commit/re-diff through a workflow that makes the needed change visible in the current working-tree summary first.
+- Follow-up plan:
+  - evaluate whether the git-diff surface should eventually cover staged-only previews or a separate asset viewer without expanding the current local-only safety boundary.
+
 - ID: KI-048
 - Title: Git-diff file icons currently cover a curated subset of common file types
 - Status: Open

@@ -28,6 +28,7 @@ import type {
   ToolCall,
   MessageAttachment,
   ThreadGitDiffInfo,
+  ThreadGitDiffFileDetail,
   ThreadGitInfo,
 } from './types.ts'
 import type {
@@ -211,6 +212,10 @@ const iconFolder = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" 
   <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
+const iconClose = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+</svg>`
+
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -252,6 +257,19 @@ interface ThreadGitDiffState {
   files: ThreadGitDiffInfo['files']
   loading: boolean
   error: string
+  drawerOpen: boolean
+  selectedFilePath: string
+  detailByPath: Record<string, ThreadGitDiffFileDetailState>
+}
+
+interface ThreadGitDiffFileDetailState {
+  path: string
+  supported: boolean | null
+  kind: ThreadGitDiffFileDetail['kind']
+  content: string
+  reason: ThreadGitDiffFileDetail['reason']
+  loading: boolean
+  error: string
 }
 
 interface ComposerAttachmentDraft {
@@ -281,10 +299,13 @@ const pendingThreadGitDiffToggleScopes = new Set<string>()
 const sessionUsageByScope = new Map<string, SessionUsage>()
 const threadGitRequestSeqByThread = new Map<string, number>()
 const threadGitDiffRequestSeqByScope = new Map<string, number>()
+const threadGitDiffDetailRequestSeqByKey = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
 let threadGitDiffRequestSeq = 0
+let threadGitDiffDetailRequestSeq = 0
+let activeThreadGitDiffPreview: { threadId: string, scopeKey: string, filePath: string } | null = null
 const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 30_000
 const INLINE_SESSION_PAGE_SIZE = 5
 let threadGitDiffPollTimer = 0
@@ -389,6 +410,21 @@ function emptyThreadGitDiffState(): ThreadGitDiffState {
     files: [],
     loading: false,
     error: '',
+    drawerOpen: false,
+    selectedFilePath: '',
+    detailByPath: {},
+  }
+}
+
+function emptyThreadGitDiffFileDetailState(path = ''): ThreadGitDiffFileDetailState {
+  return {
+    path,
+    supported: null,
+    kind: undefined,
+    content: '',
+    reason: undefined,
+    loading: false,
+    error: '',
   }
 }
 
@@ -400,6 +436,36 @@ function threadGitDiffState(scopeKey: string): ThreadGitDiffState {
   return threadGitDiffStateByScope.get(scopeKey) ?? emptyThreadGitDiffState()
 }
 
+function cloneThreadGitDiffDetailMap(
+  detailByPath: Record<string, ThreadGitDiffFileDetailState> | null | undefined,
+): Record<string, ThreadGitDiffFileDetailState> {
+  const next: Record<string, ThreadGitDiffFileDetailState> = {}
+  if (!detailByPath) return next
+
+  for (const [path, detail] of Object.entries(detailByPath)) {
+    const normalizedPath = path.trim()
+    if (!normalizedPath) continue
+    next[normalizedPath] = {
+      ...emptyThreadGitDiffFileDetailState(normalizedPath),
+      ...detail,
+      path: detail.path?.trim() || normalizedPath,
+      content: typeof detail.content === 'string' ? detail.content : '',
+      error: typeof detail.error === 'string' ? detail.error : '',
+    }
+  }
+  return next
+}
+
+function isThreadGitDiffFileViewable(file: ThreadGitDiffInfo['files'][number] | null | undefined): boolean {
+  return !!file && file.viewable === true
+}
+
+function threadGitDiffFileDetailState(scopeKey: string, path: string): ThreadGitDiffFileDetailState {
+  const normalizedPath = path.trim()
+  if (!normalizedPath) return emptyThreadGitDiffFileDetailState()
+  return threadGitDiffState(scopeKey).detailByPath[normalizedPath] ?? emptyThreadGitDiffFileDetailState(normalizedPath)
+}
+
 function setThreadGitState(threadId: string, patch: Partial<ThreadGitState>): ThreadGitState {
   const next = { ...threadGitState(threadId), ...patch }
   threadGitStateByThread.set(threadId, next)
@@ -407,13 +473,50 @@ function setThreadGitState(threadId: string, patch: Partial<ThreadGitState>): Th
 }
 
 function setThreadGitDiffState(scopeKey: string, patch: Partial<ThreadGitDiffState>): ThreadGitDiffState {
-  const next = { ...threadGitDiffState(scopeKey), ...patch }
+  const current = threadGitDiffState(scopeKey)
+  const next = {
+    ...current,
+    ...patch,
+    detailByPath: patch.detailByPath ? cloneThreadGitDiffDetailMap(patch.detailByPath) : cloneThreadGitDiffDetailMap(current.detailByPath),
+  }
+  const visiblePaths = new Set(next.files.map(file => file.path))
+  for (const path of Object.keys(next.detailByPath)) {
+    if (!visiblePaths.has(path)) {
+      delete next.detailByPath[path]
+    }
+  }
+  const selectedFile = next.files.find(file => file.path === next.selectedFilePath)
+  if (!selectedFile || !isThreadGitDiffFileViewable(selectedFile)) {
+    next.selectedFilePath = ''
+    next.drawerOpen = false
+  }
   if (next.summary.filesChanged <= 0 && !next.files.length) {
     expandedThreadGitDiffScopes.delete(scopeKey)
     pendingThreadGitDiffToggleScopes.delete(scopeKey)
+    next.drawerOpen = false
+    next.selectedFilePath = ''
+    next.detailByPath = {}
   }
   threadGitDiffStateByScope.set(scopeKey, next)
   return next
+}
+
+function setThreadGitDiffFileDetailState(
+  scopeKey: string,
+  path: string,
+  patch: Partial<ThreadGitDiffFileDetailState>,
+): ThreadGitDiffState {
+  const normalizedPath = path.trim()
+  if (!normalizedPath) return threadGitDiffState(scopeKey)
+  const nextDetailByPath = cloneThreadGitDiffDetailMap(threadGitDiffState(scopeKey).detailByPath)
+  nextDetailByPath[normalizedPath] = {
+    ...threadGitDiffFileDetailState(scopeKey, normalizedPath),
+    ...patch,
+    path: normalizedPath,
+    content: typeof patch.content === 'string' ? patch.content : nextDetailByPath[normalizedPath]?.content ?? threadGitDiffFileDetailState(scopeKey, normalizedPath).content,
+    error: typeof patch.error === 'string' ? patch.error : nextDetailByPath[normalizedPath]?.error ?? threadGitDiffFileDetailState(scopeKey, normalizedPath).error,
+  }
+  return setThreadGitDiffState(scopeKey, { detailByPath: nextDetailByPath })
 }
 
 function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitState {
@@ -430,6 +533,16 @@ function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitSta
 }
 
 function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: ThreadGitDiffInfo): ThreadGitDiffState {
+  const current = threadGitDiffState(scopeKey)
+  const nextFiles = [...(info.files ?? [])]
+  const nextDetailByPath = cloneThreadGitDiffDetailMap(current.detailByPath)
+  const validPaths = new Set(nextFiles.map(file => file.path))
+  for (const path of Object.keys(nextDetailByPath)) {
+    if (!validPaths.has(path)) {
+      delete nextDetailByPath[path]
+    }
+  }
+  const selectedFile = nextFiles.find(file => file.path === current.selectedFilePath)
   return setThreadGitDiffState(scopeKey, {
     available: info.available,
     sessionId: sessionID.trim(),
@@ -439,9 +552,12 @@ function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: Threa
       insertions: info.summary?.insertions ?? 0,
       deletions: info.summary?.deletions ?? 0,
     },
-    files: [...(info.files ?? [])],
+    files: nextFiles,
     loading: false,
     error: '',
+    drawerOpen: current.drawerOpen && isThreadGitDiffFileViewable(selectedFile),
+    selectedFilePath: isThreadGitDiffFileViewable(selectedFile) ? current.selectedFilePath : '',
+    detailByPath: nextDetailByPath,
   })
 }
 
@@ -1295,6 +1411,11 @@ function threadSessionScopeKey(threadId: string, sessionID = ''): string {
   return `${threadId}::${sessionID.trim()}`
 }
 
+function threadIDFromScopeKey(scopeKey: string): string {
+  const parts = scopeKey.split('::', 2)
+  return parts[0]?.trim() ?? ''
+}
+
 function sessionSelectionFromScopeKey(scopeKey: string): string {
   const parts = scopeKey.split('::', 2)
   return parts.length === 2 ? parts[1].trim() : ''
@@ -1375,6 +1496,26 @@ function selectedThreadGitDiffScopeKey(thread: Thread | null | undefined): strin
   const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) return ''
   return threadSessionScopeKey(thread.threadId, sessionID)
+}
+
+function threadGitDiffPreview(threadId: string): { threadId: string, scopeKey: string, filePath: string } | null {
+  if (!activeThreadGitDiffPreview || activeThreadGitDiffPreview.threadId !== threadId) return null
+  return activeThreadGitDiffPreview
+}
+
+function setThreadGitDiffPreview(threadId: string, scopeKey: string, filePath: string): void {
+  threadId = threadId.trim()
+  scopeKey = scopeKey.trim()
+  filePath = filePath.trim()
+  if (!threadId || !scopeKey || !filePath) return
+  activeThreadGitDiffPreview = { threadId, scopeKey, filePath }
+}
+
+function clearThreadGitDiffPreview(threadId = ''): void {
+  threadId = threadId.trim()
+  if (!activeThreadGitDiffPreview) return
+  if (threadId && activeThreadGitDiffPreview.threadId !== threadId) return
+  activeThreadGitDiffPreview = null
 }
 
 function buildThreadAgentOptionsWithSession(
@@ -5564,6 +5705,24 @@ function isThreadGitDiffTogglePending(scopeKey: string): boolean {
   return pendingThreadGitDiffToggleScopes.has(scopeKey)
 }
 
+function openThreadGitDiffDrawer(scopeKey: string, filePath: string): void {
+  const threadId = threadIDFromScopeKey(scopeKey)
+  const selectedFile = threadGitDiffState(scopeKey).files.find(file => file.path === filePath)
+  if (!isThreadGitDiffFileViewable(selectedFile)) return
+  const preview = threadGitDiffPreview(threadId)
+  if (preview && preview.scopeKey !== scopeKey) {
+    setThreadGitDiffState(preview.scopeKey, {
+      drawerOpen: false,
+      selectedFilePath: '',
+    })
+  }
+  setThreadGitDiffState(scopeKey, {
+    drawerOpen: true,
+    selectedFilePath: filePath,
+  })
+  setThreadGitDiffPreview(threadId, scopeKey, filePath)
+}
+
 function closeThreadGitDiffPanel(threadId = store.get().activeThreadId ?? ''): void {
   const activeThread = store.get().threads.find(item => item.threadId === threadId)
   const scopeKey = selectedThreadGitDiffScopeKey(activeThread)
@@ -5572,8 +5731,39 @@ function closeThreadGitDiffPanel(threadId = store.get().activeThreadId ?? ''): v
   if (!isThreadGitDiffExpanded(scopeKey)) return
 
   setThreadGitDiffExpanded(scopeKey, false)
+  const preview = threadGitDiffPreview(threadId)
+  clearThreadGitDiffPreview(threadId)
+  if (preview) {
+    setThreadGitDiffState(preview.scopeKey, {
+      drawerOpen: false,
+      selectedFilePath: '',
+    })
+  } else {
+    setThreadGitDiffState(scopeKey, {
+      drawerOpen: false,
+      selectedFilePath: '',
+    })
+  }
   if (store.get().activeThreadId === threadId) {
     syncThreadGitDiffControl(threadId)
+    syncThreadGitDiffDrawer(threadId)
+  }
+}
+
+function closeThreadGitDiffDrawer(threadId = store.get().activeThreadId ?? ''): void {
+  const activeThread = store.get().threads.find(item => item.threadId === threadId)
+  const preview = threadGitDiffPreview(threadId)
+  const scopeKey = preview?.scopeKey ?? selectedThreadGitDiffScopeKey(activeThread)
+  if (!scopeKey) return
+
+  clearThreadGitDiffPreview(threadId)
+  setThreadGitDiffState(scopeKey, {
+    drawerOpen: false,
+    selectedFilePath: '',
+  })
+  if (store.get().activeThreadId === threadId) {
+    syncThreadGitDiffControl(threadId)
+    syncThreadGitDiffDrawer(threadId)
   }
 }
 
@@ -5596,6 +5786,51 @@ function syncThreadGitDiffControl(threadId = store.get().activeThreadId ?? ''): 
   slotEl.innerHTML = renderThreadGitDiffControl(thread)
   bindThreadGitDiffControl(thread)
   updateInputState()
+}
+
+function syncThreadGitDiffDrawer(threadId = store.get().activeThreadId ?? ''): void {
+  const slotEl = document.getElementById('git-diff-preview-shell')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const normalizedThreadID = threadId.trim()
+  if (!normalizedThreadID) {
+    slotEl.innerHTML = ''
+    slotEl.hidden = true
+    return
+  }
+
+  const thread = store.get().threads.find(item => item.threadId === normalizedThreadID)
+  if (!thread) {
+    slotEl.innerHTML = ''
+    slotEl.hidden = true
+    return
+  }
+
+  const preview = threadGitDiffPreview(normalizedThreadID)
+  const markup = preview ? renderThreadGitDiffDrawer(preview.scopeKey, preview.filePath) : ''
+  slotEl.innerHTML = markup
+  slotEl.hidden = !markup
+  if (!markup) return
+  bindThreadGitDiffDrawer(thread)
+}
+
+function refreshThreadGitDiffPreview(threadId: string): void {
+  const slotEl = document.getElementById('git-diff-preview-shell')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const preview = threadGitDiffPreview(threadId.trim())
+  if (!preview) return
+
+  const markup = renderThreadGitDiffDrawer(preview.scopeKey, preview.filePath)
+  if (!markup) return
+
+  slotEl.innerHTML = markup
+  slotEl.hidden = false
+
+  const thread = store.get().threads.find(item => item.threadId === preview.threadId)
+  if (thread) {
+    bindThreadGitDiffDrawer(thread)
+  }
 }
 
 function syncThreadGitControl(threadId = store.get().activeThreadId ?? ''): void {
@@ -5665,6 +5900,7 @@ async function loadThreadGitDiff(
   })
   if (store.get().activeThreadId === normalizedThreadID) {
     syncThreadGitDiffControl(normalizedThreadID)
+    syncThreadGitDiffDrawer(normalizedThreadID)
   }
 
   try {
@@ -5675,6 +5911,10 @@ async function loadThreadGitDiff(
     const nextState = applyThreadGitDiffInfo(scopeKey, normalizedSessionID, info)
     if (store.get().activeThreadId === normalizedThreadID) {
       syncThreadGitDiffControl(normalizedThreadID)
+      syncThreadGitDiffDrawer(normalizedThreadID)
+      if (nextState.drawerOpen && nextState.selectedFilePath) {
+        void loadThreadGitDiffFileDetail(normalizedThreadID, normalizedSessionID, nextState.selectedFilePath, { force: true })
+      }
     }
     return nextState
   } catch (err) {
@@ -5700,6 +5940,7 @@ async function loadThreadGitDiff(
       })
     if (store.get().activeThreadId === normalizedThreadID) {
       syncThreadGitDiffControl(normalizedThreadID)
+      syncThreadGitDiffDrawer(normalizedThreadID)
     }
     return nextState
   }
@@ -5707,6 +5948,95 @@ async function loadThreadGitDiff(
 
 function loadSelectedThreadGitDiff(thread: Thread, options: { force?: boolean } = {}): Promise<ThreadGitDiffState> {
   return loadThreadGitDiff(thread.threadId, selectedThreadSessionID(thread), options)
+}
+
+function threadGitDiffDetailRequestKey(scopeKey: string, path: string): string {
+  return `${scopeKey}\n${path}`
+}
+
+async function loadThreadGitDiffFileDetail(
+  threadId: string,
+  sessionID: string,
+  path: string,
+  options: { force?: boolean } = {},
+): Promise<ThreadGitDiffFileDetailState> {
+  const normalizedThreadID = threadId.trim()
+  const normalizedSessionID = sessionID.trim()
+  const normalizedPath = path.trim()
+  if (!normalizedThreadID || !normalizedSessionID || !normalizedPath) {
+    return emptyThreadGitDiffFileDetailState(normalizedPath)
+  }
+
+  const scopeKey = threadSessionScopeKey(normalizedThreadID, normalizedSessionID)
+  const state = threadGitDiffState(scopeKey)
+  const file = state.files.find(item => item.path === normalizedPath)
+  if (!isThreadGitDiffFileViewable(file)) {
+    setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+      supported: false,
+      kind: undefined,
+      content: '',
+      reason: file?.binary ? 'binary' : 'non_text',
+      loading: false,
+      error: '',
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      refreshThreadGitDiffPreview(normalizedThreadID)
+    }
+    return threadGitDiffFileDetailState(scopeKey, normalizedPath)
+  }
+
+  const cachedDetail = threadGitDiffFileDetailState(scopeKey, normalizedPath)
+  if (!options.force) {
+    if (cachedDetail.loading) return cachedDetail
+    if (cachedDetail.supported !== null || !!cachedDetail.error) {
+      return cachedDetail
+    }
+  }
+
+  threadGitDiffDetailRequestSeq += 1
+  const requestSeq = threadGitDiffDetailRequestSeq
+  threadGitDiffDetailRequestSeqByKey.set(threadGitDiffDetailRequestKey(scopeKey, normalizedPath), requestSeq)
+  setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+    loading: true,
+    error: '',
+  })
+  if (store.get().activeThreadId === normalizedThreadID) {
+    refreshThreadGitDiffPreview(normalizedThreadID)
+  }
+
+  try {
+    const detail = await api.getThreadGitDiffFile(normalizedThreadID, normalizedPath)
+    if (threadGitDiffDetailRequestSeqByKey.get(threadGitDiffDetailRequestKey(scopeKey, normalizedPath)) !== requestSeq) {
+      return threadGitDiffFileDetailState(scopeKey, normalizedPath)
+    }
+
+    const nextDetail = setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+      supported: detail.available ? detail.supported : false,
+      kind: detail.kind,
+      content: detail.content ?? '',
+      reason: detail.reason,
+      loading: false,
+      error: detail.available ? '' : t('gitDiffPreviewUnavailable'),
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      refreshThreadGitDiffPreview(normalizedThreadID)
+    }
+    return nextDetail.detailByPath[normalizedPath] ?? emptyThreadGitDiffFileDetailState(normalizedPath)
+  } catch (err) {
+    if (threadGitDiffDetailRequestSeqByKey.get(threadGitDiffDetailRequestKey(scopeKey, normalizedPath)) !== requestSeq) {
+      return threadGitDiffFileDetailState(scopeKey, normalizedPath)
+    }
+
+    const message = err instanceof Error ? err.message : String(err)
+    const nextDetail = setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+      loading: false,
+      error: message,
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      refreshThreadGitDiffPreview(normalizedThreadID)
+    }
+    return nextDetail.detailByPath[normalizedPath] ?? emptyThreadGitDiffFileDetailState(normalizedPath)
+  }
 }
 
 function stopThreadGitDiffPolling(): void {
@@ -5899,17 +6229,42 @@ function bindThreadGitDiffControl(thread: Thread): void {
       setThreadGitDiffTogglePending(scopeKey, false)
       return
     }
-    setThreadGitDiffExpanded(scopeKey, !isThreadGitDiffExpanded(scopeKey))
+    const nextExpanded = !isThreadGitDiffExpanded(scopeKey)
+    setThreadGitDiffExpanded(scopeKey, nextExpanded)
+    if (!nextExpanded) {
+      setThreadGitDiffState(scopeKey, {
+        drawerOpen: false,
+        selectedFilePath: '',
+      })
+    }
     syncThreadGitDiffControl(thread.threadId)
+    syncThreadGitDiffDrawer(thread.threadId)
     window.setTimeout(() => {
       setThreadGitDiffTogglePending(scopeKey, false)
     }, 0)
   })
 
+  widgetEl.addEventListener('click', event => {
+    const target = event.target as HTMLElement | null
+    const fileButton = target?.closest<HTMLButtonElement>('.git-diff-file-row[data-git-diff-file-path]')
+    if (!fileButton || fileButton.disabled) return
+
+    event.preventDefault()
+    const path = fileButton.dataset.gitDiffFilePath?.trim() ?? ''
+    if (!path) return
+
+    const sessionID = selectionSessionID(sessionSelectionFromScopeKey(scopeKey))
+    openThreadGitDiffDrawer(scopeKey, path)
+    refreshThreadGitDiffPreview(thread.threadId)
+    syncThreadGitDiffControl(thread.threadId)
+    void loadThreadGitDiffFileDetail(thread.threadId, sessionID || selectedThreadSessionID(thread), path)
+  })
+
   widgetEl.addEventListener('focusout', event => {
     if (isThreadGitDiffTogglePending(scopeKey)) return
     const related = event.relatedTarget as Node | null
-    if (!related || !widgetEl.contains(related)) {
+    const drawerEl = document.getElementById('thread-git-diff-drawer')
+    if (!related || (!widgetEl.contains(related) && !drawerEl?.contains(related))) {
       closeThreadGitDiffPanel(thread.threadId)
     }
   })
@@ -5919,6 +6274,25 @@ function bindThreadGitDiffControl(thread: Thread): void {
     event.preventDefault()
     closeThreadGitDiffPanel(thread.threadId)
     triggerEl.focus()
+  })
+}
+
+function bindThreadGitDiffDrawer(thread: Thread): void {
+  const drawerEl = document.getElementById('thread-git-diff-drawer') as HTMLElement | null
+  if (!drawerEl) return
+
+  const closeBtn = document.getElementById('thread-git-diff-drawer-close') as HTMLButtonElement | null
+  closeBtn?.addEventListener('click', event => {
+    event.preventDefault()
+    closeThreadGitDiffDrawer(thread.threadId)
+  })
+
+  drawerEl.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    closeThreadGitDiffDrawer(thread.threadId)
+    const activeRow = document.querySelector<HTMLButtonElement>('.git-diff-file-row--active[data-git-diff-file-path]')
+    activeRow?.focus()
   })
 }
 
@@ -6230,7 +6604,9 @@ function renderThreadGitDiffStat(value: number, kind: 'added' | 'deleted'): stri
 
 function renderThreadGitDiffFileStats(file: ThreadGitDiffInfo['files'][number]): string {
   if (file.untracked) {
-    return `<span class="git-diff-file-badge">${escHtml(t('gitDiffNew'))}</span>`
+    return `
+      <span class="git-diff-file-badge">${escHtml(t('gitDiffNew'))}</span>
+      ${file.binary ? `<span class="git-diff-file-badge">${escHtml(t('gitDiffBinary'))}</span>` : ''}`
   }
   if (file.binary) {
     return `<span class="git-diff-file-badge">${escHtml(t('gitDiffBinary'))}</span>`
@@ -6253,6 +6629,138 @@ function renderThreadGitDiffFileIcon(path: string): string {
   return `<span class="git-diff-file-icon git-diff-file-icon--glyph git-diff-file-icon--${icon.font}" aria-hidden="true" style="--git-file-icon-color: ${icon.color}; --git-file-icon-scale: ${(icon.scale ?? 1).toFixed(2)};">${icon.glyph}</span>`
 }
 
+function renderThreadGitDiffFileRow(
+  file: ThreadGitDiffInfo['files'][number],
+  activeFilePath: string,
+): string {
+  const clickable = isThreadGitDiffFileViewable(file)
+  const active = clickable && activeFilePath === file.path
+  const title = clickable
+    ? t('gitDiffOpenFile')
+    : (file.binary ? t('gitDiffUnsupportedBinary') : t('gitDiffUnsupportedText'))
+
+  const content = `
+    ${renderThreadGitDiffFileIcon(file.path)}
+    <div class="git-diff-file-copy">
+      <div class="git-diff-file-path" title="${escHtml(file.path)}">${escHtml(file.path)}</div>
+    </div>
+    <div class="git-diff-file-stats">
+      ${renderThreadGitDiffFileStats(file)}
+    </div>`
+
+  if (!clickable) {
+    return `
+      <div class="git-diff-file-row git-diff-file-row--disabled" title="${escHtml(title)}" aria-disabled="true">
+        ${content}
+      </div>`
+  }
+
+  return `
+    <button
+      class="git-diff-file-row${active ? ' git-diff-file-row--active' : ''}"
+      type="button"
+      data-git-diff-file-path="${escHtml(file.path)}"
+      title="${escHtml(title)}"
+      aria-pressed="${active ? 'true' : 'false'}"
+    >
+      ${content}
+    </button>`
+}
+
+function renderThreadGitDiffDrawerContent(
+  detail: ThreadGitDiffFileDetailState,
+  fallbackKind: ThreadGitDiffFileDetail['kind'],
+): string {
+  if (detail.loading) {
+    return `
+      <div class="git-diff-drawer__empty git-diff-drawer__empty--loading">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <span>${escHtml(t('loadingEllipsis'))}</span>
+      </div>`
+  }
+  if (detail.error) {
+    return `<div class="git-diff-drawer__empty git-diff-drawer__empty--error">${escHtml(detail.error)}</div>`
+  }
+  if (detail.supported === null && !detail.content) {
+    return `
+      <div class="git-diff-drawer__empty git-diff-drawer__empty--loading">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <span>${escHtml(t('loadingEllipsis'))}</span>
+      </div>`
+  }
+  if (detail.supported === false) {
+    const message = detail.reason === 'binary' ? t('gitDiffUnsupportedBinary') : t('gitDiffUnsupportedText')
+    return `<div class="git-diff-drawer__empty">${escHtml(message)}</div>`
+  }
+
+  const kind = detail.kind ?? fallbackKind ?? 'diff'
+  const normalized = (detail.content || '').replace(/\r\n/g, '\n')
+  const rawLines = normalized.split('\n')
+  const lines = rawLines.length > 1 && rawLines[rawLines.length - 1] === ''
+    ? rawLines.slice(0, -1)
+    : rawLines
+  const renderLines = (lines.length ? lines : ['']).map((line, index) => {
+    let tone = 'plain'
+    if (kind === 'diff') {
+      if (line.startsWith('@@')) {
+        tone = 'hunk'
+      } else if (line.startsWith('+') && !line.startsWith('+++')) {
+        tone = 'added'
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        tone = 'deleted'
+      } else if (
+        line.startsWith('diff --git')
+        || line.startsWith('index ')
+        || line.startsWith('--- ')
+        || line.startsWith('+++ ')
+      ) {
+        tone = 'meta'
+      }
+    }
+
+    return `
+      <div class="git-diff-drawer__line git-diff-drawer__line--${tone}">
+        <span class="git-diff-drawer__line-no" aria-hidden="true">${index + 1}</span>
+        <code class="git-diff-drawer__line-text">${line ? escHtml(line) : '&nbsp;'}</code>
+      </div>`
+  }).join('')
+
+  return `
+    <div class="git-diff-drawer__body">
+      <div class="git-diff-drawer__code" data-kind="${escHtml(kind)}">${renderLines}</div>
+    </div>`
+}
+
+function renderThreadGitDiffDrawer(scopeKey: string, filePath: string): string {
+  if (!scopeKey || !filePath) return ''
+  const state = threadGitDiffState(scopeKey)
+  const selectedFile = state.files.find(file => file.path === filePath) ?? null
+  const detail = threadGitDiffFileDetailState(scopeKey, filePath)
+  const detailKind = detail.kind ?? (selectedFile?.untracked ? 'file' : 'diff')
+  const badgeLabel = detailKind === 'file' ? t('gitDiffFileContents') : t('gitDiffPatch')
+
+  return `
+    <aside class="git-diff-drawer" id="thread-git-diff-drawer" data-scope-key="${escHtml(scopeKey)}" role="dialog" aria-label="${escHtml(t('gitDiffDrawerTitle'))}">
+      <div class="git-diff-drawer__header">
+        <div class="git-diff-drawer__copy">
+          <span class="git-diff-drawer__eyebrow">${escHtml(t('gitDiffDrawerTitle'))}</span>
+          <div class="git-diff-drawer__title-row">
+            <h3 class="git-diff-drawer__title" title="${escHtml(filePath)}">${escHtml(filePath)}</h3>
+            <span class="git-diff-drawer__badge">${escHtml(badgeLabel)}</span>
+          </div>
+          <div class="git-diff-drawer__repo" title="${escHtml(state.repoRoot)}">
+            <span class="git-diff-drawer__repo-icon" aria-hidden="true">${iconFolder}</span>
+            <span class="git-diff-drawer__repo-label">${escHtml(state.repoRoot)}</span>
+          </div>
+        </div>
+        <button class="git-diff-drawer__close" id="thread-git-diff-drawer-close" type="button" aria-label="${escHtml(t('close'))}">
+          ${iconClose}
+        </button>
+      </div>
+      ${renderThreadGitDiffDrawerContent(detail, detailKind)}
+    </aside>`
+}
+
 function renderThreadGitDiffControl(thread: Thread): string {
   const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) return ''
@@ -6263,16 +6771,7 @@ function renderThreadGitDiffControl(thread: Thread): string {
 
   const fileCountLabel = t('gitDiffFiles', { count: state.summary.filesChanged })
   const expanded = isThreadGitDiffExpanded(scopeKey)
-  const fileRows = state.files.map(file => `
-      <div class="git-diff-file-row">
-        ${renderThreadGitDiffFileIcon(file.path)}
-        <div class="git-diff-file-copy">
-          <div class="git-diff-file-path" title="${escHtml(file.path)}">${escHtml(file.path)}</div>
-        </div>
-        <div class="git-diff-file-stats">
-          ${renderThreadGitDiffFileStats(file)}
-        </div>
-      </div>`).join('')
+  const fileRows = state.files.map(file => renderThreadGitDiffFileRow(file, state.selectedFilePath)).join('')
   const panelHTML = expanded
     ? `
       <div class="git-diff-panel" id="thread-git-diff-panel" role="dialog" aria-label="${escHtml(t('gitDiffChangedFiles'))}">
@@ -6596,6 +7095,7 @@ function updateChatArea(): void {
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
   syncThreadGitDiffControl(thread.threadId)
+  syncThreadGitDiffDrawer(thread.threadId)
   syncThreadGitControl(thread.threadId)
   syncSessionUsageControl(thread.threadId)
   void loadSelectedThreadGitDiff(thread, { force: true })
@@ -7251,6 +7751,7 @@ function renderShell(): void {
         <main class="chat" id="chat">
           ${renderChatEmpty()}
         </main>
+        <aside class="git-diff-preview-shell" id="git-diff-preview-shell" hidden></aside>
       </div>
     </div>`
 
@@ -7350,7 +7851,7 @@ async function init(): Promise<void> {
     if (!target?.closest('.git-branch-picker')) {
       closeGitBranchMenu()
     }
-    if (!target?.closest('.git-diff-widget')) {
+    if (!target?.closest('.git-diff-widget') && !target?.closest('.git-diff-drawer')) {
       closeThreadGitDiffPanel()
     }
 

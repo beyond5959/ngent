@@ -41,6 +41,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - modify one or more tracked files in that repository and create at least one untracked file.
   - verify the composer immediately requests `/v1/threads/{threadId}/git-diff`, shows the summary chip above the input, and refreshes again within 15 seconds while the same session remains selected.
   - expand the chip and verify the per-file list matches tracked rows from `git --no-pager diff --numstat` plus the repository's untracked files.
+  - click one tracked text row and verify a right-side drawer opens with that file's patch content; then click a different viewable row and verify the drawer content switches in place instead of opening a second panel.
+  - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch.
+  - include at least one non-text/binary untracked file and verify its row stays disabled and does not open the drawer.
   - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
 - Expected:
   - polling only happens when the active thread has a selected concrete session id.
@@ -49,11 +52,14 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - repeated clicks on the summary chip expand and collapse the panel immediately, without waiting for the next poll response.
   - expanded file rows show suffix/basename-matched file-type icons for common files such as `README.md`, `test.py`, `main.go`, `app.tsx`, and `Dockerfile`, and those icon tiles remain legible in both light and dark themes.
   - unmapped file types fall back to the generic file icon instead of rendering a broken/missing asset.
+  - clicking a viewable row opens a single right-side drawer with a close button, and selecting another viewable file swaps the drawer content without requiring the chip to collapse first.
+  - tracked text rows show patch output, while untracked text rows show direct file contents.
+  - binary/non-text rows remain visibly non-clickable and do not open an unsupported preview surface.
   - non-git/unavailable-git environments return no visible diff surface.
   - clean repositories also omit the chip instead of showing a zero-state badge.
 - Verification command:
   - `go test ./internal/gitutil -run TestDiff -count=1`
-  - `go test ./internal/httpapi -run 'TestThreadGitDiffDoesNotRequireSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles' -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadGitDiffDoesNotRequireSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles|TestThreadGitDiffFileReturnsPatchForTrackedFile|TestThreadGitDiffFileReturnsContentsForUntrackedTextFile|TestThreadGitDiffFileMarksBinaryUntrackedFilesUnsupported|TestThreadGitDiffFileRejectsUnsafePath' -count=1`
   - `cd internal/webui/web && npm run build`
   - manual browser check against a repository-backed thread/session
 

@@ -37,6 +37,10 @@ Modules:
   - when the grouped left rail collapses or reopens, the Web UI must recompute thread-title overflow after layout settles so short titles do not inherit stale marquee state from zero-width collapsed measurements.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active thread also has a selected concrete session id, the composer can additionally poll `/v1/threads/{threadId}/git-diff` every 15 seconds and show a Kimi-style working-tree summary chip above the input; expanding it reveals parsed tracked `numstat` rows, untracked-file rows, and the repository root, while clean/non-git/unavailable-git cases render nothing.
+  - expanded git-diff rows may expose browser-clickable file previews through `GET /v1/threads/{threadId}/git-diff-file?path=...`:
+    - tracked text files render the raw `git --no-pager diff -- <path>` patch in a right-side drawer.
+    - untracked text files render current file contents directly in that same drawer.
+    - binary/non-text rows stay visibly disabled and do not open a preview drawer.
   - expanded git-diff rows can also show curated basename/extension-based type icons sourced from locally vendored `file-icons/vscode` font assets; unknown file types fall back to the generic file icon.
   - that chip's expanded/collapsed state is browser-local UI state and must not depend on polling cadence or incoming diff payload refreshes.
   - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.

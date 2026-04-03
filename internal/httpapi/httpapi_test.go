@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2713,6 +2714,7 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 			Deleted   int    `json:"deleted"`
 			Binary    bool   `json:"binary"`
 			Untracked bool   `json:"untracked"`
+			Viewable  bool   `json:"viewable"`
 		} `json:"files"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
@@ -2745,6 +2747,7 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 		Deleted   int
 		Binary    bool
 		Untracked bool
+		Viewable  bool
 	}{}
 	for _, file := range body.Files {
 		byPath[file.Path] = struct {
@@ -2752,22 +2755,177 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 			Deleted   int
 			Binary    bool
 			Untracked bool
+			Viewable  bool
 		}{
 			Added:     file.Added,
 			Deleted:   file.Deleted,
 			Binary:    file.Binary,
 			Untracked: file.Untracked,
+			Viewable:  file.Viewable,
 		}
 	}
 
-	if got := byPath["README.md"]; got.Added != 1 || got.Deleted != 0 || got.Binary || got.Untracked {
-		t.Fatalf("README.md diff = %#v, want Added=1 Deleted=0 Binary=false Untracked=false", got)
+	if got := byPath["README.md"]; got.Added != 1 || got.Deleted != 0 || got.Binary || got.Untracked || !got.Viewable {
+		t.Fatalf("README.md diff = %#v, want Added=1 Deleted=0 Binary=false Untracked=false Viewable=true", got)
 	}
-	if got := byPath["pkg/app.txt"]; got.Added != 0 || got.Deleted != 1 || got.Binary || got.Untracked {
-		t.Fatalf("pkg/app.txt diff = %#v, want Added=0 Deleted=1 Binary=false Untracked=false", got)
+	if got := byPath["pkg/app.txt"]; got.Added != 0 || got.Deleted != 1 || got.Binary || got.Untracked || !got.Viewable {
+		t.Fatalf("pkg/app.txt diff = %#v, want Added=0 Deleted=1 Binary=false Untracked=false Viewable=true", got)
 	}
-	if got := byPath["docs/todo.txt"]; got.Added != 0 || got.Deleted != 0 || got.Binary || !got.Untracked {
-		t.Fatalf("docs/todo.txt diff = %#v, want Added=0 Deleted=0 Binary=false Untracked=true", got)
+	if got := byPath["docs/todo.txt"]; got.Added != 0 || got.Deleted != 0 || got.Binary || !got.Untracked || !got.Viewable {
+		t.Fatalf("docs/todo.txt diff = %#v, want Added=0 Deleted=0 Binary=false Untracked=true Viewable=true", got)
+	}
+}
+
+func TestThreadGitDiffFileReturnsPatchForTrackedFile(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(README.md): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("README.md"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		ThreadID  string `json:"threadId"`
+		Available bool   `json:"available"`
+		Path      string `json:"path"`
+		Supported bool   `json:"supported"`
+		Kind      string `json:"kind"`
+		Content   string `json:"content"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := body.ThreadID, threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if !body.Available || !body.Supported {
+		t.Fatalf("available/supported = %v/%v, want true/true", body.Available, body.Supported)
+	}
+	if got, want := body.Kind, "diff"; got != want {
+		t.Fatalf("kind = %q, want %q", got, want)
+	}
+	if got, want := body.Path, "README.md"; got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if !strings.Contains(body.Content, "diff --git a/README.md b/README.md") {
+		t.Fatalf("content = %q, want git diff header", body.Content)
+	}
+}
+
+func TestThreadGitDiffFileReturnsContentsForUntrackedTextFile(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	untrackedPath := filepath.Join(repo, "docs", "todo.txt")
+	if err := os.MkdirAll(filepath.Dir(untrackedPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(untrackedPath): %v", err)
+	}
+	if err := os.WriteFile(untrackedPath, []byte("draft\nnext\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(untrackedPath): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("docs/todo.txt"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		Available bool   `json:"available"`
+		Supported bool   `json:"supported"`
+		Kind      string `json:"kind"`
+		Content   string `json:"content"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !body.Available || !body.Supported {
+		t.Fatalf("available/supported = %v/%v, want true/true", body.Available, body.Supported)
+	}
+	if got, want := body.Kind, "file"; got != want {
+		t.Fatalf("kind = %q, want %q", got, want)
+	}
+	if got, want := body.Content, "draft\nnext\n"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+}
+
+func TestThreadGitDiffFileMarksBinaryUntrackedFilesUnsupported(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	binaryPath := filepath.Join(repo, "assets", "logo.png")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(binaryPath): %v", err)
+	}
+	if err := os.WriteFile(binaryPath, []byte{0x89, 'P', 'N', 'G', 0x00}, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(binaryPath): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("assets/logo.png"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		Available bool   `json:"available"`
+		Supported bool   `json:"supported"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !body.Available {
+		t.Fatal("available = false, want true")
+	}
+	if body.Supported {
+		t.Fatal("supported = true, want false")
+	}
+	if got, want := body.Reason, "non_text"; got != want {
+		t.Fatalf("reason = %q, want %q", got, want)
+	}
+}
+
+func TestThreadGitDiffFileRejectsUnsafePath(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("../README.md"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
 	}
 }
 

@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-077: Preview git-diff file details in a right-side drawer, with text-only support for new files. (Accepted)
 - ADR-076: Make grouped thread session lists collapsible from the leading agent glyph. (Accepted)
 - ADR-075: Decorate thread session-list responses with cross-client active-session state. (Accepted)
 - ADR-074: Merge thread and session browsing into one grouped left rail. (Accepted)
@@ -68,6 +69,33 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-077: Preview Git-Diff File Details In A Right-Side Drawer, With Text-Only Support For New Files
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-071 already established the session-scoped git diff summary chip and expandable file list above the Web UI composer.
+  - product now requires the next interaction step after expanding that chip:
+    - clicking a changed file should open its concrete diff/details.
+    - switching between files should reuse one panel instead of stacking multiple overlays.
+    - newly created text files should still be previewable even though `git diff` has no tracked patch for an untracked path.
+  - the embedded SPA remains browser-only, so all git/file access still has to happen server-side against the validated thread `cwd`.
+- Decision:
+  - add `GET /v1/threads/{threadId}/git-diff-file?path=...` as a thread-scoped read-only detail endpoint alongside the existing summary endpoint.
+  - keep summary parsing/backend authority in `internal/gitutil` and extend per-file rows with `viewable`, so the frontend can disable unsupported rows before the user clicks them.
+  - for tracked text rows, return raw patch content from `git --no-pager diff -- <path>`.
+  - for untracked text rows, return direct file contents instead of synthesizing a fake patch.
+  - keep binary/non-text rows non-previewable and render them as disabled UI state instead of attempting inline binary viewers or downloads from the git-diff surface.
+  - render the detail payload in one browser-local right-side drawer whose open/selected-file state is scoped to the active thread session and never persisted to backend thread metadata.
+- Consequences:
+  - users can inspect one changed file without leaving the conversation or opening separate modal layers.
+  - new text files are previewable even before they are staged or committed.
+  - the feature remains local-first and safe because path resolution stays repo-relative on the backend and non-text files are fail-closed.
+- Alternatives considered:
+  - inline-expand raw diff text under each row in the chip panel (rejected: too tall/noisy above the composer and awkward for file switching).
+  - open a full-screen modal (rejected: heavier than necessary and visually disconnected from the existing git chip surface).
+  - attempt to preview arbitrary binary files (rejected: higher complexity, broader security/UI surface, and not required for the requested workflow).
 
 ## ADR-076: Make Grouped Thread Session Lists Collapsible From The Leading Agent Glyph
 

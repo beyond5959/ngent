@@ -157,6 +157,8 @@ func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, cl
 		s.handleThreadGit(w, r, clientID, threadID)
 	case "git-diff":
 		s.handleThreadGitDiff(w, r, threadID)
+	case "git-diff-file":
+		s.handleThreadGitDiffFile(w, r, threadID)
 	default:
 		writeError(w, http.StatusNotFound, codeNotFound, "endpoint not found", map[string]any{"path": r.URL.Path})
 	}

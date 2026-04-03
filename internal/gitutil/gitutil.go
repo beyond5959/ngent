@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -20,6 +22,8 @@ var (
 	ErrNotRepository = errors.New("cwd is not inside a git repository")
 	// ErrBranchNotFound indicates the requested branch does not exist locally.
 	ErrBranchNotFound = errors.New("git branch not found")
+	// ErrDiffFileNotFound indicates the requested path is not part of the visible diff.
+	ErrDiffFileNotFound = errors.New("git diff file not found")
 )
 
 // Branch describes one local branch.
@@ -51,6 +55,7 @@ type DiffFile struct {
 	Deleted   int
 	Binary    bool
 	Untracked bool
+	Viewable  bool
 }
 
 // DiffStatus captures the current visible diff state for one worktree.
@@ -58,6 +63,28 @@ type DiffStatus struct {
 	RepoRoot string
 	Summary  DiffSummary
 	Files    []DiffFile
+}
+
+const (
+	// DiffFileDetailKindDiff indicates the content came from `git diff -- <path>`.
+	DiffFileDetailKindDiff = "diff"
+	// DiffFileDetailKindFile indicates the content came from directly reading the file.
+	DiffFileDetailKindFile = "file"
+
+	// DiffFileDetailReasonBinary indicates git marked the file as binary.
+	DiffFileDetailReasonBinary = "binary"
+	// DiffFileDetailReasonNonText indicates the file is not a text file we can preview.
+	DiffFileDetailReasonNonText = "non_text"
+)
+
+// DiffFileDetail captures the preview payload for one changed file.
+type DiffFileDetail struct {
+	RepoRoot  string
+	Path      string
+	Kind      string
+	Content   string
+	Supported bool
+	Reason    string
 }
 
 var (
@@ -174,7 +201,11 @@ func Diff(ctx context.Context, cwd string) (DiffStatus, error) {
 	if err != nil {
 		return DiffStatus{}, fmt.Errorf("parse diff numstat: %w", err)
 	}
+	for i := range files {
+		files[i].Viewable = !files[i].Binary
+	}
 	untrackedFiles := parseUntrackedFiles(untrackedOut)
+	markUntrackedDiffFiles(repoRoot, untrackedFiles)
 	if len(untrackedFiles) > 0 {
 		summary.FilesChanged += len(untrackedFiles)
 		files = append(files, untrackedFiles...)
@@ -187,6 +218,80 @@ func Diff(ctx context.Context, cwd string) (DiffStatus, error) {
 		RepoRoot: repoRoot,
 		Summary:  summary,
 		Files:    files,
+	}, nil
+}
+
+// FileDetail loads previewable diff content for one visible diff file.
+func FileDetail(ctx context.Context, cwd, rawPath string) (DiffFileDetail, error) {
+	normalizedPath, err := normalizeRepoRelativePath(rawPath)
+	if err != nil {
+		return DiffFileDetail{}, err
+	}
+
+	status, err := Diff(ctx, cwd)
+	if err != nil {
+		return DiffFileDetail{}, err
+	}
+
+	file, ok := diffFileByPath(status.Files, normalizedPath)
+	if !ok {
+		return DiffFileDetail{}, ErrDiffFileNotFound
+	}
+	if !file.Viewable {
+		reason := DiffFileDetailReasonBinary
+		if file.Untracked {
+			reason = DiffFileDetailReasonNonText
+		}
+		return DiffFileDetail{
+			RepoRoot:  status.RepoRoot,
+			Path:      normalizedPath,
+			Supported: false,
+			Reason:    reason,
+		}, nil
+	}
+
+	if file.Untracked {
+		fullPath := filepath.Join(status.RepoRoot, filepath.FromSlash(normalizedPath))
+		content, ok, readErr := readTextFile(fullPath)
+		if readErr != nil {
+			return DiffFileDetail{}, readErr
+		}
+		if !ok {
+			return DiffFileDetail{
+				RepoRoot:  status.RepoRoot,
+				Path:      normalizedPath,
+				Supported: false,
+				Reason:    DiffFileDetailReasonNonText,
+			}, nil
+		}
+		return DiffFileDetail{
+			RepoRoot:  status.RepoRoot,
+			Path:      normalizedPath,
+			Kind:      DiffFileDetailKindFile,
+			Content:   content,
+			Supported: true,
+		}, nil
+	}
+
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		return DiffFileDetail{}, ErrGitUnavailable
+	}
+
+	diffOut, stderr, err := runGit(ctx, gitPath, cwd, "--no-pager", "diff", "--", normalizedPath)
+	if err != nil {
+		if looksLikeNotRepository(stderr) {
+			return DiffFileDetail{}, ErrNotRepository
+		}
+		return DiffFileDetail{}, fmt.Errorf("load diff for %q: %w", normalizedPath, err)
+	}
+
+	return DiffFileDetail{
+		RepoRoot:  status.RepoRoot,
+		Path:      normalizedPath,
+		Kind:      DiffFileDetailKindDiff,
+		Content:   diffOut,
+		Supported: true,
 	}, nil
 }
 
@@ -406,6 +511,69 @@ func parseUntrackedFiles(raw string) []DiffFile {
 		})
 	}
 	return files
+}
+
+func diffFileByPath(files []DiffFile, normalizedPath string) (DiffFile, bool) {
+	for _, file := range files {
+		if filepath.ToSlash(strings.TrimSpace(file.Path)) == normalizedPath {
+			return file, true
+		}
+	}
+	return DiffFile{}, false
+}
+
+func markUntrackedDiffFiles(repoRoot string, files []DiffFile) {
+	for i := range files {
+		fullPath := filepath.Join(repoRoot, filepath.FromSlash(files[i].Path))
+		ok, err := isTextFile(fullPath)
+		files[i].Viewable = err == nil && ok
+		files[i].Binary = !files[i].Viewable
+	}
+}
+
+func normalizeRepoRelativePath(rawPath string) (string, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return "", fmt.Errorf("path is required")
+	}
+
+	cleaned := filepath.Clean(filepath.FromSlash(trimmed))
+	if cleaned == "." || cleaned == string(filepath.Separator) || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("path must be a repository-relative file path")
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path must stay within the repository root")
+	}
+	return filepath.ToSlash(cleaned), nil
+}
+
+func readTextFile(path string) (content string, ok bool, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, err
+	}
+	if !isLikelyText(data) {
+		return "", false, nil
+	}
+	return string(data), true, nil
+}
+
+func isTextFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return isLikelyText(data), nil
+}
+
+func isLikelyText(data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return false
+	}
+	return utf8.Valid(data)
 }
 
 func runGit(ctx context.Context, gitPath, cwd string, args ...string) (stdout string, stderr string, err error) {

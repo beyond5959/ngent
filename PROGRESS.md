@@ -13,6 +13,18 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-04-03)
 
+- `Post-M8` Web UI git-diff per-file preview drawer completed:
+  - added `GET /v1/threads/{threadId}/git-diff-file?path=...`, backed by `internal/gitutil.FileDetail`, so the server can return per-file preview payloads for the currently visible working-tree diff.
+  - tracked text changes now load raw patch content from `git --no-pager diff -- <path>`, while untracked text files return their current file contents directly; binary/non-text files are marked non-viewable instead of opening a broken preview.
+  - `GET /v1/threads/{threadId}/git-diff` file rows now also expose `viewable`, allowing the embedded SPA to disable unsupported rows up front.
+  - the embedded Web UI git-diff chip still expands to the changed-file list, but clicking a viewable row now opens a right-side slide-out drawer over the chat pane, with close affordance, per-line diff/content rendering, and same-session file switching without leaving the current conversation.
+  - follow-up polish: untracked binary rows now still show the existing `New` badge while remaining disabled, and the drawer keeps its selection/browser-local open state scoped to the active thread session instead of leaking into backend state.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-04-03)
+
 - `Post-M8` grouped thread-session collapse affordance completed:
   - the embedded Web UI grouped left rail now lets each thread collapse or expand its own inline session list without affecting other threads.
   - the leading agent glyph now doubles as the collapse toggle:

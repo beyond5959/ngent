@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/beyond5959/ngent/internal/gitutil"
@@ -46,6 +48,18 @@ type threadGitDiffFileRow struct {
 	Deleted   int    `json:"deleted"`
 	Binary    bool   `json:"binary,omitempty"`
 	Untracked bool   `json:"untracked,omitempty"`
+	Viewable  bool   `json:"viewable"`
+}
+
+type threadGitDiffFileResponse struct {
+	ThreadID  string `json:"threadId"`
+	Available bool   `json:"available"`
+	RepoRoot  string `json:"repoRoot,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Supported bool   `json:"supported"`
+	Kind      string `json:"kind,omitempty"`
+	Content   string `json:"content,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func (s *Server) handleThreadGit(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
@@ -90,6 +104,52 @@ func (s *Server) handleThreadGitDiff(w http.ResponseWriter, r *http.Request, thr
 	}
 
 	writeJSON(w, http.StatusOK, threadGitDiffResponseForStatus(thread.ThreadID, status))
+}
+
+func (s *Server) handleThreadGitDiffFile(w http.ResponseWriter, r *http.Request, threadID string) {
+	thread, ok := s.loadAccessibleThreadOrWriteNotFound(w, r.Context(), threadID)
+	if !ok {
+		return
+	}
+
+	if err := requireMethod(r, http.MethodGet); err != nil {
+		writeMethodNotAllowed(w, r)
+		return
+	}
+
+	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	path, err := sanitizeThreadGitDiffFilePath(rawPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeInvalidArgument, "path must be a repository-relative file path", map[string]any{
+			"field": "path",
+		})
+		return
+	}
+
+	detail, err := gitutil.FileDetail(r.Context(), thread.CWD, path)
+	if err != nil {
+		switch {
+		case errors.Is(err, gitutil.ErrGitUnavailable), errors.Is(err, gitutil.ErrNotRepository):
+			writeJSON(w, http.StatusOK, unavailableThreadGitDiffFileResponse(thread.ThreadID))
+			return
+		case errors.Is(err, gitutil.ErrDiffFileNotFound), errors.Is(err, os.ErrNotExist):
+			writeError(w, http.StatusNotFound, codeNotFound, "git diff file not found", map[string]any{
+				"threadId": thread.ThreadID,
+				"path":     path,
+			})
+			return
+		default:
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to inspect git diff file", map[string]any{
+				"threadId": thread.ThreadID,
+				"cwd":      thread.CWD,
+				"path":     path,
+				"reason":   err.Error(),
+			})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, threadGitDiffFileResponseForDetail(thread.ThreadID, detail))
 }
 
 func (s *Server) handleGetThreadGit(w http.ResponseWriter, r *http.Request, thread storage.Thread) {
@@ -185,6 +245,13 @@ func unavailableThreadGitDiffResponse(threadID string) threadGitDiffResponse {
 	}
 }
 
+func unavailableThreadGitDiffFileResponse(threadID string) threadGitDiffFileResponse {
+	return threadGitDiffFileResponse{
+		ThreadID:  threadID,
+		Available: false,
+	}
+}
+
 func threadGitResponseForStatus(threadID string, status gitutil.Status) threadGitResponse {
 	branches := make([]threadGitBranch, 0, len(status.Branches))
 	for _, branch := range status.Branches {
@@ -222,6 +289,7 @@ func threadGitDiffResponseForStatus(threadID string, status gitutil.DiffStatus) 
 			Deleted:   file.Deleted,
 			Binary:    file.Binary,
 			Untracked: file.Untracked,
+			Viewable:  file.Viewable,
 		})
 	}
 
@@ -236,4 +304,33 @@ func threadGitDiffResponseForStatus(threadID string, status gitutil.DiffStatus) 
 		},
 		Files: files,
 	}
+}
+
+func threadGitDiffFileResponseForDetail(threadID string, detail gitutil.DiffFileDetail) threadGitDiffFileResponse {
+	return threadGitDiffFileResponse{
+		ThreadID:  threadID,
+		Available: true,
+		RepoRoot:  detail.RepoRoot,
+		Path:      detail.Path,
+		Supported: detail.Supported,
+		Kind:      detail.Kind,
+		Content:   detail.Content,
+		Reason:    detail.Reason,
+	}
+}
+
+func sanitizeThreadGitDiffFilePath(rawPath string) (string, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return "", errors.New("path is required")
+	}
+
+	cleaned := filepath.Clean(filepath.FromSlash(trimmed))
+	if cleaned == "." || cleaned == string(filepath.Separator) || filepath.IsAbs(cleaned) {
+		return "", errors.New("path must be relative")
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", errors.New("path escapes repository root")
+	}
+	return filepath.ToSlash(cleaned), nil
 }

@@ -4167,7 +4167,6 @@ function mergeMessageWithCachedMetadata(message: Message, cached: Message): Mess
     ...message,
     attachments: cloneMessageAttachments(message.attachments),
     segments: cloneMessageSegments(message.segments),
-    planEntries: clonePlanEntries(message.planEntries),
     toolCalls: cloneToolCalls(message.toolCalls),
   }
 
@@ -4176,9 +4175,6 @@ function mergeMessageWithCachedMetadata(message: Message, cached: Message): Mess
   }
   if (messageSegmentRichness(cached.segments) > messageSegmentRichness(next.segments)) {
     next.segments = cloneMessageSegments(cached.segments)
-  }
-  if (!next.planEntries?.length && cached.planEntries?.length) {
-    next.planEntries = clonePlanEntries(cached.planEntries)
   }
   if (!(next.toolCalls?.length) && cached.toolCalls?.length) {
     next.toolCalls = cloneToolCalls(cached.toolCalls)

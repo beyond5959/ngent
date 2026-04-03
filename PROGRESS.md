@@ -19,6 +19,7 @@ This file is the source of milestone progress, validation commands, and next act
   - the floating card is hydrated from the same persisted `plan_update` turn events already used for running-turn recovery, so a refreshed browser or another browser entering the same active session sees the current live plan and continues receiving updates through the resumed per-turn SSE stream.
   - when the turn completes, errors, or disconnect-finalizes, the live plan card disappears together with the turn's streaming-only runtime state instead of remaining in transcript history.
   - the message list now reserves dynamic bottom inset space while the live plan card is visible, preventing the floating card from covering the latest transcript content or the scroll-to-bottom button.
+  - follow-up fix: history cache hydration no longer reattaches stale `planEntries` from already-rendered in-memory messages, which previously could resurrect the old top-of-message plan block after session switches or history reloads.
 
 ## Previous Update (2026-04-02)
 

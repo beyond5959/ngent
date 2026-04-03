@@ -5,6 +5,7 @@
 /tmp/
 vendor/
 .DS_Store
+.idea
 internal/webui/web/node_modules/
 internal/webui/web/dist/
 internal/webui/web/tsconfig.tsbuildinfo

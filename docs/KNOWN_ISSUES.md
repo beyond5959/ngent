@@ -15,6 +15,19 @@
 
 ## Open Issues
 
+- ID: KI-049
+- Title: Live plan overlay is only pinned for the currently open session
+- Status: Open
+- Severity: Low
+- Affects: operators watching multiple active sessions/threads at once in the embedded Web UI
+- Symptom:
+  - the new live plan card stays pinned at the bottom only for the session currently open in the chat pane.
+  - if another session/thread is also streaming in the background, its live plan is not shown globally until the user switches into that conversation.
+- Workaround:
+  - switch into the running session whose plan you want to inspect; the card rehydrates from persisted `plan_update` events and resumes live updates.
+- Follow-up plan:
+  - evaluate whether the thread list or session rail eventually needs a compact cross-thread live-plan indicator for background sessions.
+
 - ID: KI-048
 - Title: Git-diff file icons currently cover a curated subset of common file types
 - Status: Open

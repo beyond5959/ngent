@@ -29,6 +29,7 @@ Modules:
 - `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; Web UI visual redesigns must remain presentation-only and must not change API/runtime behavior.
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
   - on history load, the Web UI can hydrate a still-running turn from persisted turn events, restore its live bubble/pending permissions, and then reattach to the per-turn SSE stream so browser refreshes do not cancel or visually lose the active response.
+  - when the active running turn has `plan_update` entries, the Web UI renders the latest plan snapshot as an ephemeral bottom-floating card outside the transcript list; that card is hydrated from persisted running-turn events for refresh/secondary-browser recovery and disappears again once the turn finishes.
   - when a history load restores a running turn for a scope that does not yet have a mounted live bubble, the Web UI must finish rendering persisted messages before mounting that bubble, even for long/heavy transcripts that would normally use async list rendering; this keeps spectator/reconnect views anchored on the active reply instead of below it.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active thread also has a selected concrete session id, the composer can additionally poll `/v1/threads/{threadId}/git-diff` every 15 seconds and show a Kimi-style working-tree summary chip above the input; expanding it reveals parsed tracked `numstat` rows, untracked-file rows, and the repository root, while clean/non-git/unavailable-git cases render nothing.
@@ -87,6 +88,7 @@ Turn-side auxiliary callbacks:
 - reasoning is streamed/persisted as `reasoning_delta` events instead of being merged into `responseText`.
 - the Web UI renders reasoning in a lightweight collapsible reasoning toggle: labeled `Thinking` during live streaming, relabeled `Thought` once finalized history is reconstructed, collapsed by default after completion, with indented left-border content when opened and sanitized markdown rendering for finalized reasoning text.
 - plan replacements continue to flow as `plan_update`.
+  - the Web UI treats those plan replacements as live session UI state during a running turn and intentionally does not render them in finalized transcript history.
 
 ## 6. Persistence Model
 

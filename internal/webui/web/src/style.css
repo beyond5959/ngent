@@ -1422,6 +1422,7 @@ body {
 
 /* ===== Message list ===== */
 .message-list-wrap {
+  --message-overlay-inset: 0px;
   flex: 1;
   position: relative;
   min-height: 0;        /* allow flex child to shrink below content height */
@@ -1434,7 +1435,7 @@ body {
 .message-list {
   height: 100%;
   overflow-y: auto;
-  padding: 18px clamp(12px, 2vw, 22px) 20px;
+  padding: 18px clamp(12px, 2vw, 22px) calc(20px + var(--message-overlay-inset, 0px));
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1443,7 +1444,7 @@ body {
 /* Scroll-to-bottom button */
 .scroll-bottom-btn {
   position: absolute;
-  bottom: 14px;
+  bottom: calc(14px + var(--message-overlay-inset, 0px));
   right: 18px;
   width: 42px;
   height: 42px;
@@ -5291,8 +5292,24 @@ button:active:not(:disabled),
 }
 
 .message-list {
-  padding: 18px 24px 28px;
+  padding: 18px 24px calc(28px + var(--message-overlay-inset, 0px));
   gap: 14px;
+}
+
+.message-overlay-slot {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 18px;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-end;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.message-overlay-slot:empty {
+  display: none;
 }
 
 .scroll-bottom-btn {
@@ -6145,6 +6162,41 @@ kbd {
   background: var(--bg-panel-strong);
 }
 
+.message-plan--floating {
+  width: min(720px, 100%);
+  max-height: min(38vh, 280px);
+  overflow: auto;
+  pointer-events: auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel-strong) 96%, white 4%), color-mix(in srgb, var(--bg-panel-strong) 98%, var(--bg-inset))),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 12%, transparent), transparent 48%);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(12px);
+}
+
+.message-plan--floating .message-plan__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -12px -14px 10px;
+  padding: 12px 14px 10px;
+  background: color-mix(in srgb, var(--bg-panel-strong) 94%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.message-plan--floating .message-plan__header::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 .message-plan__header {
   margin-bottom: 8px;
   font-size: 11px;
@@ -6864,7 +6916,13 @@ kbd {
   }
 
   .message-list {
-    padding: 16px 14px 20px;
+    padding: 16px 14px calc(20px + var(--message-overlay-inset, 0px));
+  }
+
+  .message-overlay-slot {
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
   }
 
   .message--agent .message-group {

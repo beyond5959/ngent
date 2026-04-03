@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-073: Render live ACP plan updates as an ephemeral bottom overlay instead of transcript history. (Accepted)
 - ADR-072: Render git-diff expanded file rows with locally vendored suffix-based file icons. (Accepted)
 - ADR-071: Surface session-selected git diff summaries above the Web UI composer, including untracked files. (Accepted)
 - ADR-070: Expand embedded Web UI localization and repository READMEs to Spanish and French. (Accepted)
@@ -64,6 +65,31 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-073: Render Live ACP Plan Updates As An Ephemeral Bottom Overlay Instead Of Transcript History
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-033 already promoted ACP `plan_update` to a first-class SSE/history signal, and the Web UI rendered the latest plan inside the assistant message itself.
+  - in long-running turns, that placement forces users to scroll back toward the top of the reply to see whether the agent has advanced to the next step.
+  - product now requires the plan to behave more like a live session-status surface:
+    - always visible at the bottom of the active chat while the turn is running.
+    - gone once that turn finishes.
+    - still visible to refreshed or secondary browsers that attach to the same active session.
+- Decision:
+  - keep `plan_update` persistence and replay exactly as-is on the backend; do not add a new session-plan API or separate runtime cache.
+  - in the embedded Web UI, treat the latest running-turn plan as streaming-only session UI state sourced from `streamPlanByScope`, hydrated from persisted running-turn events during history replay and then kept fresh via the resumed per-turn SSE stream.
+  - render that live plan in a dedicated bottom-floating card outside the transcript list, and reserve dynamic bottom inset space in the message list so the overlay does not cover the latest messages or the scroll-to-bottom affordance.
+  - stop rendering plan sections inside finalized assistant transcript bubbles, so the card disappears after completion/error/cancel just like other streaming-only session affordances.
+- Consequences:
+  - users can watch plan progress continuously during long replies without leaving the bottom of the conversation.
+  - multi-browser/session-refresh recovery keeps working without any protocol change because the live card reuses persisted `plan_update` history plus `GET /v1/turns/{turnId}/events?after=<seq>`.
+  - completed transcript history becomes cleaner, but the final plan snapshot is no longer visible after the turn ends unless a future product requirement explicitly brings back historical plan browsing.
+- Alternatives considered:
+  - keep plan inside the assistant message and rely on auto-scroll/top anchors (rejected: still hides progress in long replies).
+  - persist/render the last plan snapshot inside finalized history as well as the live overlay (rejected: conflicts with the requested streaming-only lifecycle).
+  - add a separate backend-maintained session-plan endpoint or SSE channel (rejected: duplicates existing turn-event persistence and replay mechanisms).
 
 ## ADR-072: Render Git-Diff Expanded File Rows With Locally Vendored Suffix-Based File Icons
 

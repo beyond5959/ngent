@@ -1930,14 +1930,12 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   div.id = bubbleID
   div.className = 'message message--agent'
   div.dataset.msgId = streamState.messageId
-  const livePlanEntries = streamPlanByScope.get(scopeKey)
   const liveSegments = streamSegmentsByScope.get(scopeKey)
   div.innerHTML = `
     <div class="message-group">
       ${renderStreamingBubbleHTML(
         streamState.messageId,
         liveSegments,
-        livePlanEntries,
         activeContentSegmentID(scopeKey),
         activeReasoningSegmentID(scopeKey),
         activeToolCallSegmentID(scopeKey),
@@ -1952,7 +1950,6 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   activeStreamMsgId = streamState.messageId
   activeStreamScopeKey = scopeKey
 
-  updateStreamingBubblePlan(streamState.messageId, livePlanEntries)
   updateStreamingBubbleSegments(
     streamState.messageId,
     liveSegments,
@@ -2357,12 +2354,16 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
       setActiveReasoningSegmentID(capturedScopeKey, null)
       setActiveToolCallSegmentID(capturedScopeKey, null)
       const nextPlanEntries = clonePlanEntries(entries) ?? []
-      streamPlanByScope.set(capturedScopeKey, nextPlanEntries)
+      if (nextPlanEntries.length) {
+        streamPlanByScope.set(capturedScopeKey, nextPlanEntries)
+      } else {
+        streamPlanByScope.delete(capturedScopeKey)
+      }
+      renderActivePlanCard(capturedScopeKey)
 
       if (activeChatScopeKey() !== capturedScopeKey) return
       const list = document.getElementById('message-list')
       const atBottom = !list || isNearBottom(list)
-      updateStreamingBubblePlan(messageId, nextPlanEntries)
       updateStreamingBubbleSegments(
         messageId,
         streamSegmentsByScope.get(capturedScopeKey),
@@ -2466,7 +2467,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
 
     onCompleted({ stopReason, seq }) {
       markEventSeen(seq)
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
       const segmentedContent = messageSegmentsContent(finalSegments)
       const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
@@ -2484,7 +2484,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         status: stopReason === 'cancelled' ? 'cancelled' : 'done',
         stopReason,
         segments: finalSegments,
-        planEntries: finalPlanEntries,
         toolCalls: finalToolCalls,
         reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       }, true)
@@ -2501,7 +2500,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
       }
 
       markEventSeen(seq)
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
       const segmentedContent = messageSegmentsContent(finalSegments)
       const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
@@ -2520,7 +2518,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         errorCode: code,
         errorMessage,
         segments: finalSegments,
-        planEntries: finalPlanEntries,
         toolCalls: finalToolCalls,
         reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       })
@@ -2534,7 +2531,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         return
       }
 
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
       const segmentedContent = messageSegmentsContent(finalSegments)
       const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
@@ -2552,7 +2548,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         status: 'error',
         errorMessage: t('connectionLost'),
         segments: finalSegments,
-        planEntries: finalPlanEntries,
         toolCalls: finalToolCalls,
         reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       })
@@ -3329,6 +3324,7 @@ function setSessionPanelExpanded(expanded: boolean): void {
 
   sessionPanelExpanded = next
   syncSidebarChrome()
+  requestAnimationFrame(() => syncActivePlanCardLayout())
   updateSessionPanel()
 }
 
@@ -4046,7 +4042,6 @@ async function turnsToMessagesAsync(turns: Turn[]): Promise<Message[]> {
         stopReason:   t.stopReason   || undefined,
         errorMessage: t.errorMessage || undefined,
         segments:     analysis.segments,
-        planEntries:  analysis.planEntries,
         toolCalls:    analysis.toolCalls,
         reasoning:    hasReasoningText(analysis.reasoning) ? analysis.reasoning : undefined,
       })
@@ -4313,6 +4308,7 @@ async function loadHistory(threadId: string): Promise<void> {
     if (runningTurn && renderState.activeThreadId === threadId && renderThread && threadChatScopeKey(renderThread) === requestedScopeKey) {
       appendOrRestoreStreamingBubble(renderThread)
       renderPendingPermissionCards(requestedScopeKey)
+      renderActivePlanCard(requestedScopeKey)
       if (!streamsByScope.has(requestedScopeKey)) {
         const streamState = getScopeStreamState(requestedScopeKey)
         if (streamState?.turnId) {
@@ -4380,10 +4376,10 @@ function renderPlanInnerHTML(entries: PlanEntry[]): string {
     </ol>`
 }
 
-function renderPlanSectionHTML(entries: PlanEntry[] | undefined, extraClass = ''): string {
+function renderFloatingPlanHTML(entries: PlanEntry[] | undefined): string {
   const normalized = clonePlanEntries(entries)
   if (!normalized?.length) return ''
-  return `<div class="message-plan${extraClass}">${renderPlanInnerHTML(normalized)}</div>`
+  return `<div class="message-plan message-plan--floating" aria-live="polite">${renderPlanInnerHTML(normalized)}</div>`
 }
 
 function formatToolCallLabel(value: string | undefined): string {
@@ -5152,8 +5148,6 @@ function renderMessage(msg: Message): string {
   }
 
   const isCancelled = msg.status === 'cancelled'
-
-  const planHTML = renderPlanSectionHTML(msg.planEntries)
   const segments = resolveMessageSegments(msg)
   const hasContent = messageHasContentSegment(segments)
   const segmentsHTML = renderMessageSegmentsHTML(msg.id, segments, msg.status, false, null, null, null, msg.timestamp)
@@ -5171,7 +5165,6 @@ function renderMessage(msg: Message): string {
   return `
     <div class="message message--agent" data-msg-id="${escHtml(msg.id)}">
       <div class="message-group">
-        ${planHTML}
         ${segmentsHTML}
         ${statusHTML}
         ${footerMeta}
@@ -5289,15 +5282,11 @@ function renderMessageListSync(listEl: HTMLElement, msgs: Message[]): void {
 function renderStreamingBubbleHTML(
   messageID: string,
   segments: MessageSegment[] | undefined,
-  planEntries?: PlanEntry[],
   activeStreamingContentSegmentID: string | null = null,
   activeStreamingReasoningSegmentID: string | null = null,
   activeStreamingToolCallSegmentID: string | null = null,
 ): string {
-  const normalizedPlanEntries = clonePlanEntries(planEntries)
-  const planHiddenAttr = normalizedPlanEntries?.length ? '' : ' hidden'
   return `
-    <div class="message-plan message-plan--streaming" id="plan-${escHtml(messageID)}"${planHiddenAttr}>${normalizedPlanEntries ? renderPlanInnerHTML(normalizedPlanEntries) : ''}</div>
     <div id="segments-${escHtml(messageID)}">${renderMessageSegmentsHTML(
       messageID,
       segments,
@@ -5332,6 +5321,31 @@ function updateStreamingBubbleSegments(
   bindMarkdownControls(segmentsEl)
   bindReasoningPanels(segmentsEl)
   bindToolCallPanels(segmentsEl)
+}
+
+function syncActivePlanCardLayout(): void {
+  const wrapEl = document.querySelector<HTMLElement>('.message-list-wrap')
+  const slotEl = document.getElementById('message-overlay-slot')
+  if (!wrapEl || !slotEl) return
+
+  const cardEl = slotEl.firstElementChild as HTMLElement | null
+  const inset = cardEl ? Math.ceil(cardEl.getBoundingClientRect().height) + 24 : 0
+  wrapEl.style.setProperty('--message-overlay-inset', `${inset}px`)
+}
+
+function renderActivePlanCard(scopeKey: string): void {
+  const activeScopeKey = activeChatScopeKey()
+  if (!scopeKey || scopeKey !== activeScopeKey) return
+
+  const slotEl = document.getElementById('message-overlay-slot')
+  if (!slotEl) return
+
+  // Running turns hydrate streamPlanByScope from persisted plan_update history,
+  // so refreshed or secondary viewers render the same live bottom plan card.
+  const streamState = getScopeStreamState(scopeKey)
+  const planEntries = streamState ? clonePlanEntries(streamPlanByScope.get(scopeKey)) : undefined
+  slotEl.innerHTML = renderFloatingPlanHTML(planEntries)
+  syncActivePlanCardLayout()
 }
 
 function setReasoningPanelExpanded(panelEl: HTMLElement, expanded: boolean): void {
@@ -5403,18 +5417,6 @@ function bindToolCallPanels(listEl: HTMLElement): void {
       setToolCallPanelExpanded(panelEl, nextExpanded)
     })
   })
-}
-
-function updateStreamingBubblePlan(messageID: string, entries: PlanEntry[] | undefined): void {
-  const planEl = document.getElementById(`plan-${messageID}`)
-  if (!planEl) return
-  const normalized = clonePlanEntries(entries)
-  planEl.hidden = !normalized?.length
-  if (!normalized?.length) {
-    planEl.innerHTML = ''
-    return
-  }
-  planEl.innerHTML = renderPlanInnerHTML(normalized)
 }
 
 function updateMessageList(): void {
@@ -6466,6 +6468,7 @@ function renderChatThread(thread: Thread): string {
 
     <div class="message-list-wrap">
       <div class="message-list" id="message-list"></div>
+      <div class="message-overlay-slot" id="message-overlay-slot"></div>
       <button class="scroll-bottom-btn" id="scroll-bottom-btn"
               aria-label="${escHtml(t('scrollToBottom'))}" style="display:none">↓</button>
     </div>
@@ -6614,6 +6617,7 @@ function updateChatArea(): void {
 
   appendOrRestoreStreamingBubble(thread)
   renderPendingPermissionCards(scopeKey)
+  renderActivePlanCard(scopeKey)
 
   updateInputState()
   bindSessionInfoPopover()
@@ -7179,7 +7183,6 @@ async function handleSend(): Promise<void> {
         ${renderStreamingBubbleHTML(
           agentMsgID,
           streamSegmentsByScope.get(capturedScopeKey),
-          undefined,
           activeContentSegmentID(capturedScopeKey),
           activeReasoningSegmentID(capturedScopeKey),
           activeToolCallSegmentID(capturedScopeKey),
@@ -7371,6 +7374,7 @@ async function init(): Promise<void> {
   window.addEventListener('resize', debounce(() => syncThreadTitleOverflow(), 120))
   window.addEventListener('resize', debounce(() => syncSessionPanelTitleOverflow(), 120))
   window.addEventListener('resize', debounce(() => syncSessionPanelSubtitleOverflow(), 120))
+  window.addEventListener('resize', debounce(() => syncActivePlanCardLayout(), 120))
   document.addEventListener('click', e => {
     const target = e.target as HTMLElement | null
     if (!target?.closest('.input-area')) {
@@ -7435,6 +7439,7 @@ async function init(): Promise<void> {
         appendOrRestoreStreamingBubble(activeThread)
       }
       renderPendingPermissionCards(chatScopeKey)
+      renderActivePlanCard(chatScopeKey)
       updateInputState()
     }
   })

@@ -5092,8 +5092,12 @@ button:active:not(:disabled),
 }
 
 .session-item:not(.session-item--active):not(.session-item--hover-preview):hover:not(:disabled) {
-  background: var(--bg-inset);
-  border-color: transparent;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, var(--bg-panel-strong)) 0%, color-mix(in srgb, var(--accent) 3%, var(--bg-inset)) 100%);
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--border));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 7%, transparent),
+    0 12px 20px -20px color-mix(in srgb, var(--accent) 48%, transparent);
   transform: none;
 }
 
@@ -7266,15 +7270,20 @@ kbd {
 }
 
 .thread-group .session-item:not(.session-item--active):not(.session-item--hover-preview):hover:not(:disabled) {
-  background: color-mix(in srgb, var(--bg-inset) 92%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 9%, var(--bg-panel-strong)) 0%, color-mix(in srgb, var(--accent) 4%, var(--bg-panel-strong)) 100%);
   border-color: transparent;
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--accent) 24%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
   transform: none;
 }
 
 .thread-group .session-item--hover-preview {
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, var(--bg-panel-strong)) 0%, color-mix(in srgb, var(--accent) 6%, var(--bg-panel-strong)) 100%);
   border-color: transparent;
-  box-shadow: none;
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--accent) 30%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .thread-group .session-item--hover-preview {
@@ -7304,11 +7313,11 @@ kbd {
 }
 
 .thread-group .session-item--hover-preview .session-item-title {
-  color: var(--text-1);
+  color: color-mix(in srgb, var(--accent) 36%, var(--text-1));
 }
 
 .thread-group .session-item--hover-preview .session-item-meta {
-  color: var(--text-2);
+  color: color-mix(in srgb, var(--accent) 18%, var(--text-2));
 }
 
 .thread-group .session-item--active .session-item-title {

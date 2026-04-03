@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-075: Decorate thread session-list responses with cross-client active-session state. (Accepted)
 - ADR-074: Merge thread and session browsing into one grouped left rail. (Accepted)
 - ADR-073: Render live ACP plan updates as an ephemeral bottom overlay instead of transcript history. (Accepted)
 - ADR-072: Render git-diff expanded file rows with locally vendored suffix-based file icons. (Accepted)
@@ -66,6 +67,28 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-075: Decorate Thread Session-List Responses With Cross-Client Active-Session State
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-069 already exposed thread-level `hasActiveSession`, which lets a fresh browser see that some session on a thread is live.
+  - the grouped left rail introduced by ADR-074 renders concrete session rows and already has a session-row spinner, but before this change that spinner only reflected browser-local `streamStates`.
+  - product now requires another browser opening the same ngent instance to immediately tell which specific session row is streaming, without first selecting that session and reconstructing its running turn state in the chat pane.
+- Decision:
+  - keep runtime ownership of active-turn truth in `internal/runtime.TurnController`; do not add a second persisted/session-active cache.
+  - extend `GET /v1/threads/{threadId}/sessions` so each returned session row may include `isActive=true` when that concrete `(thread, session)` scope currently has a live turn.
+  - continue prepending the thread's currently bound `sessionId` ahead of provider-listed sessions before computing `isActive`, so stale upstream `session/list` catalogs do not hide the active session row.
+  - in the embedded Web UI, merge server-reported `session.isActive` with the existing browser-local `streamStates` set so the same row spinner works both for locally started turns and for active sessions discovered from another browser on first load/refresh.
+- Consequences:
+  - a newly opened or manually refreshed secondary browser can spot the exact active session row directly in the grouped rail.
+  - session-row loading UI now has one shared rendering path regardless of whether the active state came from local streaming state or the server's session-list response.
+  - already-open background browsers still do not receive push-based rail updates for another browser's newly started session until they reload or re-fetch that thread's session list.
+- Alternatives considered:
+  - add a dedicated push channel for session-list activity state (rejected: heavier protocol/UI coordination than needed for the requested "open another browser and see it" behavior).
+  - infer the active row purely from thread-level `hasActiveSession` (rejected: does not identify which concrete session is active).
+  - persist session-active flags in SQLite (rejected: runtime already owns the authoritative live-turn state and persistence would introduce stale-state cleanup risk).
 
 ## ADR-074: Merge Thread And Session Browsing Into One Grouped Left Rail
 

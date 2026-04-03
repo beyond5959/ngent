@@ -1090,6 +1090,124 @@ func TestThreadSessionsListEndpointIncludesCurrentBoundSession(t *testing.T) {
 	}
 }
 
+func TestThreadSessionsListEndpointMarksActiveBoundSessionForOtherClients(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	firstDelivered := make(chan struct{}, 1)
+	streamer := &blockingSessionListStreamer{
+		result: agents.SessionListResult{
+			Sessions: []agents.SessionInfo{{
+				SessionID: "ses_existing",
+				CWD:       root,
+				Title:     "Existing session",
+			}},
+		},
+		firstDelivered: firstDelivered,
+		release:        release,
+	}
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	updateStatus, updateBody := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"sessionId": "ses_bound_current"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if updateStatus != http.StatusOK {
+		t.Fatalf("update thread status = %d, want %d, body=%s", updateStatus, http.StatusOK, updateBody)
+	}
+
+	resp, cancelStream := startTurnStreamHTTP(t, ts.URL, "client-a", threadID, "work")
+	defer cancelStream()
+	defer resp.Body.Close()
+	_, doneCh := streamSSEEvents(resp.Body)
+
+	select {
+	case <-firstDelivered:
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timeout waiting for running turn to produce first delta")
+	}
+
+	status, body := doJSON(t, http.MethodGet, ts.URL+"/v1/threads/"+threadID+"/sessions", nil, map[string]string{
+		"X-Client-ID": "client-b",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("session list status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	type sessionListResponse struct {
+		Supported bool `json:"supported"`
+		Sessions  []struct {
+			SessionID string `json:"sessionId"`
+			IsActive  bool   `json:"isActive"`
+		} `json:"sessions"`
+	}
+	var list sessionListResponse
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("unmarshal session list: %v", err)
+	}
+	if !list.Supported {
+		t.Fatal("supported = false, want true")
+	}
+	if got, want := len(list.Sessions), 2; got != want {
+		t.Fatalf("len(sessions) = %d, want %d", got, want)
+	}
+	if got := list.Sessions[0].SessionID; got != "ses_bound_current" {
+		t.Fatalf("sessions[0].sessionId = %q, want %q", got, "ses_bound_current")
+	}
+	if !list.Sessions[0].IsActive {
+		t.Fatal("sessions[0].isActive = false, want true")
+	}
+	if got := list.Sessions[1].SessionID; got != "ses_existing" {
+		t.Fatalf("sessions[1].sessionId = %q, want %q", got, "ses_existing")
+	}
+	if list.Sessions[1].IsActive {
+		t.Fatal("sessions[1].isActive = true, want false")
+	}
+
+	close(release)
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("running turn stream ended with error: %v", err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timeout waiting for running turn stream to finish")
+	}
+
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		status, body = doJSON(t, http.MethodGet, ts.URL+"/v1/threads/"+threadID+"/sessions", nil, map[string]string{
+			"X-Client-ID": "client-b",
+		})
+		if status != http.StatusOK {
+			t.Fatalf("session list after completion status = %d, want %d, body=%s", status, http.StatusOK, body)
+		}
+		list = sessionListResponse{}
+		if err := json.Unmarshal([]byte(body), &list); err != nil {
+			t.Fatalf("unmarshal session list after completion: %v", err)
+		}
+		if len(list.Sessions) > 0 && !list.Sessions[0].IsActive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sessions[0].isActive stayed true after completion")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestThreadSessionHistoryEndpoint(t *testing.T) {
 	root := t.TempDir()
 	streamer := &sessionTranscriptStreamer{
@@ -5972,6 +6090,43 @@ func (s *sessionListStreamer) Stream(ctx context.Context, input string, onDelta 
 func (s *sessionListStreamer) ListSessions(ctx context.Context, req agents.SessionListRequest) (agents.SessionListResult, error) {
 	_ = ctx
 	s.lastCursor.Store(strings.TrimSpace(req.Cursor))
+	return agents.CloneSessionListResult(s.result), nil
+}
+
+type blockingSessionListStreamer struct {
+	result         agents.SessionListResult
+	firstDelivered chan<- struct{}
+	release        <-chan struct{}
+}
+
+func (s *blockingSessionListStreamer) Name() string {
+	return "blocking-session-list-streamer"
+}
+
+func (s *blockingSessionListStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = input
+	if err := onDelta("working"); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if s.firstDelivered != nil {
+		select {
+		case s.firstDelivered <- struct{}{}:
+		default:
+		}
+	}
+	if s.release != nil {
+		select {
+		case <-ctx.Done():
+			return agents.StopReasonCancelled, ctx.Err()
+		case <-s.release:
+		}
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+func (s *blockingSessionListStreamer) ListSessions(ctx context.Context, req agents.SessionListRequest) (agents.SessionListResult, error) {
+	_ = ctx
+	_ = req
 	return agents.CloneSessionListResult(s.result), nil
 }
 

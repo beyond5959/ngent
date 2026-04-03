@@ -13,6 +13,17 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-04-03)
 
+- `Post-M8` cross-client active session spinner visibility completed:
+  - `GET /v1/threads/{threadId}/sessions` now decorates each returned session row with `isActive` when that concrete `(thread, session)` scope currently owns a live turn.
+  - the response still prepends the thread's currently bound `sessionId`, so even if the upstream provider session catalog is stale, a newly opened browser can still see the active session row and its loading spinner.
+  - the embedded Web UI now merges server-reported `session.isActive` with its existing local in-browser `streamStates`, so the grouped left rail shows the same spinner both for turns started in the current browser and for sessions another browser opens while already active.
+  - targeted HTTP coverage now verifies that a second client querying `/sessions` during a running bound-session turn sees `isActive=true` on the active session row and that the flag clears again after completion.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-04-03)
+
 - `Post-M8` Web UI merged thread/session left rail completed:
   - removed the dedicated middle session drawer and its chat-edge collapse toggle; the workspace now uses one left navigation column plus the main chat area.
   - the left rail now renders each thread as a grouped header with its ACP session rows directly underneath, closer to Codex App's project/session browsing model while preserving the existing thread-based backend model.

@@ -2594,6 +2594,7 @@ function mergeSessionInfo(current: SessionInfo, incoming: SessionInfo): SessionI
     cwd: incoming.cwd?.trim() || current.cwd?.trim() || undefined,
     title: incoming.title?.trim() || current.title?.trim() || undefined,
     updatedAt: incoming.updatedAt?.trim() || current.updatedAt?.trim() || undefined,
+    isActive: !!(current.isActive || incoming.isActive),
   }
 }
 
@@ -2648,6 +2649,7 @@ function dedupeSessionItems(items: SessionInfo[]): SessionInfo[] {
       cwd: item.cwd?.trim() || undefined,
       title: item.title?.trim() || undefined,
       updatedAt: item.updatedAt?.trim() || undefined,
+      isActive: !!item.isActive,
     }
     const existingIndex = indexes.get(sessionId)
     if (existingIndex !== undefined) {
@@ -2983,6 +2985,10 @@ function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
     .filter(streamState => streamState.threadId === thread.threadId && !!streamState.sessionId)
     .map(streamState => streamState.sessionId.trim())
     .filter(Boolean)
+  const serverActiveSessionIDs = state.sessions
+    .filter(item => item.isActive)
+    .map(item => item.sessionId.trim())
+    .filter(Boolean)
 
   const knownIDs = new Set(state.sessions.map(item => item.sessionId))
   const sessions = [...state.sessions]
@@ -3002,7 +3008,7 @@ function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
     selectedSessionID,
     disabled,
     refreshDisabled,
-    loadingSessionIDSet: new Set(loadingSessionIDs),
+    loadingSessionIDSet: new Set([...serverActiveSessionIDs, ...loadingSessionIDs]),
     showMoreMode,
   }
 }

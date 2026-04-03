@@ -49,6 +49,7 @@ export interface SessionInfo {
   cwd?: string
   title?: string
   updatedAt?: string
+  isActive?: boolean
   _meta?: Record<string, unknown>
 }
 

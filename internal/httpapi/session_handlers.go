@@ -14,6 +14,15 @@ import (
 	"github.com/beyond5959/ngent/internal/storage"
 )
 
+type sessionInfoResponse struct {
+	SessionID string         `json:"sessionId"`
+	CWD       string         `json:"cwd,omitempty"`
+	Title     string         `json:"title,omitempty"`
+	UpdatedAt string         `json:"updatedAt,omitempty"`
+	Meta      map[string]any `json:"_meta,omitempty"`
+	IsActive  bool           `json:"isActive,omitempty"`
+}
+
 func mergeSessionInfo(current, incoming agents.SessionInfo) agents.SessionInfo {
 	cloned := agents.CloneSessionInfo(current)
 	next := agents.CloneSessionInfo(incoming)
@@ -68,6 +77,36 @@ func includeCurrentThreadSession(thread storage.Thread, result agents.SessionLis
 	}
 	cloned.Sessions = sessions
 	return cloned
+}
+
+func toSessionInfoResponse(session agents.SessionInfo, isActive bool) sessionInfoResponse {
+	cloned := agents.CloneSessionInfo(session)
+	return sessionInfoResponse{
+		SessionID: cloned.SessionID,
+		CWD:       cloned.CWD,
+		Title:     cloned.Title,
+		UpdatedAt: cloned.UpdatedAt,
+		Meta:      cloned.Meta,
+		IsActive:  isActive,
+	}
+}
+
+func (s *Server) sessionListResponseItems(thread storage.Thread, result agents.SessionListResult) []sessionInfoResponse {
+	result = includeCurrentThreadSession(thread, result)
+	if len(result.Sessions) == 0 {
+		return []sessionInfoResponse{}
+	}
+
+	hasActiveSession := s.turns.HasActiveSession(thread.ThreadID)
+	items := make([]sessionInfoResponse, 0, len(result.Sessions))
+	for _, session := range result.Sessions {
+		sessionID := strings.TrimSpace(session.SessionID)
+		items = append(items, toSessionInfoResponse(
+			session,
+			hasActiveSession && s.turns.IsSessionActive(thread.ThreadID, sessionID),
+		))
+	}
+	return items
 }
 
 func (s *Server) handleThreadSessions(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
@@ -126,11 +165,10 @@ func (s *Server) handleThreadSessions(w http.ResponseWriter, r *http.Request, cl
 		return
 	}
 
-	result = includeCurrentThreadSession(thread, result)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"threadId":   thread.ThreadID,
 		"supported":  true,
-		"sessions":   result.Sessions,
+		"sessions":   s.sessionListResponseItems(thread, result),
 		"nextCursor": result.NextCursor,
 	})
 }

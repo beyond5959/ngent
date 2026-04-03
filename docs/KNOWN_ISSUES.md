@@ -15,6 +15,19 @@
 
 ## Open Issues
 
+- ID: KI-050
+- Title: Cross-client session-row activity spinner is refreshed on fetch, not pushed live to already-open browsers
+- Status: Open
+- Severity: Low
+- Affects: secondary browsers that already have the grouped thread/session rail open before another browser starts a new turn
+- Symptom:
+  - `GET /v1/threads/{threadId}/sessions` now marks concrete session rows with `isActive`, so a newly opened browser or a manual session-list refresh shows the correct spinner for the active session.
+  - however, the grouped rail still does not subscribe to a separate push channel for background thread/session activity, so an already-open browser will not see another browser's new session-row spinner until it reloads or re-fetches that thread's sessions.
+- Workaround:
+  - reload the page, reopen the relevant thread, or use the thread menu's session refresh action.
+- Follow-up plan:
+  - evaluate whether the grouped rail needs lightweight polling or a dedicated push/resume path for cross-browser background session-activity updates.
+
 - ID: KI-049
 - Title: Live plan overlay is only pinned for the currently open session
 - Status: Open

@@ -2,6 +2,22 @@
 
 This checklist defines executable acceptance checks for requirements 1-16.
 
+## Supplemental Web UI: Cross-Client Active Session Spinner
+
+- Operation:
+  - create or select a thread bound to an existing concrete `sessionId`.
+  - from browser/client A, start a turn on that session and keep it running long enough to inspect from another browser.
+  - from browser/client B, open the same ngent instance and let the grouped thread/session rail load `GET /v1/threads/{threadId}/sessions`.
+  - after the turn completes, refresh/reopen the same thread's session list from browser/client B.
+- Expected:
+  - while the turn is active, the matching session row in browser/client B's grouped rail shows the same loading spinner as a locally started turn.
+  - the active session row is still shown and marked active even if the upstream provider's `session/list` result has not yet included that current bound session, because ngent prepends the thread's bound `sessionId`.
+  - after the turn completes and the session list is fetched again, `isActive` clears and the spinner disappears.
+- Verification command:
+  - `go test ./internal/httpapi -run 'TestThreadSessionsListEndpointIncludesCurrentBoundSession|TestThreadSessionsListEndpointMarksActiveBoundSessionForOtherClients' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - manual browser check with two browser windows/profiles
+
 ## Supplemental Web UI: Session Git Diff Summary
 
 - Operation:

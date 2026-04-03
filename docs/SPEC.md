@@ -29,6 +29,7 @@ Modules:
 - `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; Web UI visual redesigns must remain presentation-only and must not change API/runtime behavior.
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
   - on history load, the Web UI can hydrate a still-running turn from persisted turn events, restore its live bubble/pending permissions, and then reattach to the per-turn SSE stream so browser refreshes do not cancel or visually lose the active response.
+  - the grouped thread/session rail can also consume server-decorated `session.isActive` flags from `GET /v1/threads/{threadId}/sessions`, so a second browser opening the same ngent instance can show the correct session-row spinner before it attaches to that session's chat pane.
   - when the active running turn has `plan_update` entries, the Web UI renders the latest plan snapshot as an ephemeral bottom-floating card outside the transcript list; that card is hydrated from persisted running-turn events for refresh/secondary-browser recovery and disappears again once the turn finishes.
   - when a history load restores a running turn for a scope that does not yet have a mounted live bubble, the Web UI must finish rendering persisted messages before mounting that bubble, even for long/heavy transcripts that would normally use async list rendering; this keeps spectator/reconnect views anchored on the active reply instead of below it.
   - when the grouped left rail collapses or reopens, the Web UI must recompute thread-title overflow after layout settles so short titles do not inherit stale marquee state from zero-width collapsed measurements.
@@ -129,6 +130,9 @@ On restart:
 - health and server metadata
 - thread CRUD (create/list/get/update/delete)
   - thread list/get responses include `hasActiveSession` so new browsers can spot live threads immediately.
+- thread session catalog (`GET /v1/threads/{threadId}/sessions`)
+  - each returned session row may include `isActive=true` when that concrete `(thread, session)` scope currently owns a live turn.
+  - ngent still prepends the thread's currently bound `sessionId` ahead of provider-listed sessions before returning the catalog, so a stale upstream session list does not hide the active session row.
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
 - thread session-usage snapshot lookup (`GET /v1/threads/{threadId}/session-usage?sessionId=...`)
 - turn create (`POST /v1/threads/{threadId}/turns`)

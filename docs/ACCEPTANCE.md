@@ -42,6 +42,10 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - verify the composer immediately requests `/v1/threads/{threadId}/git-diff`, shows the summary chip above the input, and refreshes again within 15 seconds while the same session remains selected.
   - expand the chip and verify the per-file list matches tracked rows from `git --no-pager diff --numstat` plus the repository's untracked files.
   - click one tracked text row and verify a right-side drawer opens with that file's patch content; then click a different viewable row and verify the drawer content switches in place instead of opening a second panel.
+  - after opening file A, switch to file B, then click file A again and verify the browser sends a fresh `/git-diff-file?path=A` request instead of reusing the previous A payload from memory.
+  - with the drawer open, click elsewhere in the workspace and verify the drawer stays visible until an explicit close control is used.
+  - with the drawer open, click the git-diff chip trigger to collapse the changed-file list and verify the drawer remains open with the same file content.
+  - leave the same drawer open through at least one subsequent `/git-diff` summary refresh and verify the visible drawer content does not flash/reload or jump scroll position just because the summary chip refreshed.
   - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch.
   - include at least one non-text/binary untracked file and verify its row stays disabled and does not open the drawer.
   - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
@@ -53,6 +57,10 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - expanded file rows show suffix/basename-matched file-type icons for common files such as `README.md`, `test.py`, `main.go`, `app.tsx`, and `Dockerfile`, and those icon tiles remain legible in both light and dark themes.
   - unmapped file types fall back to the generic file icon instead of rendering a broken/missing asset.
   - clicking a viewable row opens a single right-side drawer with a close button, and selecting another viewable file swaps the drawer content without requiring the chip to collapse first.
+  - reopening the same file after viewing another one triggers a fresh backend detail fetch rather than serving the previous open's cached drawer payload.
+  - outside clicks in the rest of the workspace do not dismiss the open drawer.
+  - collapsing the git-diff chip hides only the changed-file list; it does not dismiss the already open right-side drawer.
+  - `/git-diff` polling continues to refresh the chip/list, but an already open drawer keeps the same visible content and scroll position until the user explicitly changes or closes that preview.
   - tracked text rows show patch output, while untracked text rows show direct file contents.
   - binary/non-text rows remain visibly non-clickable and do not open an unsupported preview surface.
   - non-git/unavailable-git environments return no visible diff surface.

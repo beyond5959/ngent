@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-078: Keep the Web UI git-diff drawer explicitly dismissed and stable across summary polling. (Accepted)
 - ADR-077: Preview git-diff file details in a right-side drawer, with text-only support for new files. (Accepted)
 - ADR-076: Make grouped thread session lists collapsible from the leading agent glyph. (Accepted)
 - ADR-075: Decorate thread session-list responses with cross-client active-session state. (Accepted)
@@ -69,6 +70,34 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-078: Keep The Web UI Git-Diff Drawer Explicitly Dismissed And Stable Across Summary Polling
+
+- Status: Accepted
+- Date: 2026-04-04
+- Context:
+  - ADR-077 introduced the right-side git-diff file drawer, but follow-up usage showed two UX regressions in the embedded SPA:
+    - after opening a file preview, clicking elsewhere in the workspace could close the drawer because both widget-level `focusout` and document-level click handlers treated it like a transient popover.
+    - the existing `/git-diff` polling path re-rendered the open drawer and force-refetched its selected file detail, causing visible flicker, content jumping, and scroll resets even when the user was still reading the same file.
+  - the summary chip and expanded file list still need fresh repository state, but the opened drawer should behave like a stable inspection surface rather than a poll-driven tooltip.
+- Decision:
+  - stop using outside-click/focus-leave behavior to dismiss the git-diff drawer.
+  - collapsing or re-expanding the git-diff summary chip must not dismiss the already open right-side drawer.
+  - the right-side drawer itself is dismissed only from its own close button, not from summary-chip toggles or keyboard escape handling.
+  - keep `/git-diff` polling responsible for the summary chip and expanded changed-file list only.
+  - once a file drawer is opened, render it from a browser-local preview snapshot keyed by thread-session scope, and update that snapshot only when the user selects another file or that file-detail request itself changes state.
+  - every explicit file-row selection must reissue the backend `git-diff-file` request for that path; reopening the same file later must not reuse a stale cached detail payload from a previous open.
+  - keep the preview snapshot browser-local and session-scoped; do not persist it to backend thread/session metadata.
+- Consequences:
+  - users can inspect a file diff while clicking elsewhere in the workspace without losing the drawer.
+  - users can collapse the changed-file list to recover vertical space without losing the file they are reading in the right-side drawer.
+  - periodic summary refreshes no longer rebuild the open drawer DOM or force a loading-state flash for the currently viewed file.
+  - reselecting a file may briefly show the loading state again, but the drawer content now always reflects a fresh backend read instead of a reused earlier response.
+  - switching sessions within the same thread no longer leaks one session's open drawer into another session's chat pane; each session restores only its own last local preview snapshot.
+- Alternatives considered:
+  - keep outside-click dismissal and try to special-case a few targets (rejected: brittle and still wrong for a reading surface meant to stay open).
+  - continue rendering the drawer directly from the live polled diff state (rejected: keeps poll cadence coupled to preview stability and scroll position).
+  - persist drawer-open state to backend thread/session metadata (rejected: this is local presentation state, not shared runtime/domain state).
 
 ## ADR-077: Preview Git-Diff File Details In A Right-Side Drawer, With Text-Only Support For New Files
 

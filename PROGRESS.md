@@ -11,7 +11,19 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-04-03)
+## Latest Update (2026-04-04)
+
+- `Post-M8` Web UI git-diff drawer stability fix completed:
+  - opening a changed file in the git-diff chip no longer installs outside-click or focus-leave auto-dismiss behavior, so the right-side drawer stays open during normal workspace interaction instead of collapsing on the next arbitrary click.
+  - the open drawer now renders from a browser-local preview snapshot keyed by thread session, while `/v1/threads/{threadId}/git-diff` polling continues to refresh only the chip and file list.
+  - keeping the drawer off the poll-driven re-render path prevents forced detail reloads, DOM replacement flicker, and scroll/content jumping while the same file preview is open.
+  - follow-up fix: collapsing the git-diff chip no longer closes the right-side drawer; the drawer is now dismissed only by its own close button.
+  - follow-up fix: clicking a file row now always refetches that file's detail from the backend instead of reusing the prior open's cached drawer payload.
+  - session-scoped preview snapshots are preserved separately per selected session, so switching sessions hides unrelated previews and returning to the prior session restores that session's last opened drawer content.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+## Previous Update (2026-04-03)
 
 - `Post-M8` Web UI git-diff per-file preview drawer completed:
   - added `GET /v1/threads/{threadId}/git-diff-file?path=...`, backed by `internal/gitutil.FileDetail`, so the server can return per-file preview payloads for the currently visible working-tree diff.

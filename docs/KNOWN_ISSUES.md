@@ -15,6 +15,33 @@
 
 ## Open Issues
 
+- ID: KI-053
+- Title: Git-diff drawer reused the previous file-detail payload when reopening the same file
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users who open file A, switch to another file, and then return to file A in the git-diff drawer
+- Symptom:
+  - reopening the same file could reuse the last fetched drawer detail from browser memory instead of issuing a fresh `/git-diff-file` request.
+  - this made the drawer look stale when the user expected a new backend fetch on every file selection.
+- Workaround:
+  - none required after the 2026-04-04 follow-up fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-052
+- Title: Git-diff drawer used to auto-close on outside clicks and flicker under summary polling
+- Status: Closed
+- Severity: Medium
+- Affects: embedded Web UI users reading a per-file git-diff preview in the right-side drawer
+- Symptom:
+  - after opening a changed file from the git-diff chip, clicking elsewhere in the workspace could close the drawer even though the user had not clicked its close affordance.
+  - collapsing the git-diff chip itself could also dismiss the right-side drawer even though the user only intended to hide the changed-file list.
+  - while the drawer remained open, periodic `/git-diff` summary refreshes could rebuild the drawer and force a detail refresh, causing visible loading flashes and scroll/content jumping.
+- Workaround:
+  - none required after the 2026-04-04 Web UI stability fix.
+- Follow-up plan:
+  - none.
+
 - ID: KI-051
 - Title: Grouped thread session-collapse state resets after a full page reload
 - Status: Open

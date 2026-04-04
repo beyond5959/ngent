@@ -43,6 +43,10 @@ Modules:
     - binary/non-text rows stay visibly disabled and do not open a preview drawer.
   - expanded git-diff rows can also show curated basename/extension-based type icons sourced from locally vendored `file-icons/vscode` font assets; unknown file types fall back to the generic file icon.
   - that chip's expanded/collapsed state is browser-local UI state and must not depend on polling cadence or incoming diff payload refreshes.
+  - once a git-diff file drawer is open, the visible drawer content is driven by a browser-local preview snapshot keyed by thread-session scope rather than by each incoming `/git-diff` poll response; polling may refresh the chip/list, but it must not implicitly close or rebuild the open drawer.
+  - browser-local preview state is presentation-only; selecting a file row must still issue a fresh `/git-diff-file` request for that file each time instead of reusing the previous open's detail payload as authoritative data.
+  - outside clicks or focus changes elsewhere in the workspace must not dismiss the open git-diff drawer, and collapsing the summary chip must not dismiss it either.
+  - the right-side git-diff drawer closes only from its own close button; summary-chip toggles and keyboard escape handling do not dismiss that drawer.
   - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
   - the Web UI also owns a browser-local `language` preference (`en`, `zh-CN`, `es`, or `fr`); on first load it defaults from the closest supported browser locale (`zh-*` => `zh-CN`, `es-*` => `es`, `fr-*` => `fr`, otherwise `en`), and Settings can override it persistently per browser profile.
 

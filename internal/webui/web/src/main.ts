@@ -28,6 +28,8 @@ import type {
   ToolCall,
   MessageAttachment,
   ThreadGitDiffInfo,
+  ThreadGitDiffFileDetail,
+  ThreadGitDiffRenderedBlock,
   ThreadGitInfo,
 } from './types.ts'
 import type {
@@ -105,11 +107,6 @@ const iconSlashCommand = `<svg width="14" height="14" viewBox="0 0 24 24" fill="
   <path d="m7 11 2-2-2-2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M11 13h4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
   <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" stroke="currentColor" stroke-width="1.7"/>
-</svg>`
-
-const iconRefresh = `<svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-  <path d="M12.5 7.5a5 5 0 1 1-1.47-3.53" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M12.5 2.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
 const iconSparkles = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -216,6 +213,10 @@ const iconFolder = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" 
   <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 
+const iconClose = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+</svg>`
+
 const threadConfigCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogCache = new Map<string, ConfigOption[]>()
 const agentConfigCatalogInFlight = new Map<string, Promise<ConfigOption[]>>()
@@ -225,6 +226,7 @@ const threadConfigSwitching = new Set<string>()
 const sessionSwitchingThreads = new Set<string>()
 const freshSessionNonceByThread = new Map<string, string>()
 const selectedSessionOverrideByThread = new Map<string, string>()
+const collapsedThreadIds = new Set<string>()
 let slashCommandSelectedIndex = 0
 
 interface SessionPanelState {
@@ -256,6 +258,27 @@ interface ThreadGitDiffState {
   files: ThreadGitDiffInfo['files']
   loading: boolean
   error: string
+  drawerOpen: boolean
+  selectedFilePath: string
+  detailByPath: Record<string, ThreadGitDiffFileDetailState>
+}
+
+interface ThreadGitDiffFileDetailState {
+  path: string
+  supported: boolean | null
+  kind: ThreadGitDiffFileDetail['kind']
+  blocks: ThreadGitDiffRenderedBlock[]
+  reason: ThreadGitDiffFileDetail['reason']
+  loading: boolean
+  error: string
+}
+
+interface ThreadGitDiffPreviewState {
+  scopeKey: string
+  filePath: string
+  repoRoot: string
+  fallbackKind: ThreadGitDiffFileDetail['kind']
+  detail: ThreadGitDiffFileDetailState
 }
 
 interface ComposerAttachmentDraft {
@@ -274,29 +297,36 @@ interface RenderableSessionUsage extends SessionUsage {
 
 const sessionPanelStateByThread = new Map<string, SessionPanelState>()
 const sessionPanelRequestSeqByThread = new Map<string, number>()
-const sessionPanelScrollTopByThread = new Map<string, number>()
 const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
+const visibleSessionCountByThread = new Map<string, number>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 const composerDraftByScope = new Map<string, string>()
 const threadGitStateByThread = new Map<string, ThreadGitState>()
 const threadGitDiffStateByScope = new Map<string, ThreadGitDiffState>()
+const threadGitDiffPreviewByScope = new Map<string, ThreadGitDiffPreviewState>()
 const expandedThreadGitDiffScopes = new Set<string>()
 const pendingThreadGitDiffToggleScopes = new Set<string>()
 const sessionUsageByScope = new Map<string, SessionUsage>()
 const threadGitRequestSeqByThread = new Map<string, number>()
 const threadGitDiffRequestSeqByScope = new Map<string, number>()
+const threadGitDiffDetailRequestSeqByKey = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
 let threadGitDiffRequestSeq = 0
-const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 30_000
+let threadGitDiffDetailRequestSeq = 0
+const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 60_000
+const INLINE_SESSION_PAGE_SIZE = 5
 let threadGitDiffPollTimer = 0
 let threadGitDiffPollScopeKey = ''
+let sidebarCollapsed = false
+const SIDEBAR_LAYOUT_SYNC_PROPERTIES = new Set(['width', 'min-width', 'margin-right', 'transform'])
 const SESSION_ITEM_HOVER_PREVIEW_DELAY_MS = 120
 const SESSION_ITEM_HOVER_PREVIEW_CLASS = 'session-item--hover-preview'
 let sessionItemHoverPreviewTimer = 0
 let pendingSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
 let activeSessionItemHoverPreviewBtn: HTMLButtonElement | null = null
+let pendingSidebarLayoutSyncCleanup: (() => void) | null = null
 
 function cloneConfigOptions(options: ConfigOption[]): ConfigOption[] {
   return options.map(option => ({
@@ -389,6 +419,44 @@ function emptyThreadGitDiffState(): ThreadGitDiffState {
     files: [],
     loading: false,
     error: '',
+    drawerOpen: false,
+    selectedFilePath: '',
+    detailByPath: {},
+  }
+}
+
+function emptyThreadGitDiffFileDetailState(path = ''): ThreadGitDiffFileDetailState {
+  return {
+    path,
+    supported: null,
+    kind: undefined,
+    blocks: [],
+    reason: undefined,
+    loading: false,
+    error: '',
+  }
+}
+
+function cloneThreadGitDiffFileDetailState(
+  detail: Partial<ThreadGitDiffFileDetailState> | null | undefined,
+  path = '',
+): ThreadGitDiffFileDetailState {
+  const normalizedPath = detail?.path?.trim() || path.trim()
+  return {
+    ...emptyThreadGitDiffFileDetailState(normalizedPath),
+    ...detail,
+    path: normalizedPath,
+    blocks: Array.isArray(detail?.blocks) ? detail.blocks.map(block => ({
+      tone: block.tone,
+      text: Array.isArray(block.text) ? block.text.map(line => typeof line === 'string' ? line : '') : [],
+      oldLineNumbers: Array.isArray(block.oldLineNumbers)
+        ? block.oldLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+        : undefined,
+      newLineNumbers: Array.isArray(block.newLineNumbers)
+        ? block.newLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+        : undefined,
+    })) : [],
+    error: typeof detail?.error === 'string' ? detail.error : '',
   }
 }
 
@@ -400,6 +468,30 @@ function threadGitDiffState(scopeKey: string): ThreadGitDiffState {
   return threadGitDiffStateByScope.get(scopeKey) ?? emptyThreadGitDiffState()
 }
 
+function cloneThreadGitDiffDetailMap(
+  detailByPath: Record<string, ThreadGitDiffFileDetailState> | null | undefined,
+): Record<string, ThreadGitDiffFileDetailState> {
+  const next: Record<string, ThreadGitDiffFileDetailState> = {}
+  if (!detailByPath) return next
+
+  for (const [path, detail] of Object.entries(detailByPath)) {
+    const normalizedPath = path.trim()
+    if (!normalizedPath) continue
+    next[normalizedPath] = cloneThreadGitDiffFileDetailState(detail, normalizedPath)
+  }
+  return next
+}
+
+function isThreadGitDiffFileViewable(file: ThreadGitDiffInfo['files'][number] | null | undefined): boolean {
+  return !!file && file.viewable === true
+}
+
+function threadGitDiffFileDetailState(scopeKey: string, path: string): ThreadGitDiffFileDetailState {
+  const normalizedPath = path.trim()
+  if (!normalizedPath) return emptyThreadGitDiffFileDetailState()
+  return threadGitDiffState(scopeKey).detailByPath[normalizedPath] ?? emptyThreadGitDiffFileDetailState(normalizedPath)
+}
+
 function setThreadGitState(threadId: string, patch: Partial<ThreadGitState>): ThreadGitState {
   const next = { ...threadGitState(threadId), ...patch }
   threadGitStateByThread.set(threadId, next)
@@ -407,13 +499,52 @@ function setThreadGitState(threadId: string, patch: Partial<ThreadGitState>): Th
 }
 
 function setThreadGitDiffState(scopeKey: string, patch: Partial<ThreadGitDiffState>): ThreadGitDiffState {
-  const next = { ...threadGitDiffState(scopeKey), ...patch }
+  const current = threadGitDiffState(scopeKey)
+  const next = {
+    ...current,
+    ...patch,
+    detailByPath: patch.detailByPath ? cloneThreadGitDiffDetailMap(patch.detailByPath) : cloneThreadGitDiffDetailMap(current.detailByPath),
+  }
+  const visiblePaths = new Set(next.files.map(file => file.path))
+  for (const path of Object.keys(next.detailByPath)) {
+    if (!visiblePaths.has(path)) {
+      delete next.detailByPath[path]
+    }
+  }
+  const selectedFile = next.files.find(file => file.path === next.selectedFilePath)
+  if (next.selectedFilePath && (!selectedFile || !isThreadGitDiffFileViewable(selectedFile))) {
+    next.selectedFilePath = ''
+    next.drawerOpen = false
+  }
   if (next.summary.filesChanged <= 0 && !next.files.length) {
     expandedThreadGitDiffScopes.delete(scopeKey)
     pendingThreadGitDiffToggleScopes.delete(scopeKey)
+    next.drawerOpen = false
+    next.selectedFilePath = ''
+    next.detailByPath = {}
   }
   threadGitDiffStateByScope.set(scopeKey, next)
   return next
+}
+
+function setThreadGitDiffFileDetailState(
+  scopeKey: string,
+  path: string,
+  patch: Partial<ThreadGitDiffFileDetailState>,
+): ThreadGitDiffState {
+  const normalizedPath = path.trim()
+  if (!normalizedPath) return threadGitDiffState(scopeKey)
+  const nextDetailByPath = cloneThreadGitDiffDetailMap(threadGitDiffState(scopeKey).detailByPath)
+  nextDetailByPath[normalizedPath] = {
+    ...threadGitDiffFileDetailState(scopeKey, normalizedPath),
+    ...patch,
+    path: normalizedPath,
+    blocks: Array.isArray(patch.blocks)
+      ? cloneThreadGitDiffFileDetailState({ blocks: patch.blocks }, normalizedPath).blocks
+      : nextDetailByPath[normalizedPath]?.blocks ?? threadGitDiffFileDetailState(scopeKey, normalizedPath).blocks,
+    error: typeof patch.error === 'string' ? patch.error : nextDetailByPath[normalizedPath]?.error ?? threadGitDiffFileDetailState(scopeKey, normalizedPath).error,
+  }
+  return setThreadGitDiffState(scopeKey, { detailByPath: nextDetailByPath })
 }
 
 function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitState {
@@ -430,6 +561,19 @@ function applyThreadGitInfo(threadId: string, info: ThreadGitInfo): ThreadGitSta
 }
 
 function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: ThreadGitDiffInfo): ThreadGitDiffState {
+  const current = threadGitDiffState(scopeKey)
+  const nextFiles = [...(info.files ?? [])]
+  const nextDetailByPath = cloneThreadGitDiffDetailMap(current.detailByPath)
+  const validPaths = new Set(nextFiles.map(file => file.path))
+  for (const path of Object.keys(nextDetailByPath)) {
+    if (!validPaths.has(path)) {
+      delete nextDetailByPath[path]
+    }
+  }
+  const selectedFile = nextFiles.find(file => file.path === current.selectedFilePath)
+  const keepSelectedFile = current.selectedFilePath
+    ? isThreadGitDiffFileViewable(selectedFile)
+    : true
   return setThreadGitDiffState(scopeKey, {
     available: info.available,
     sessionId: sessionID.trim(),
@@ -439,9 +583,12 @@ function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: Threa
       insertions: info.summary?.insertions ?? 0,
       deletions: info.summary?.deletions ?? 0,
     },
-    files: [...(info.files ?? [])],
+    files: nextFiles,
     loading: false,
     error: '',
+    drawerOpen: current.drawerOpen && keepSelectedFile,
+    selectedFilePath: current.selectedFilePath && isThreadGitDiffFileViewable(selectedFile) ? current.selectedFilePath : '',
+    detailByPath: nextDetailByPath,
   })
 }
 
@@ -1295,6 +1442,11 @@ function threadSessionScopeKey(threadId: string, sessionID = ''): string {
   return `${threadId}::${sessionID.trim()}`
 }
 
+function threadIDFromScopeKey(scopeKey: string): string {
+  const parts = scopeKey.split('::', 2)
+  return parts[0]?.trim() ?? ''
+}
+
 function sessionSelectionFromScopeKey(scopeKey: string): string {
   const parts = scopeKey.split('::', 2)
   return parts.length === 2 ? parts[1].trim() : ''
@@ -1375,6 +1527,69 @@ function selectedThreadGitDiffScopeKey(thread: Thread | null | undefined): strin
   const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) return ''
   return threadSessionScopeKey(thread.threadId, sessionID)
+}
+
+function threadGitDiffPreview(scopeKey: string): ThreadGitDiffPreviewState | null {
+  return threadGitDiffPreviewByScope.get(scopeKey.trim()) ?? null
+}
+
+function selectedThreadGitDiffPreview(thread: Thread | null | undefined): ThreadGitDiffPreviewState | null {
+  const scopeKey = selectedThreadGitDiffScopeKey(thread)
+  if (!scopeKey) return null
+  return threadGitDiffPreview(scopeKey)
+}
+
+function buildThreadGitDiffPreviewState(
+  scopeKey: string,
+  filePath: string,
+  options: { detail?: ThreadGitDiffFileDetailState } = {},
+): ThreadGitDiffPreviewState | null {
+  const normalizedScopeKey = scopeKey.trim()
+  const normalizedPath = filePath.trim()
+  if (!normalizedScopeKey || !normalizedPath) return null
+
+  const current = threadGitDiffPreview(normalizedScopeKey)
+  const state = threadGitDiffState(normalizedScopeKey)
+  const file = state.files.find(item => item.path === normalizedPath)
+  const stateDetail = threadGitDiffFileDetailState(normalizedScopeKey, normalizedPath)
+  const hasStateDetail = stateDetail.loading || stateDetail.supported !== null || !!stateDetail.blocks.length || !!stateDetail.error
+  const detail = options.detail
+    ? cloneThreadGitDiffFileDetailState(options.detail, normalizedPath)
+    : hasStateDetail
+      ? cloneThreadGitDiffFileDetailState(stateDetail, normalizedPath)
+      : current?.filePath === normalizedPath
+        ? cloneThreadGitDiffFileDetailState(current.detail, normalizedPath)
+        : emptyThreadGitDiffFileDetailState(normalizedPath)
+
+  return {
+    scopeKey: normalizedScopeKey,
+    filePath: normalizedPath,
+    repoRoot: state.repoRoot?.trim() || (current?.filePath === normalizedPath ? current.repoRoot : ''),
+    fallbackKind: file?.untracked ? 'file' : (current?.filePath === normalizedPath ? current.fallbackKind : 'diff'),
+    detail,
+  }
+}
+
+function setThreadGitDiffPreview(
+  scopeKey: string,
+  filePath: string,
+  options: { detail?: ThreadGitDiffFileDetailState } = {},
+): ThreadGitDiffPreviewState | null {
+  const preview = buildThreadGitDiffPreviewState(scopeKey, filePath, options)
+  if (!preview) return null
+  threadGitDiffPreviewByScope.set(preview.scopeKey, preview)
+  return preview
+}
+
+function clearThreadGitDiffPreview(scopeKey = ''): void {
+  scopeKey = scopeKey.trim()
+  if (!scopeKey) return
+  threadGitDiffPreviewByScope.delete(scopeKey)
+}
+
+function hasSelectedThreadGitDiffPreview(threadId: string): boolean {
+  const thread = store.get().threads.find(item => item.threadId === threadId) ?? null
+  return !!selectedThreadGitDiffPreview(thread)
 }
 
 function buildThreadAgentOptionsWithSession(
@@ -1524,7 +1739,6 @@ const expandedToolCallSegmentIds = new Set<string>()
 let openThreadActionMenuId: string | null = null
 let renamingThreadId: string | null = null
 let renamingThreadDraft = ''
-let sessionPanelExpanded = true
 let historyLoadRequestSeq = 0
 
 // ── Scroll helpers ────────────────────────────────────────────────────────
@@ -1630,26 +1844,6 @@ function markThreadCompletionBadge(threadId: string): void {
   })
 }
 
-function activateThread(threadId: string): void {
-  if (!threadId) return
-  const state = store.get()
-  const clearedThreadActions = resetThreadActionMenuState()
-  const nextThreadCompletionBadges = omitThreadCompletionBadge(state.threadCompletionBadges, threadId)
-  if (threadId === state.activeThreadId) {
-    if (nextThreadCompletionBadges !== state.threadCompletionBadges) {
-      store.set({ threadCompletionBadges: nextThreadCompletionBadges })
-    } else if (clearedThreadActions) {
-      updateThreadList()
-    }
-    return
-  }
-
-  store.set({
-    activeThreadId: threadId,
-    threadCompletionBadges: nextThreadCompletionBadges,
-  })
-}
-
 function resetThreadActionMenuState(): boolean {
   const changed = openThreadActionMenuId !== null || renamingThreadId !== null || renamingThreadDraft !== ''
   if (!changed) return false
@@ -1703,6 +1897,10 @@ function getThreadMenuTrigger(threadId: string): HTMLButtonElement | null {
 function renderThreadActionPopover(thread: Thread): string {
   const isOpen = openThreadActionMenuId === thread.threadId
   if (!isOpen) return ''
+  const sessionState = sessionPanelState(thread.threadId)
+  const refreshLabel = sessionState.loading || sessionState.loadingMore
+    ? t('refreshingSessions')
+    : t('refreshSessions')
 
   if (renamingThreadId === thread.threadId) {
     return `
@@ -1729,6 +1927,15 @@ function renderThreadActionPopover(thread: Thread): string {
 
   return `
     <div class="thread-action-popover thread-action-menu" data-thread-id="${escHtml(thread.threadId)}" role="menu" aria-label="${escHtml(t('agentActions'))}">
+      <button
+        class="thread-action-menu-item"
+        type="button"
+        data-thread-id="${escHtml(thread.threadId)}"
+        data-action="refresh"
+        role="menuitem"
+        ${sessionState.loading || sessionState.loadingMore ? 'disabled' : ''}>
+        ${escHtml(refreshLabel)}
+      </button>
       <button class="thread-action-menu-item" type="button" data-thread-id="${escHtml(thread.threadId)}" data-action="rename" role="menuitem">
         ${escHtml(t('rename'))}
       </button>
@@ -1799,6 +2006,12 @@ function renderThreadActionLayer(): void {
       e.stopPropagation()
       const id = btn.dataset.threadId ?? ''
       if (!id) return
+      if (btn.dataset.action === 'refresh') {
+        resetThreadActionMenuState()
+        updateThreadList()
+        void loadThreadSessions(id)
+        return
+      }
       if (btn.dataset.action === 'rename') {
         beginRenameThread(id)
         return
@@ -1930,14 +2143,12 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   div.id = bubbleID
   div.className = 'message message--agent'
   div.dataset.msgId = streamState.messageId
-  const livePlanEntries = streamPlanByScope.get(scopeKey)
   const liveSegments = streamSegmentsByScope.get(scopeKey)
   div.innerHTML = `
     <div class="message-group">
       ${renderStreamingBubbleHTML(
         streamState.messageId,
         liveSegments,
-        livePlanEntries,
         activeContentSegmentID(scopeKey),
         activeReasoningSegmentID(scopeKey),
         activeToolCallSegmentID(scopeKey),
@@ -1952,7 +2163,6 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
   activeStreamMsgId = streamState.messageId
   activeStreamScopeKey = scopeKey
 
-  updateStreamingBubblePlan(streamState.messageId, livePlanEntries)
   updateStreamingBubbleSegments(
     streamState.messageId,
     liveSegments,
@@ -2357,12 +2567,16 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
       setActiveReasoningSegmentID(capturedScopeKey, null)
       setActiveToolCallSegmentID(capturedScopeKey, null)
       const nextPlanEntries = clonePlanEntries(entries) ?? []
-      streamPlanByScope.set(capturedScopeKey, nextPlanEntries)
+      if (nextPlanEntries.length) {
+        streamPlanByScope.set(capturedScopeKey, nextPlanEntries)
+      } else {
+        streamPlanByScope.delete(capturedScopeKey)
+      }
+      renderActivePlanCard(capturedScopeKey)
 
       if (activeChatScopeKey() !== capturedScopeKey) return
       const list = document.getElementById('message-list')
       const atBottom = !list || isNearBottom(list)
-      updateStreamingBubblePlan(messageId, nextPlanEntries)
       updateStreamingBubbleSegments(
         messageId,
         streamSegmentsByScope.get(capturedScopeKey),
@@ -2466,7 +2680,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
 
     onCompleted({ stopReason, seq }) {
       markEventSeen(seq)
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
       const segmentedContent = messageSegmentsContent(finalSegments)
       const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
@@ -2484,7 +2697,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         status: stopReason === 'cancelled' ? 'cancelled' : 'done',
         stopReason,
         segments: finalSegments,
-        planEntries: finalPlanEntries,
         toolCalls: finalToolCalls,
         reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       }, true)
@@ -2501,7 +2713,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
       }
 
       markEventSeen(seq)
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
       const segmentedContent = messageSegmentsContent(finalSegments)
       const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
@@ -2520,7 +2731,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         errorCode: code,
         errorMessage,
         segments: finalSegments,
-        planEntries: finalPlanEntries,
         toolCalls: finalToolCalls,
         reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       })
@@ -2534,7 +2744,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         return
       }
 
-      const finalPlanEntries = clonePlanEntries(streamPlanByScope.get(capturedScopeKey))
       const finalSegments = cloneMessageSegments(streamSegmentsByScope.get(capturedScopeKey))
       const segmentedContent = messageSegmentsContent(finalSegments)
       const bufferedContent = streamBufferByScope.get(capturedScopeKey) ?? ''
@@ -2552,7 +2761,6 @@ function attachTurnStreamToScope(options: ScopeTurnStreamOptions): void {
         status: 'error',
         errorMessage: t('connectionLost'),
         segments: finalSegments,
-        planEntries: finalPlanEntries,
         toolCalls: finalToolCalls,
         reasoning: hasReasoningText(finalReasoning) ? finalReasoning : undefined,
       })
@@ -2582,6 +2790,7 @@ function mergeSessionInfo(current: SessionInfo, incoming: SessionInfo): SessionI
     cwd: incoming.cwd?.trim() || current.cwd?.trim() || undefined,
     title: incoming.title?.trim() || current.title?.trim() || undefined,
     updatedAt: incoming.updatedAt?.trim() || current.updatedAt?.trim() || undefined,
+    isActive: !!(current.isActive || incoming.isActive),
   }
 }
 
@@ -2612,6 +2821,18 @@ function setSessionPanelState(threadId: string, next: SessionPanelState): void {
   }
 }
 
+function visibleSessionCount(threadId: string): number {
+  return visibleSessionCountByThread.get(threadId) ?? INLINE_SESSION_PAGE_SIZE
+}
+
+function resetVisibleSessionCount(threadId: string): void {
+  visibleSessionCountByThread.delete(threadId)
+}
+
+function expandVisibleSessionCount(threadId: string): void {
+  visibleSessionCountByThread.set(threadId, visibleSessionCount(threadId) + INLINE_SESSION_PAGE_SIZE)
+}
+
 function dedupeSessionItems(items: SessionInfo[]): SessionInfo[] {
   const deduped: SessionInfo[] = []
   const indexes = new Map<string, number>()
@@ -2624,6 +2845,7 @@ function dedupeSessionItems(items: SessionInfo[]): SessionInfo[] {
       cwd: item.cwd?.trim() || undefined,
       title: item.title?.trim() || undefined,
       updatedAt: item.updatedAt?.trim() || undefined,
+      isActive: !!item.isActive,
     }
     const existingIndex = indexes.get(sessionId)
     if (existingIndex !== undefined) {
@@ -2788,6 +3010,7 @@ async function loadThreadSessions(threadId: string, append = false): Promise<voi
       error: '',
     })
   } else {
+    resetVisibleSessionCount(threadId)
     setSessionPanelState(threadId, {
       ...current,
       loading: true,
@@ -2823,26 +3046,28 @@ async function loadThreadSessions(threadId: string, append = false): Promise<voi
       error: message,
     })
   }
-
-  if (store.get().activeThreadId === threadId) {
-    updateSessionPanel()
-  }
+  updateSessionPanel()
 }
 
 async function switchThreadSession(thread: Thread, nextSessionID: string): Promise<void> {
+  const state = store.get()
   const targetSessionID = nextSessionID.trim()
-  const currentSelection = sessionSelectionFromScopeKey(threadChatScopeKey(thread))
-  if (targetSessionID && currentSelection === targetSessionID) return
+  const isActiveThread = state.activeThreadId === thread.threadId
+  const currentSelection = isActiveThread ? sessionSelectionFromScopeKey(threadChatScopeKey(thread)) : ''
+  if (isActiveThread && targetSessionID && currentSelection === targetSessionID) return
   if (sessionSwitchingThreads.has(thread.threadId)) return
 
   const targetSelection = targetSessionID || `@fresh:${generateUUID()}`
-  const state = store.get()
   const nextMessages = targetSessionID
     ? state.messages
     : activateFreshSessionScope(thread.threadId, state.messages, targetSelection)
   setSelectedSessionOverride(thread.threadId, targetSelection)
   clearSelectedSessionOverrideIfSynced(thread)
-  store.set({ messages: nextMessages })
+  store.set({
+    activeThreadId: thread.threadId,
+    messages: nextMessages,
+    threadCompletionBadges: omitThreadCompletionBadge(state.threadCompletionBadges, thread.threadId),
+  })
 
   if (hasThreadStream(thread.threadId)) {
     if (store.get().activeThreadId === thread.threadId) {
@@ -2941,12 +3166,13 @@ interface SessionPanelRenderData {
   disabled: boolean
   refreshDisabled: boolean
   loadingSessionIDSet: Set<string>
+  showMoreMode: 'loaded' | 'remote' | ''
 }
 
 function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
-  const { streamStates } = store.get()
+  const { activeThreadId, streamStates } = store.get()
   const state = sessionPanelState(thread.threadId)
-  const selectedSessionID = selectedThreadSessionID(thread)
+  const selectedSessionID = activeThreadId === thread.threadId ? selectedThreadSessionID(thread) : ''
   const switching = sessionSwitchingThreads.has(thread.threadId)
   const disabled = switching
   const refreshDisabled = disabled || state.loading || state.loadingMore
@@ -2954,6 +3180,10 @@ function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
   const loadingSessionIDs = Object.values(streamStates)
     .filter(streamState => streamState.threadId === thread.threadId && !!streamState.sessionId)
     .map(streamState => streamState.sessionId.trim())
+    .filter(Boolean)
+  const serverActiveSessionIDs = state.sessions
+    .filter(item => item.isActive)
+    .map(item => item.sessionId.trim())
     .filter(Boolean)
 
   const knownIDs = new Set(state.sessions.map(item => item.sessionId))
@@ -2964,19 +3194,23 @@ function resolveSessionPanelRenderData(thread: Thread): SessionPanelRenderData {
   if (selectedSessionID && !knownIDs.has(selectedSessionID)) {
     prependEphemeralSession(sessions, knownIDs, selectedSessionID)
   }
+  const showMoreMode = sessions.length > visibleSessionCount(thread.threadId)
+    ? 'loaded'
+    : (state.nextCursor ? 'remote' : '')
 
   return {
     state,
-    sessions,
+    sessions: sessions.slice(0, visibleSessionCount(thread.threadId)),
     selectedSessionID,
     disabled,
     refreshDisabled,
-    loadingSessionIDSet: new Set(loadingSessionIDs),
+    loadingSessionIDSet: new Set([...serverActiveSessionIDs, ...loadingSessionIDs]),
+    showMoreMode,
   }
 }
 
 function renderSessionPanelBody(data: SessionPanelRenderData): string {
-  const { state, sessions, selectedSessionID, disabled, loadingSessionIDSet } = data
+  const { state, sessions, selectedSessionID, disabled, loadingSessionIDSet, showMoreMode } = data
 
   if (state.loading && !sessions.length) {
     return `<div class="session-panel-empty">${escHtml(t('loadingSessions'))}</div>`
@@ -2995,8 +3229,12 @@ function renderSessionPanelBody(data: SessionPanelRenderData): string {
         loadingSessionIDSet.has(item.sessionId),
       )).join('')
     : `<div class="session-panel-empty">${escHtml(t('noPreviousSessions'))}</div>`
-  const showMoreHTML = state.nextCursor
-    ? `<button class="btn btn-ghost session-show-more-btn" type="button" ${state.loadingMore || disabled ? 'disabled' : ''}>
+  const showMoreHTML = showMoreMode
+    ? `<button
+        class="btn btn-ghost session-show-more-btn"
+        type="button"
+        data-show-more-mode="${escHtml(showMoreMode)}"
+        ${state.loadingMore || disabled ? 'disabled' : ''}>
         ${escHtml(state.loadingMore ? t('loadingEllipsis') : t('showMore'))}
       </button>`
     : ''
@@ -3025,52 +3263,10 @@ function sessionPanelBodyRenderKey(data: SessionPanelRenderData): string {
     nextCursor: data.state.nextCursor,
     selectedSessionID: data.selectedSessionID,
     disabled: data.disabled,
+    showMoreMode: data.showMoreMode,
     sessionsKey,
     loadingKey,
   })
-}
-
-function renderSessionPanelHeader(thread: Thread, data: SessionPanelRenderData): string {
-  const title = threadTitle(thread)
-  const agentName = agentDisplayName(thread.agent ?? '')
-  const refreshLabel = data.state.loading ? t('refreshingSessions') : t('refreshSessions')
-
-  return `
-    <div class="session-panel-header">
-      <div class="session-panel-section-label">${escHtml(t('sessionHistory'))}</div>
-      <div class="session-panel-heading-row">
-        <div class="session-panel-heading-copy">
-          <div class="session-panel-title-row">
-            <h3 class="session-panel-title" title="${escHtml(title)}">
-              <span class="session-panel-title__text">${escHtml(title)}</span>
-            </h3>
-            <span class="session-panel-agent">${escHtml(agentName)}</span>
-          </div>
-          <div class="session-panel-subtitle" title="${escHtml(thread.cwd)}">
-            ${renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')}
-          </div>
-        </div>
-        <div class="session-panel-actions">
-          <button
-            class="btn btn-icon session-refresh-btn ${data.state.loading ? 'session-refresh-btn--loading' : ''}"
-            type="button"
-            title="${refreshLabel}"
-            aria-label="${refreshLabel}"
-            ${data.refreshDisabled ? 'disabled' : ''}>
-            ${iconRefresh}
-          </button>
-        </div>
-      </div>
-      <button
-        class="btn btn-ghost session-new-btn session-new-btn--full"
-        type="button"
-        title="${escHtml(t('newSession'))}"
-        aria-label="${escHtml(t('newSession'))}"
-        ${data.disabled ? 'disabled' : ''}>
-        ${iconPlus}
-        <span>${escHtml(t('newSession'))}</span>
-      </button>
-    </div>`
 }
 
 function clearSessionItemHoverPreviewTimer(): void {
@@ -3114,7 +3310,9 @@ function scheduleSessionItemHoverPreview(btn: HTMLButtonElement): void {
 function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
   const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
   if (refreshBtn) {
-    refreshBtn.onclick = () => {
+    refreshBtn.onclick = event => {
+      event.preventDefault()
+      event.stopPropagation()
       clearSessionItemHoverPreview()
       void loadThreadSessions(thread.threadId)
     }
@@ -3122,8 +3320,11 @@ function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
 
   const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
   if (newSessionBtn) {
-    newSessionBtn.onclick = () => {
+    newSessionBtn.onclick = event => {
+      event.preventDefault()
+      event.stopPropagation()
       clearSessionItemHoverPreview()
+      setThreadSessionsCollapsed(thread.threadId, false)
       void switchThreadSession(thread, '')
     }
   }
@@ -3131,7 +3332,8 @@ function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
   el.querySelectorAll<HTMLButtonElement>('.session-item[data-session-id]').forEach(btn => {
     btn.onclick = () => {
       const sessionID = btn.dataset.sessionId?.trim() ?? ''
-      if (!sessionID || sessionID === selectedThreadSessionID(thread)) return
+      const isActiveThread = store.get().activeThreadId === thread.threadId
+      if (!sessionID || (isActiveThread && sessionID === selectedThreadSessionID(thread))) return
       clearSessionItemHoverPreview()
       void switchThreadSession(thread, sessionID)
     }
@@ -3147,44 +3349,14 @@ function bindSessionPanelControls(el: HTMLElement, thread: Thread): void {
   if (showMoreBtn) {
     showMoreBtn.onclick = () => {
       clearSessionItemHoverPreview()
+      const mode = showMoreBtn.dataset.showMoreMode === 'loaded' ? 'loaded' : 'remote'
+      expandVisibleSessionCount(thread.threadId)
+      if (mode === 'loaded') {
+        updateSessionPanel()
+        return
+      }
       void loadThreadSessions(thread.threadId, true)
     }
-  }
-}
-
-function syncSessionPanelHeader(el: HTMLElement, thread: Thread, data: SessionPanelRenderData): void {
-  const title = threadTitle(thread)
-  const titleEl = el.querySelector<HTMLElement>('.session-panel-title')
-  const titleTextEl = titleEl?.querySelector<HTMLElement>('.session-panel-title__text')
-  if (titleEl) titleEl.title = title
-  if (titleTextEl && titleTextEl.textContent !== title) {
-    titleTextEl.textContent = title
-  }
-
-  const agentName = agentDisplayName(thread.agent ?? '')
-  const agentEl = el.querySelector<HTMLElement>('.session-panel-agent')
-  if (agentEl && agentEl.textContent !== agentName) {
-    agentEl.textContent = agentName
-  }
-
-  const subtitleEl = el.querySelector<HTMLElement>('.session-panel-subtitle')
-  if (subtitleEl && subtitleEl.title !== thread.cwd) {
-    subtitleEl.title = thread.cwd
-    subtitleEl.innerHTML = renderProjectPathLabel(thread.cwd, 'session-panel-subtitle__text')
-  }
-
-  const refreshLabel = data.state.loading ? t('refreshingSessions') : t('refreshSessions')
-  const refreshBtn = el.querySelector<HTMLButtonElement>('.session-refresh-btn')
-  if (refreshBtn) {
-    refreshBtn.classList.toggle('session-refresh-btn--loading', data.state.loading)
-    refreshBtn.title = refreshLabel
-    refreshBtn.setAttribute('aria-label', refreshLabel)
-    refreshBtn.disabled = data.refreshDisabled
-  }
-
-  const newSessionBtn = el.querySelector<HTMLButtonElement>('.session-new-btn')
-  if (newSessionBtn) {
-    newSessionBtn.disabled = data.disabled
   }
 }
 
@@ -3199,83 +3371,8 @@ function prependEphemeralSession(
   sessions.unshift({ sessionId: normalized, title: normalized })
 }
 
-function renderSessionPanel(): string {
-  const { activeThreadId, threads } = store.get()
-  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
-  if (!thread) {
-    return ''
-  }
-
-  const data = resolveSessionPanelRenderData(thread)
-  const bodyKey = sessionPanelBodyRenderKey(data)
-
-  return `
-    ${renderSessionPanelHeader(thread, data)}
-    <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
-      ${renderSessionPanelBody(data)}
-    </div>`
-}
-
 function updateSessionPanel(): void {
-  const el = document.getElementById('session-sidebar')
-  if (!el) return
-
-  const renderedThreadID = el.dataset.threadId?.trim() ?? ''
-  const previousBody = el.querySelector<HTMLElement>('.session-panel-body')
-  if (renderedThreadID && previousBody) {
-    sessionPanelScrollTopByThread.set(renderedThreadID, previousBody.scrollTop)
-  }
-
-  const { activeThreadId, threads } = store.get()
-  const thread = activeThreadId ? threads.find(item => item.threadId === activeThreadId) : null
-
-  if (!thread) {
-    clearSessionItemHoverPreview()
-    delete el.dataset.threadId
-    el.innerHTML = ''
-    syncSidebarChrome()
-    return
-  }
-
-  syncSidebarChrome()
-  const data = resolveSessionPanelRenderData(thread)
-  const state = data.state
-  const bodyKey = sessionPanelBodyRenderKey(data)
-  const canPatchExisting = renderedThreadID === thread.threadId
-    && !!el.querySelector('.session-panel-header')
-    && !!el.querySelector('.session-panel-body')
-
-  if (!canPatchExisting) {
-    clearSessionItemHoverPreview()
-    el.innerHTML = `${renderSessionPanelHeader(thread, data)}
-      <div class="session-panel-body" data-render-key="${escHtml(bodyKey)}">
-        ${renderSessionPanelBody(data)}
-      </div>`
-    el.dataset.threadId = thread.threadId
-    const nextBody = el.querySelector<HTMLElement>('.session-panel-body')
-    if (nextBody) {
-      nextBody.scrollTop = sessionPanelScrollTopByThread.get(thread.threadId) ?? 0
-    }
-  } else {
-    el.dataset.threadId = thread.threadId
-    syncSessionPanelHeader(el, thread, data)
-    const bodyEl = el.querySelector<HTMLElement>('.session-panel-body')
-    if (bodyEl && bodyEl.dataset.renderKey !== bodyKey) {
-      clearSessionItemHoverPreview()
-      const currentScrollTop = bodyEl.scrollTop
-      bodyEl.innerHTML = renderSessionPanelBody(data)
-      bodyEl.dataset.renderKey = bodyKey
-      bodyEl.scrollTop = currentScrollTop
-    }
-  }
-
-  if (sessionPanelExpanded && state.supported === null && !state.loading && !state.loadingMore && !state.error) {
-    void loadThreadSessions(thread.threadId)
-  }
-
-  syncSessionPanelTitleOverflow(el)
-  syncSessionPanelSubtitleOverflow(el)
-  bindSessionPanelControls(el, thread)
+  updateThreadList()
 }
 
 // ── Thread list rendering ─────────────────────────────────────────────────
@@ -3296,40 +3393,115 @@ function threadTitle(thread: Thread): string {
   return thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd
 }
 
-function syncSidebarChrome(): void {
+function isThreadSessionsCollapsed(threadId: string): boolean {
+  return collapsedThreadIds.has(threadId.trim())
+}
+
+function setThreadSessionsCollapsed(threadId: string, collapsed: boolean): void {
+  const normalizedThreadID = threadId.trim()
+  if (!normalizedThreadID) return
+  if (collapsed) {
+    collapsedThreadIds.add(normalizedThreadID)
+    return
+  }
+  collapsedThreadIds.delete(normalizedThreadID)
+}
+
+function toggleThreadSessionsCollapsed(threadId: string): boolean {
+  const nextCollapsed = !isThreadSessionsCollapsed(threadId)
+  setThreadSessionsCollapsed(threadId, nextCollapsed)
+  return nextCollapsed
+}
+
+function sidebarToggleLabel(): string {
+  return sidebarCollapsed ? t('expandThreads') : t('collapseThreads')
+}
+
+function syncSidebarDependentLayout(): void {
+  syncThreadTitleOverflow()
+  syncActivePlanCardLayout()
+}
+
+function queueSidebarDependentLayoutSync(): void {
+  requestAnimationFrame(() => {
+    syncSidebarDependentLayout()
+  })
+
+  pendingSidebarLayoutSyncCleanup?.()
+  pendingSidebarLayoutSyncCleanup = null
+
   const sidebar = document.getElementById('sidebar')
-  if (sidebar) {
-    sidebar.classList.add('sidebar--expanded')
+  if (!sidebar) return
+
+  const onTransitionEnd = (event: Event) => {
+    const transitionEvent = event as TransitionEvent
+    if (transitionEvent.target !== sidebar) return
+    if (!SIDEBAR_LAYOUT_SYNC_PROPERTIES.has(transitionEvent.propertyName)) return
+    pendingSidebarLayoutSyncCleanup?.()
+    pendingSidebarLayoutSyncCleanup = null
+    syncSidebarDependentLayout()
   }
 
-  const { activeThreadId, threads } = store.get()
-  const hasActiveThread = !!(activeThreadId && threads.some(thread => thread.threadId === activeThreadId))
-  const sessionSidebar = document.getElementById('session-sidebar')
-  if (sessionSidebar) {
-    sessionSidebar.hidden = !hasActiveThread
-    sessionSidebar.classList.toggle('session-sidebar--expanded', hasActiveThread && sessionPanelExpanded)
-    sessionSidebar.classList.toggle('session-sidebar--collapsed', hasActiveThread && !sessionPanelExpanded)
+  sidebar.addEventListener('transitionend', onTransitionEnd)
+  pendingSidebarLayoutSyncCleanup = () => {
+    sidebar.removeEventListener('transitionend', onTransitionEnd)
   }
+}
 
-  document.querySelectorAll<HTMLButtonElement>('.chat-session-toggle-btn').forEach(btn => {
-    const label = sessionPanelExpanded ? 'Collapse session list' : 'Expand session list'
-    btn.setAttribute('aria-label', label)
-    btn.setAttribute('title', label)
-    btn.setAttribute('aria-expanded', sessionPanelExpanded ? 'true' : 'false')
-    btn.dataset.expanded = sessionPanelExpanded ? 'true' : 'false'
+function renderSidebarToggle(): string {
+  const label = sidebarToggleLabel()
+  const expanded = sidebarCollapsed ? 'false' : 'true'
+  return `
+    <div class="chat-sidebar-toggle-zone">
+      <button
+        class="btn chat-sidebar-toggle-btn"
+        id="sidebar-toggle-btn"
+        type="button"
+        data-expanded="${expanded}"
+        aria-expanded="${expanded}"
+        aria-controls="sidebar"
+        aria-label="${escHtml(label)}"
+        title="${escHtml(label)}"
+      >
+        ${iconChevronRight}
+      </button>
+    </div>`
+}
+
+function toggleSidebarCollapsed(force?: boolean): void {
+  sidebarCollapsed = typeof force === 'boolean' ? force : !sidebarCollapsed
+  if (resetThreadActionMenuState()) {
+    updateThreadList()
+  }
+  syncSidebarChrome()
+  queueSidebarDependentLayoutSync()
+}
+
+function bindSidebarToggle(): void {
+  document.getElementById('sidebar-toggle-btn')?.addEventListener('click', e => {
+    e.preventDefault()
+    toggleSidebarCollapsed()
   })
 }
 
-function setSessionPanelExpanded(expanded: boolean): void {
-  const next = !!expanded
-  if (sessionPanelExpanded === next) {
-    syncSidebarChrome()
-    return
+function syncSidebarChrome(): void {
+  const sidebar = document.getElementById('sidebar')
+  const desktop = window.innerWidth > 768
+  const expanded = !desktop || !sidebarCollapsed
+
+  if (sidebar) {
+    sidebar.classList.toggle('sidebar--expanded', expanded)
+    sidebar.classList.toggle('sidebar--collapsed', desktop && !expanded)
   }
 
-  sessionPanelExpanded = next
-  syncSidebarChrome()
-  updateSessionPanel()
+  const label = desktop && sidebarCollapsed ? t('expandThreads') : t('collapseThreads')
+  document.querySelectorAll<HTMLButtonElement>('.chat-sidebar-toggle-btn').forEach(btn => {
+    const expandedValue = expanded ? 'true' : 'false'
+    btn.dataset.expanded = expandedValue
+    btn.setAttribute('aria-expanded', expandedValue)
+    btn.setAttribute('aria-label', label)
+    btn.title = label
+  })
 }
 
 type ConfigPickerState = 'loading' | 'empty' | 'ready'
@@ -3639,18 +3811,6 @@ function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): stri
   return escHtml((agentId || 'A').slice(0, 1).toUpperCase())
 }
 
-function hasAgentAvatarIcon(agentId: string): boolean {
-  const normalized = (agentId || '').trim().toLowerCase()
-  return normalized === 'codex'
-    || normalized === 'gemini'
-    || normalized === 'claude'
-    || normalized === 'cursor'
-    || normalized === 'kimi'
-    || normalized === 'opencode'
-    || normalized === 'qwen'
-    || normalized === 'blackbox'
-}
-
 type ThreadActivityIndicator = 'loading' | 'done' | null
 
 function renderThreadStatusIndicator(status: ThreadActivityIndicator): string {
@@ -3688,51 +3848,17 @@ function syncThreadTitleOverflow(scope: ParentNode = document): void {
     titleEl.style.removeProperty('--thread-title-overflow')
     titleEl.style.removeProperty('--thread-title-scroll-duration')
 
-    const overflowPx = Math.max(0, Math.ceil(textEl.scrollWidth - titleEl.clientWidth))
+    const titleWidth = Math.ceil(titleEl.clientWidth)
+    const textWidth = Math.ceil(textEl.scrollWidth)
+    if (titleWidth <= 0 || textWidth <= 0) return
+
+    const overflowPx = Math.max(0, textWidth - titleWidth)
     if (overflowPx <= 6) return
 
     const durationMs = Math.min(5000, Math.max(1600, overflowPx * 14))
     titleEl.dataset.overflowing = 'true'
     titleEl.style.setProperty('--thread-title-overflow', `${overflowPx}px`)
     titleEl.style.setProperty('--thread-title-scroll-duration', `${(durationMs / 1000).toFixed(2)}s`)
-  })
-}
-
-function syncSessionPanelSubtitleOverflow(scope: ParentNode = document): void {
-  scope.querySelectorAll<HTMLElement>('.session-panel-subtitle').forEach(subtitleEl => {
-    const textEl = subtitleEl.querySelector<HTMLElement>('.session-panel-subtitle__text')
-    if (!textEl) return
-
-    subtitleEl.dataset.overflowing = 'false'
-    subtitleEl.style.removeProperty('--session-panel-subtitle-overflow')
-    subtitleEl.style.removeProperty('--session-panel-subtitle-scroll-duration')
-
-    const overflowPx = Math.max(0, Math.ceil(textEl.scrollWidth - subtitleEl.clientWidth))
-    if (overflowPx <= 6) return
-
-    const durationMs = Math.min(5200, Math.max(1800, overflowPx * 16))
-    subtitleEl.dataset.overflowing = 'true'
-    subtitleEl.style.setProperty('--session-panel-subtitle-overflow', `${overflowPx}px`)
-    subtitleEl.style.setProperty('--session-panel-subtitle-scroll-duration', `${(durationMs / 1000).toFixed(2)}s`)
-  })
-}
-
-function syncSessionPanelTitleOverflow(scope: ParentNode = document): void {
-  scope.querySelectorAll<HTMLElement>('.session-panel-title').forEach(titleEl => {
-    const textEl = titleEl.querySelector<HTMLElement>('.session-panel-title__text')
-    if (!textEl) return
-
-    titleEl.dataset.overflowing = 'false'
-    titleEl.style.removeProperty('--session-panel-title-overflow')
-    titleEl.style.removeProperty('--session-panel-title-scroll-duration')
-
-    const overflowPx = Math.max(0, Math.ceil(textEl.scrollWidth - titleEl.clientWidth))
-    if (overflowPx <= 6) return
-
-    const durationMs = Math.min(5000, Math.max(1700, overflowPx * 14))
-    titleEl.dataset.overflowing = 'true'
-    titleEl.style.setProperty('--session-panel-title-overflow', `${overflowPx}px`)
-    titleEl.style.setProperty('--session-panel-title-scroll-duration', `${(durationMs / 1000).toFixed(2)}s`)
   })
 }
 
@@ -3749,49 +3875,96 @@ function renderSessionStatusIndicator(loading: boolean): string {
       </span>`
 }
 
-function renderThreadItem(
-  thread: Thread,
-  activeId: string | null,
-  activityIndicator: ThreadActivityIndicator,
-): string {
-  const isActive = thread.threadId === activeId
+function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndicator): string {
   const isMenuOpen = openThreadActionMenuId === thread.threadId
-  const hasIconAvatar = hasAgentAvatarIcon(thread.agent ?? '')
-  const avatar = renderAgentAvatar(thread.agent ?? '', 'thread')
+  const collapsed = isThreadSessionsCollapsed(thread.threadId)
+  const data = resolveSessionPanelRenderData(thread)
   const displayTitle = threadTitle(thread)
   const displayAgent = agentDisplayName(thread.agent ?? '')
-  const relTime = thread.updatedAt ? formatRelativeTime(thread.updatedAt) : ''
+  const agentAvatar = renderAgentAvatar(thread.agent ?? '', 'thread')
+  const bodyKey = sessionPanelBodyRenderKey(data)
+  const sessionPanelId = `thread-sessions-${thread.threadId}`
+  const toggleLabel = collapsed ? t('expandSessionHistory') : t('collapseSessionHistory')
 
   return `
-    <div class="thread-item ${isActive ? 'thread-item--active' : ''} ${isMenuOpen ? 'thread-item--menu-open' : ''}"
-         data-thread-id="${escHtml(thread.threadId)}"
-         role="button"
-         tabindex="0"
-         aria-label="${escHtml(displayTitle)}">
-      <div class="thread-item-main">
-        <div class="thread-item-avatar ${hasIconAvatar ? 'thread-item-avatar--icon' : (isActive ? '' : 'thread-item-avatar--inactive')}">${avatar}</div>
-        <div class="thread-item-body">
-          <div class="thread-item-row">
-            <div class="thread-item-title" title="${escHtml(displayTitle)}">
-              <span class="thread-item-title__text">${escHtml(displayTitle)}</span>
+    <section class="thread-group ${collapsed ? 'thread-group--collapsed' : ''}" data-thread-id="${escHtml(thread.threadId)}">
+      <div class="thread-item ${isMenuOpen ? 'thread-item--menu-open' : ''}" data-thread-id="${escHtml(thread.threadId)}">
+        <button
+          class="thread-item-main"
+          type="button"
+          data-thread-id="${escHtml(thread.threadId)}"
+          aria-controls="${escHtml(sessionPanelId)}"
+          aria-expanded="${collapsed ? 'false' : 'true'}"
+          aria-label="${escHtml(toggleLabel)}"
+          title="${escHtml(toggleLabel)}">
+          <span
+            class="thread-item-toggle ${collapsed ? 'thread-item-toggle--collapsed' : ''}"
+            aria-hidden="true">
+            <span class="thread-item-toggle-avatar thread-item-avatar thread-item-avatar--icon" aria-hidden="true">${agentAvatar}</span>
+            <span class="thread-item-toggle-chevron" aria-hidden="true">${iconChevronRight}</span>
+          </span>
+          <div class="thread-item-body">
+            <div class="thread-item-row">
+              <div class="thread-item-title" title="${escHtml(displayTitle)}">
+                <span class="thread-item-title__text">${escHtml(displayTitle)}</span>
+              </div>
             </div>
-            ${relTime ? `<span class="thread-item-time">${escHtml(relTime)}</span>` : ''}
+            <div class="thread-item-meta">
+              <span class="thread-item-agent">${escHtml(displayAgent)}</span>
+              ${renderThreadStatusIndicator(activityIndicator)}
+            </div>
           </div>
-          <div class="thread-item-meta">
-            <span class="thread-item-agent">${escHtml(displayAgent)}</span>
-            ${renderThreadStatusIndicator(activityIndicator)}
-          </div>
+        </button>
+        <div class="thread-item-actions">
+          <button
+            class="btn btn-ghost btn-sm session-new-btn"
+            type="button"
+            title="${escHtml(t('newSession'))}"
+            aria-label="${escHtml(t('newSession'))}"
+            ${data.disabled ? 'disabled' : ''}>
+            ${iconPlus}
+          </button>
+          <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
+                  data-thread-id="${escHtml(thread.threadId)}"
+                  aria-expanded="${isMenuOpen ? 'true' : 'false'}"
+                  aria-label="${escHtml(t('agentActions'))}">
+            ${iconDotsHorizontal}
+          </button>
         </div>
       </div>
-      <div class="thread-item-actions">
-        <button class="btn btn-ghost btn-sm thread-item-menu-trigger" type="button"
-                data-thread-id="${escHtml(thread.threadId)}"
-                aria-expanded="${isMenuOpen ? 'true' : 'false'}"
-                aria-label="${escHtml(t('agentActions'))}">
-          ${iconDotsHorizontal}
-        </button>
+      <div
+        class="thread-group-sessions"
+        id="${escHtml(sessionPanelId)}"
+        data-render-key="${escHtml(bodyKey)}"
+        ${collapsed ? 'hidden aria-hidden="true"' : 'aria-hidden="false"'}>
+        <div class="thread-group-sessions-body">
+          ${renderSessionPanelBody(data)}
+        </div>
       </div>
-    </div>`
+    </section>`
+}
+
+function syncThreadGroupCollapsedUI(groupEl: HTMLElement, collapsed: boolean): void {
+  groupEl.classList.toggle('thread-group--collapsed', collapsed)
+
+  const toggleLabel = collapsed ? t('expandSessionHistory') : t('collapseSessionHistory')
+  const triggerBtn = groupEl.querySelector<HTMLButtonElement>('.thread-item-main[data-thread-id]')
+  if (triggerBtn) {
+    triggerBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+    triggerBtn.setAttribute('aria-label', toggleLabel)
+    triggerBtn.title = toggleLabel
+  }
+
+  const toggleIconEl = groupEl.querySelector<HTMLElement>('.thread-item-toggle')
+  if (toggleIconEl) {
+    toggleIconEl.classList.toggle('thread-item-toggle--collapsed', collapsed)
+  }
+
+  const sessionsEl = groupEl.querySelector<HTMLElement>('.thread-group-sessions')
+  if (sessionsEl) {
+    sessionsEl.hidden = collapsed
+    sessionsEl.setAttribute('aria-hidden', collapsed ? 'true' : 'false')
+  }
 }
 
 function renderThreadListEmptyState(): string {
@@ -3807,8 +3980,14 @@ function updateThreadList(): void {
   const el = document.getElementById('thread-list')
   if (!el) return
 
-  const { threads, activeThreadId, streamStates, threadCompletionBadges } = store.get()
+  const { threads, activeThreadId, threadCompletionBadges } = store.get()
   const filtered = threads
+  const threadIdSet = new Set(filtered.map(thread => thread.threadId))
+  Array.from(collapsedThreadIds).forEach(threadId => {
+    if (!threadIdSet.has(threadId)) {
+      collapsedThreadIds.delete(threadId)
+    }
+  })
   const countEl = document.getElementById('thread-count')
   if (countEl) countEl.textContent = String(filtered.length)
 
@@ -3821,11 +4000,10 @@ function updateThreadList(): void {
   el.innerHTML = filtered
     .map(t => {
       const isActive = t.threadId === activeThreadId
-      const activityIndicator: ThreadActivityIndicator = (t.hasActiveSession
-        || Object.values(streamStates).some(streamState => streamState.threadId === t.threadId))
-        ? 'loading'
-        : (!isActive && threadCompletionBadges[t.threadId] ? 'done' : null)
-      return renderThreadItem(t, activeThreadId, activityIndicator)
+      const activityIndicator: ThreadActivityIndicator = !isActive && threadCompletionBadges[t.threadId]
+        ? 'done'
+        : null
+      return renderThreadItem(t, activityIndicator)
     })
     .join('')
 
@@ -3840,23 +4018,39 @@ function updateThreadList(): void {
     btn.addEventListener('keydown', e => e.stopPropagation())
   })
 
-  el.querySelectorAll<HTMLElement>('.thread-item').forEach(item => {
-    const handler = (event?: Event) => {
-      const target = event?.target as HTMLElement | null
-      if (target?.closest('.thread-item-menu-trigger') || target?.closest('.thread-action-popover')) return
-      const id = item.dataset.threadId ?? ''
-      activateThread(id)
-      // Close mobile sidebar on thread select
-      document.getElementById('sidebar')?.classList.remove('sidebar--open')
-    }
-    item.addEventListener('click', handler)
-    item.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') handler(e)
+  el.querySelectorAll<HTMLButtonElement>('.thread-item-main[data-thread-id]').forEach(btn => {
+    btn.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopPropagation()
+      clearSessionItemHoverPreview()
+      const id = btn.dataset.threadId ?? ''
+      if (!id) return
+      const nextCollapsed = toggleThreadSessionsCollapsed(id)
+      const groupEl = btn.closest<HTMLElement>('.thread-group')
+      if (!groupEl) {
+        updateThreadList()
+        return
+      }
+      syncThreadGroupCollapsedUI(groupEl, nextCollapsed)
     })
+  })
+
+  el.querySelectorAll<HTMLElement>('.thread-group[data-thread-id]').forEach(groupEl => {
+    const threadId = groupEl.dataset.threadId?.trim() ?? ''
+    const thread = filtered.find(item => item.threadId === threadId)
+    if (!thread) return
+    bindSessionPanelControls(groupEl, thread)
   })
 
   syncThreadTitleOverflow(el)
   renderThreadActionLayer()
+
+  filtered.forEach(thread => {
+    const state = sessionPanelState(thread.threadId)
+    if (state.supported === null && !state.loading && !state.loadingMore && !state.error) {
+      void loadThreadSessions(thread.threadId)
+    }
+  })
 }
 
 async function handleRenameThread(threadId: string, nextTitle: string): Promise<void> {
@@ -3968,8 +4162,9 @@ async function handleDeleteThread(threadId: string): Promise<void> {
   })
   sessionPanelStateByThread.delete(threadId)
   sessionPanelRequestSeqByThread.delete(threadId)
-  sessionPanelScrollTopByThread.delete(threadId)
   sessionTitleOverridesByThread.delete(threadId)
+  visibleSessionCountByThread.delete(threadId)
+  collapsedThreadIds.delete(threadId)
   threadGitStateByThread.delete(threadId)
   threadGitRequestSeqByThread.delete(threadId)
   sessionSwitchingThreads.delete(threadId)
@@ -4046,7 +4241,6 @@ async function turnsToMessagesAsync(turns: Turn[]): Promise<Message[]> {
         stopReason:   t.stopReason   || undefined,
         errorMessage: t.errorMessage || undefined,
         segments:     analysis.segments,
-        planEntries:  analysis.planEntries,
         toolCalls:    analysis.toolCalls,
         reasoning:    hasReasoningText(analysis.reasoning) ? analysis.reasoning : undefined,
       })
@@ -4172,7 +4366,6 @@ function mergeMessageWithCachedMetadata(message: Message, cached: Message): Mess
     ...message,
     attachments: cloneMessageAttachments(message.attachments),
     segments: cloneMessageSegments(message.segments),
-    planEntries: clonePlanEntries(message.planEntries),
     toolCalls: cloneToolCalls(message.toolCalls),
   }
 
@@ -4181,9 +4374,6 @@ function mergeMessageWithCachedMetadata(message: Message, cached: Message): Mess
   }
   if (messageSegmentRichness(cached.segments) > messageSegmentRichness(next.segments)) {
     next.segments = cloneMessageSegments(cached.segments)
-  }
-  if (!next.planEntries?.length && cached.planEntries?.length) {
-    next.planEntries = clonePlanEntries(cached.planEntries)
   }
   if (!(next.toolCalls?.length) && cached.toolCalls?.length) {
     next.toolCalls = cloneToolCalls(cached.toolCalls)
@@ -4313,6 +4503,7 @@ async function loadHistory(threadId: string): Promise<void> {
     if (runningTurn && renderState.activeThreadId === threadId && renderThread && threadChatScopeKey(renderThread) === requestedScopeKey) {
       appendOrRestoreStreamingBubble(renderThread)
       renderPendingPermissionCards(requestedScopeKey)
+      renderActivePlanCard(requestedScopeKey)
       if (!streamsByScope.has(requestedScopeKey)) {
         const streamState = getScopeStreamState(requestedScopeKey)
         if (streamState?.turnId) {
@@ -4380,10 +4571,10 @@ function renderPlanInnerHTML(entries: PlanEntry[]): string {
     </ol>`
 }
 
-function renderPlanSectionHTML(entries: PlanEntry[] | undefined, extraClass = ''): string {
+function renderFloatingPlanHTML(entries: PlanEntry[] | undefined): string {
   const normalized = clonePlanEntries(entries)
   if (!normalized?.length) return ''
-  return `<div class="message-plan${extraClass}">${renderPlanInnerHTML(normalized)}</div>`
+  return `<div class="message-plan message-plan--floating" aria-live="polite">${renderPlanInnerHTML(normalized)}</div>`
 }
 
 function formatToolCallLabel(value: string | undefined): string {
@@ -5152,8 +5343,6 @@ function renderMessage(msg: Message): string {
   }
 
   const isCancelled = msg.status === 'cancelled'
-
-  const planHTML = renderPlanSectionHTML(msg.planEntries)
   const segments = resolveMessageSegments(msg)
   const hasContent = messageHasContentSegment(segments)
   const segmentsHTML = renderMessageSegmentsHTML(msg.id, segments, msg.status, false, null, null, null, msg.timestamp)
@@ -5171,7 +5360,6 @@ function renderMessage(msg: Message): string {
   return `
     <div class="message message--agent" data-msg-id="${escHtml(msg.id)}">
       <div class="message-group">
-        ${planHTML}
         ${segmentsHTML}
         ${statusHTML}
         ${footerMeta}
@@ -5289,15 +5477,11 @@ function renderMessageListSync(listEl: HTMLElement, msgs: Message[]): void {
 function renderStreamingBubbleHTML(
   messageID: string,
   segments: MessageSegment[] | undefined,
-  planEntries?: PlanEntry[],
   activeStreamingContentSegmentID: string | null = null,
   activeStreamingReasoningSegmentID: string | null = null,
   activeStreamingToolCallSegmentID: string | null = null,
 ): string {
-  const normalizedPlanEntries = clonePlanEntries(planEntries)
-  const planHiddenAttr = normalizedPlanEntries?.length ? '' : ' hidden'
   return `
-    <div class="message-plan message-plan--streaming" id="plan-${escHtml(messageID)}"${planHiddenAttr}>${normalizedPlanEntries ? renderPlanInnerHTML(normalizedPlanEntries) : ''}</div>
     <div id="segments-${escHtml(messageID)}">${renderMessageSegmentsHTML(
       messageID,
       segments,
@@ -5332,6 +5516,31 @@ function updateStreamingBubbleSegments(
   bindMarkdownControls(segmentsEl)
   bindReasoningPanels(segmentsEl)
   bindToolCallPanels(segmentsEl)
+}
+
+function syncActivePlanCardLayout(): void {
+  const wrapEl = document.querySelector<HTMLElement>('.message-list-wrap')
+  const slotEl = document.getElementById('message-overlay-slot')
+  if (!wrapEl || !slotEl) return
+
+  const cardEl = slotEl.firstElementChild as HTMLElement | null
+  const inset = cardEl ? Math.ceil(cardEl.getBoundingClientRect().height) + 24 : 0
+  wrapEl.style.setProperty('--message-overlay-inset', `${inset}px`)
+}
+
+function renderActivePlanCard(scopeKey: string): void {
+  const activeScopeKey = activeChatScopeKey()
+  if (!scopeKey || scopeKey !== activeScopeKey) return
+
+  const slotEl = document.getElementById('message-overlay-slot')
+  if (!slotEl) return
+
+  // Running turns hydrate streamPlanByScope from persisted plan_update history,
+  // so refreshed or secondary viewers render the same live bottom plan card.
+  const streamState = getScopeStreamState(scopeKey)
+  const planEntries = streamState ? clonePlanEntries(streamPlanByScope.get(scopeKey)) : undefined
+  slotEl.innerHTML = renderFloatingPlanHTML(planEntries)
+  syncActivePlanCardLayout()
 }
 
 function setReasoningPanelExpanded(panelEl: HTMLElement, expanded: boolean): void {
@@ -5403,18 +5612,6 @@ function bindToolCallPanels(listEl: HTMLElement): void {
       setToolCallPanelExpanded(panelEl, nextExpanded)
     })
   })
-}
-
-function updateStreamingBubblePlan(messageID: string, entries: PlanEntry[] | undefined): void {
-  const planEl = document.getElementById(`plan-${messageID}`)
-  if (!planEl) return
-  const normalized = clonePlanEntries(entries)
-  planEl.hidden = !normalized?.length
-  if (!normalized?.length) {
-    planEl.innerHTML = ''
-    return
-  }
-  planEl.innerHTML = renderPlanInnerHTML(normalized)
 }
 
 function updateMessageList(): void {
@@ -5569,17 +5766,28 @@ function setThreadGitDiffExpanded(scopeKey: string, expanded: boolean): void {
   expandedThreadGitDiffScopes.delete(scopeKey)
 }
 
-function setThreadGitDiffTogglePending(scopeKey: string, pending: boolean): void {
-  if (!scopeKey) return
-  if (pending) {
-    pendingThreadGitDiffToggleScopes.add(scopeKey)
-    return
-  }
-  pendingThreadGitDiffToggleScopes.delete(scopeKey)
-}
+function openThreadGitDiffDrawer(scopeKey: string, filePath: string): void {
+  const threadId = threadIDFromScopeKey(scopeKey)
+  const state = threadGitDiffState(scopeKey)
+  const selectedFile = state.files.find(file => file.path === filePath)
+  if (!isThreadGitDiffFileViewable(selectedFile)) return
+  if (state.drawerOpen && state.selectedFilePath === filePath) return
+  setThreadGitDiffState(scopeKey, {
+    drawerOpen: true,
+    selectedFilePath: filePath,
+  })
+  const initialDetail = cloneThreadGitDiffFileDetailState({
+    path: filePath,
+    loading: true,
+  }, filePath)
+  setThreadGitDiffPreview(scopeKey, filePath, { detail: initialDetail })
 
-function isThreadGitDiffTogglePending(scopeKey: string): boolean {
-  return pendingThreadGitDiffToggleScopes.has(scopeKey)
+  if (store.get().activeThreadId === threadId) {
+    syncThreadGitDiffDrawer(threadId)
+  }
+
+  const sessionID = selectedThreadSessionID(store.get().threads.find(t => t.threadId === threadId)!)
+  void loadThreadGitDiffFileDetail(threadId, sessionID, filePath, { force: true })
 }
 
 function closeThreadGitDiffPanel(threadId = store.get().activeThreadId ?? ''): void {
@@ -5592,6 +5800,28 @@ function closeThreadGitDiffPanel(threadId = store.get().activeThreadId ?? ''): v
   setThreadGitDiffExpanded(scopeKey, false)
   if (store.get().activeThreadId === threadId) {
     syncThreadGitDiffControl(threadId)
+  }
+}
+
+function closeThreadGitDiffDrawer(threadId = store.get().activeThreadId ?? ''): void {
+  const activeThread = store.get().threads.find(item => item.threadId === threadId)
+  const scopeKey = selectedThreadGitDiffScopeKey(activeThread)
+  if (!scopeKey) return
+
+  clearThreadGitDiffPreview(scopeKey)
+  setThreadGitDiffState(scopeKey, {
+    drawerOpen: false,
+    selectedFilePath: '',
+  })
+  if (store.get().activeThreadId === threadId) {
+    // Clear active row locally without replacing widget innerHTML,
+    // which would destroy focused elements and trigger spurious focusout.
+    const widgetEl = document.getElementById('thread-git-diff')
+    widgetEl?.querySelectorAll<HTMLButtonElement>('.git-diff-file-row--active').forEach(row => {
+      row.classList.remove('git-diff-file-row--active')
+      row.setAttribute('aria-pressed', 'false')
+    })
+    syncThreadGitDiffDrawer(threadId)
   }
 }
 
@@ -5614,6 +5844,54 @@ function syncThreadGitDiffControl(threadId = store.get().activeThreadId ?? ''): 
   slotEl.innerHTML = renderThreadGitDiffControl(thread)
   bindThreadGitDiffControl(thread)
   updateInputState()
+}
+
+function syncThreadGitDiffDrawer(threadId = store.get().activeThreadId ?? ''): void {
+  const slotEl = document.getElementById('git-diff-preview-shell')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const normalizedThreadID = threadId.trim()
+  if (!normalizedThreadID) {
+    slotEl.innerHTML = ''
+    slotEl.hidden = true
+    return
+  }
+
+  const thread = store.get().threads.find(item => item.threadId === normalizedThreadID)
+  if (!thread) {
+    slotEl.innerHTML = ''
+    slotEl.hidden = true
+    return
+  }
+
+  const preview = selectedThreadGitDiffPreview(thread)
+  const markup = preview ? renderThreadGitDiffDrawer(preview) : ''
+  slotEl.innerHTML = markup
+  slotEl.hidden = !markup
+  if (!markup) return
+  bindThreadGitDiffDrawer(thread)
+}
+
+function refreshThreadGitDiffPreview(scopeKey: string): void {
+  const slotEl = document.getElementById('git-diff-preview-shell')
+  if (!(slotEl instanceof HTMLElement)) return
+
+  const activeThread = store.get().activeThreadId
+    ? store.get().threads.find(item => item.threadId === store.get().activeThreadId) ?? null
+    : null
+  const activeScopeKey = selectedThreadGitDiffScopeKey(activeThread)
+  if (!activeScopeKey || activeScopeKey !== scopeKey.trim()) return
+
+  const preview = threadGitDiffPreview(activeScopeKey)
+  if (!preview) return
+
+  const markup = renderThreadGitDiffDrawer(preview)
+  if (!markup) return
+
+  slotEl.innerHTML = markup
+  slotEl.hidden = false
+
+  if (activeThread) bindThreadGitDiffDrawer(activeThread)
 }
 
 function syncThreadGitControl(threadId = store.get().activeThreadId ?? ''): void {
@@ -5683,6 +5961,9 @@ async function loadThreadGitDiff(
   })
   if (store.get().activeThreadId === normalizedThreadID) {
     syncThreadGitDiffControl(normalizedThreadID)
+    if (!hasSelectedThreadGitDiffPreview(normalizedThreadID)) {
+      syncThreadGitDiffDrawer(normalizedThreadID)
+    }
   }
 
   try {
@@ -5693,6 +5974,9 @@ async function loadThreadGitDiff(
     const nextState = applyThreadGitDiffInfo(scopeKey, normalizedSessionID, info)
     if (store.get().activeThreadId === normalizedThreadID) {
       syncThreadGitDiffControl(normalizedThreadID)
+      if (!hasSelectedThreadGitDiffPreview(normalizedThreadID)) {
+        syncThreadGitDiffDrawer(normalizedThreadID)
+      }
     }
     return nextState
   } catch (err) {
@@ -5718,6 +6002,9 @@ async function loadThreadGitDiff(
       })
     if (store.get().activeThreadId === normalizedThreadID) {
       syncThreadGitDiffControl(normalizedThreadID)
+      if (!hasSelectedThreadGitDiffPreview(normalizedThreadID)) {
+        syncThreadGitDiffDrawer(normalizedThreadID)
+      }
     }
     return nextState
   }
@@ -5725,6 +6012,130 @@ async function loadThreadGitDiff(
 
 function loadSelectedThreadGitDiff(thread: Thread, options: { force?: boolean } = {}): Promise<ThreadGitDiffState> {
   return loadThreadGitDiff(thread.threadId, selectedThreadSessionID(thread), options)
+}
+
+function threadGitDiffDetailRequestKey(scopeKey: string, path: string): string {
+  return `${scopeKey}\n${path}`
+}
+
+async function loadThreadGitDiffFileDetail(
+  threadId: string,
+  sessionID: string,
+  path: string,
+  options: { force?: boolean } = {},
+): Promise<ThreadGitDiffFileDetailState> {
+  const normalizedThreadID = threadId.trim()
+  const normalizedSessionID = sessionID.trim()
+  const normalizedPath = path.trim()
+  if (!normalizedThreadID || !normalizedSessionID || !normalizedPath) {
+    return emptyThreadGitDiffFileDetailState(normalizedPath)
+  }
+
+  const scopeKey = threadSessionScopeKey(normalizedThreadID, normalizedSessionID)
+  const state = threadGitDiffState(scopeKey)
+  const file = state.files.find(item => item.path === normalizedPath)
+  if (!isThreadGitDiffFileViewable(file)) {
+    setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+      supported: false,
+      kind: undefined,
+      blocks: [],
+      reason: file?.binary ? 'binary' : 'non_text',
+      loading: false,
+      error: '',
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      if (threadGitDiffPreview(scopeKey)?.filePath === normalizedPath) {
+        setThreadGitDiffPreview(scopeKey, normalizedPath, {
+          detail: {
+            path: normalizedPath,
+            supported: false,
+            kind: undefined,
+            blocks: [],
+            reason: file?.binary ? 'binary' : 'non_text',
+            loading: false,
+            error: '',
+          },
+        })
+      }
+      refreshThreadGitDiffPreview(scopeKey)
+    }
+    return threadGitDiffFileDetailState(scopeKey, normalizedPath)
+  }
+
+  const cachedDetail = threadGitDiffFileDetailState(scopeKey, normalizedPath)
+  if (!options.force) {
+    if (cachedDetail.loading) return cachedDetail
+    if (cachedDetail.supported !== null || !!cachedDetail.error) {
+      return cachedDetail
+    }
+  }
+
+  threadGitDiffDetailRequestSeq += 1
+  const requestSeq = threadGitDiffDetailRequestSeq
+  threadGitDiffDetailRequestSeqByKey.set(threadGitDiffDetailRequestKey(scopeKey, normalizedPath), requestSeq)
+  setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+    loading: true,
+    error: '',
+  })
+  if (store.get().activeThreadId === normalizedThreadID) {
+    if (threadGitDiffPreview(scopeKey)?.filePath === normalizedPath) {
+      setThreadGitDiffPreview(scopeKey, normalizedPath, {
+        detail: {
+          ...threadGitDiffFileDetailState(scopeKey, normalizedPath),
+          path: normalizedPath,
+        },
+      })
+    }
+    refreshThreadGitDiffPreview(scopeKey)
+  }
+
+  try {
+    const detail = await api.getThreadGitDiffFile(normalizedThreadID, normalizedPath)
+    if (threadGitDiffDetailRequestSeqByKey.get(threadGitDiffDetailRequestKey(scopeKey, normalizedPath)) !== requestSeq) {
+      return threadGitDiffFileDetailState(scopeKey, normalizedPath)
+    }
+
+    const resolvedDetail = cloneThreadGitDiffFileDetailState({
+      path: normalizedPath,
+      supported: detail.available ? detail.supported : false,
+      kind: detail.kind,
+      blocks: detail.blocks ?? [],
+      reason: detail.reason,
+      loading: false,
+      error: detail.available ? '' : t('gitDiffPreviewUnavailable'),
+    }, normalizedPath)
+    const nextDetail = setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+      ...resolvedDetail,
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      if (threadGitDiffPreview(scopeKey)?.filePath === normalizedPath) {
+        setThreadGitDiffPreview(scopeKey, normalizedPath, { detail: resolvedDetail })
+      }
+      refreshThreadGitDiffPreview(scopeKey)
+    }
+    return nextDetail.detailByPath[normalizedPath] ?? resolvedDetail
+  } catch (err) {
+    if (threadGitDiffDetailRequestSeqByKey.get(threadGitDiffDetailRequestKey(scopeKey, normalizedPath)) !== requestSeq) {
+      return threadGitDiffFileDetailState(scopeKey, normalizedPath)
+    }
+
+    const message = err instanceof Error ? err.message : String(err)
+    const errorDetail = cloneThreadGitDiffFileDetailState({
+      path: normalizedPath,
+      loading: false,
+      error: message,
+    }, normalizedPath)
+    const nextDetail = setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
+      ...errorDetail,
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      if (threadGitDiffPreview(scopeKey)?.filePath === normalizedPath) {
+        setThreadGitDiffPreview(scopeKey, normalizedPath, { detail: errorDetail })
+      }
+      refreshThreadGitDiffPreview(scopeKey)
+    }
+    return nextDetail.detailByPath[normalizedPath] ?? errorDetail
+  }
 }
 
 function stopThreadGitDiffPolling(): void {
@@ -5904,32 +6315,34 @@ function bindThreadGitDiffControl(thread: Thread): void {
   const scopeKey = widgetEl.dataset.scopeKey?.trim() ?? ''
   if (!scopeKey) return
 
-  triggerEl.addEventListener('click', () => {
-    const state = threadGitDiffState(scopeKey)
-    if (!hasThreadGitDiffChanges(state)) return
-    setThreadGitDiffTogglePending(scopeKey, true)
-  }, true)
-
   triggerEl.addEventListener('click', event => {
     event.preventDefault()
     const state = threadGitDiffState(scopeKey)
-    if (!hasThreadGitDiffChanges(state)) {
-      setThreadGitDiffTogglePending(scopeKey, false)
-      return
-    }
-    setThreadGitDiffExpanded(scopeKey, !isThreadGitDiffExpanded(scopeKey))
+    if (!hasThreadGitDiffChanges(state)) return
+    const nextExpanded = !isThreadGitDiffExpanded(scopeKey)
+    setThreadGitDiffExpanded(scopeKey, nextExpanded)
     syncThreadGitDiffControl(thread.threadId)
-    window.setTimeout(() => {
-      setThreadGitDiffTogglePending(scopeKey, false)
-    }, 0)
   })
 
-  widgetEl.addEventListener('focusout', event => {
-    if (isThreadGitDiffTogglePending(scopeKey)) return
-    const related = event.relatedTarget as Node | null
-    if (!related || !widgetEl.contains(related)) {
-      closeThreadGitDiffPanel(thread.threadId)
-    }
+  widgetEl.addEventListener('click', event => {
+    const target = event.target as HTMLElement | null
+    const fileButton = target?.closest<HTMLButtonElement>('.git-diff-file-row[data-git-diff-file-path]')
+    if (!fileButton || fileButton.disabled) return
+
+    event.preventDefault()
+    const path = fileButton.dataset.gitDiffFilePath?.trim() ?? ''
+    if (!path) return
+
+    openThreadGitDiffDrawer(scopeKey, path)
+
+    // Update active state locally without replacing innerHTML,
+    // which would destroy the focused element and trigger focusout.
+    widgetEl.querySelectorAll<HTMLButtonElement>('.git-diff-file-row[data-git-diff-file-path]').forEach(row => {
+      row.classList.remove('git-diff-file-row--active')
+      row.setAttribute('aria-pressed', 'false')
+    })
+    fileButton.classList.add('git-diff-file-row--active')
+    fileButton.setAttribute('aria-pressed', 'true')
   })
 
   triggerEl.addEventListener('keydown', event => {
@@ -5937,6 +6350,17 @@ function bindThreadGitDiffControl(thread: Thread): void {
     event.preventDefault()
     closeThreadGitDiffPanel(thread.threadId)
     triggerEl.focus()
+  })
+}
+
+function bindThreadGitDiffDrawer(thread: Thread): void {
+  const hasDrawer = document.getElementById('thread-git-diff-drawer')
+  if (!hasDrawer) return
+
+  const closeBtn = document.getElementById('thread-git-diff-drawer-close') as HTMLButtonElement | null
+  closeBtn?.addEventListener('click', event => {
+    event.preventDefault()
+    closeThreadGitDiffDrawer(thread.threadId)
   })
 }
 
@@ -6095,6 +6519,7 @@ function selectSlashCommand(commandName: string): void {
 
 function renderChatEmpty(): string {
   return `
+    ${renderSidebarToggle()}
     <div class="workspace-landing">
       <div class="workspace-landing__panel">
         <div class="workspace-landing__eyebrow">${escHtml(t('workspaceEyebrow'))}</div>
@@ -6247,7 +6672,9 @@ function renderThreadGitDiffStat(value: number, kind: 'added' | 'deleted'): stri
 
 function renderThreadGitDiffFileStats(file: ThreadGitDiffInfo['files'][number]): string {
   if (file.untracked) {
-    return `<span class="git-diff-file-badge">${escHtml(t('gitDiffNew'))}</span>`
+    return `
+      <span class="git-diff-file-badge">${escHtml(t('gitDiffNew'))}</span>
+      ${file.binary ? `<span class="git-diff-file-badge">${escHtml(t('gitDiffBinary'))}</span>` : ''}`
   }
   if (file.binary) {
     return `<span class="git-diff-file-badge">${escHtml(t('gitDiffBinary'))}</span>`
@@ -6270,6 +6697,128 @@ function renderThreadGitDiffFileIcon(path: string): string {
   return `<span class="git-diff-file-icon git-diff-file-icon--glyph git-diff-file-icon--${icon.font}" aria-hidden="true" style="--git-file-icon-color: ${icon.color}; --git-file-icon-scale: ${(icon.scale ?? 1).toFixed(2)};">${icon.glyph}</span>`
 }
 
+function renderThreadGitDiffFileRow(
+  file: ThreadGitDiffInfo['files'][number],
+  activeFilePath: string,
+): string {
+  const clickable = isThreadGitDiffFileViewable(file)
+  const active = clickable && activeFilePath === file.path
+  const title = clickable
+    ? t('gitDiffOpenFile')
+    : (file.binary ? t('gitDiffUnsupportedBinary') : t('gitDiffUnsupportedText'))
+
+  const content = `
+    ${renderThreadGitDiffFileIcon(file.path)}
+    <div class="git-diff-file-copy">
+      <div class="git-diff-file-path" title="${escHtml(file.path)}">${escHtml(file.path)}</div>
+    </div>
+    <div class="git-diff-file-stats">
+      ${renderThreadGitDiffFileStats(file)}
+    </div>`
+
+  if (!clickable) {
+    return `
+      <div class="git-diff-file-row git-diff-file-row--disabled" title="${escHtml(title)}" aria-disabled="true">
+        ${content}
+      </div>`
+  }
+
+  return `
+    <button
+      class="git-diff-file-row${active ? ' git-diff-file-row--active' : ''}"
+      type="button"
+      data-git-diff-file-path="${escHtml(file.path)}"
+      title="${escHtml(title)}"
+      aria-pressed="${active ? 'true' : 'false'}"
+    >
+      ${content}
+    </button>`
+}
+
+function renderThreadGitDiffDrawerContent(
+  detail: ThreadGitDiffFileDetailState,
+  fallbackKind: ThreadGitDiffFileDetail['kind'],
+): string {
+  if (detail.loading) {
+    return `
+      <div class="git-diff-drawer__empty git-diff-drawer__empty--loading">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <span>${escHtml(t('loadingEllipsis'))}</span>
+      </div>`
+  }
+  if (detail.error) {
+    return `<div class="git-diff-drawer__empty git-diff-drawer__empty--error">${escHtml(detail.error)}</div>`
+  }
+  if (detail.supported === null && !detail.blocks.length) {
+    return `
+      <div class="git-diff-drawer__empty git-diff-drawer__empty--loading">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <span>${escHtml(t('loadingEllipsis'))}</span>
+      </div>`
+  }
+  if (detail.supported === false) {
+    const message = detail.reason === 'binary' ? t('gitDiffUnsupportedBinary') : t('gitDiffUnsupportedText')
+    return `<div class="git-diff-drawer__empty">${escHtml(message)}</div>`
+  }
+
+  const renderLines = detail.blocks.flatMap(block => {
+    const textLines = Array.isArray(block.text) && block.text.length ? block.text : ['']
+    return textLines.map((lineText, index) => {
+      const oldLineNumber = Array.isArray(block.oldLineNumbers) ? block.oldLineNumbers[index] : undefined
+      const newLineNumber = Array.isArray(block.newLineNumbers) ? block.newLineNumbers[index] : undefined
+      const showLineNumbers = block.tone !== 'hunk' && block.tone !== 'meta' && (
+        typeof oldLineNumber === 'number' || typeof newLineNumber === 'number'
+      )
+      if (!showLineNumbers) {
+        return `
+          <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone} git-diff-drawer__line--no-numbers">
+            <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
+          </div>`
+      }
+
+      return `
+        <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone}">
+          <span class="git-diff-drawer__line-no git-diff-drawer__line-no--old" aria-hidden="true">${typeof oldLineNumber === 'number' ? String(oldLineNumber) : '&nbsp;'}</span>
+          <span class="git-diff-drawer__line-no git-diff-drawer__line-no--new" aria-hidden="true">${typeof newLineNumber === 'number' ? String(newLineNumber) : '&nbsp;'}</span>
+          <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
+        </div>`
+    })
+  }).join('')
+
+  return `
+    <div class="git-diff-drawer__body">
+      <div class="git-diff-drawer__code" data-kind="${escHtml(detail.kind ?? fallbackKind ?? 'diff')}">${renderLines}</div>
+    </div>`
+}
+
+function renderThreadGitDiffDrawer(preview: ThreadGitDiffPreviewState): string {
+  if (!preview.scopeKey || !preview.filePath) return ''
+  const detail = preview.detail
+  const detailKind = detail.kind ?? preview.fallbackKind ?? 'diff'
+  const badgeLabel = detailKind === 'file' ? t('gitDiffFileContents') : t('gitDiffPatch')
+
+  return `
+    <aside class="git-diff-drawer" id="thread-git-diff-drawer" data-scope-key="${escHtml(preview.scopeKey)}" role="dialog" aria-label="${escHtml(t('gitDiffDrawerTitle'))}">
+      <div class="git-diff-drawer__header">
+        <div class="git-diff-drawer__copy">
+          <span class="git-diff-drawer__eyebrow">${escHtml(t('gitDiffDrawerTitle'))}</span>
+          <div class="git-diff-drawer__title-row">
+            <h3 class="git-diff-drawer__title" title="${escHtml(preview.filePath)}">${escHtml(preview.filePath)}</h3>
+            <span class="git-diff-drawer__badge">${escHtml(badgeLabel)}</span>
+          </div>
+          <div class="git-diff-drawer__repo" title="${escHtml(preview.repoRoot)}">
+            <span class="git-diff-drawer__repo-icon" aria-hidden="true">${iconFolder}</span>
+            <span class="git-diff-drawer__repo-label">${escHtml(preview.repoRoot)}</span>
+          </div>
+        </div>
+        <button class="git-diff-drawer__close" id="thread-git-diff-drawer-close" type="button" aria-label="${escHtml(t('close'))}">
+          ${iconClose}
+        </button>
+      </div>
+      ${renderThreadGitDiffDrawerContent(detail, detailKind)}
+    </aside>`
+}
+
 function renderThreadGitDiffControl(thread: Thread): string {
   const sessionID = selectedThreadSessionID(thread)
   if (!sessionID) return ''
@@ -6280,16 +6829,7 @@ function renderThreadGitDiffControl(thread: Thread): string {
 
   const fileCountLabel = t('gitDiffFiles', { count: state.summary.filesChanged })
   const expanded = isThreadGitDiffExpanded(scopeKey)
-  const fileRows = state.files.map(file => `
-      <div class="git-diff-file-row">
-        ${renderThreadGitDiffFileIcon(file.path)}
-        <div class="git-diff-file-copy">
-          <div class="git-diff-file-path" title="${escHtml(file.path)}">${escHtml(file.path)}</div>
-        </div>
-        <div class="git-diff-file-stats">
-          ${renderThreadGitDiffFileStats(file)}
-        </div>
-      </div>`).join('')
+  const fileRows = state.files.map(file => renderThreadGitDiffFileRow(file, state.selectedFilePath)).join('')
   const panelHTML = expanded
     ? `
       <div class="git-diff-panel" id="thread-git-diff-panel" role="dialog" aria-label="${escHtml(t('gitDiffChangedFiles'))}">
@@ -6435,16 +6975,7 @@ function renderChatThread(thread: Thread): string {
   const isSwitching = threadConfigSwitching.has(thread.threadId)
 
   return `
-    <div class="chat-session-toggle-zone" id="chat-session-toggle-zone">
-      <button
-        class="btn btn-icon chat-session-toggle-btn"
-        id="chat-session-toggle-btn"
-        type="button"
-      >
-        ${iconChevronRight}
-      </button>
-    </div>
-
+    ${renderSidebarToggle()}
     <div class="chat-header">
       <div class="chat-header-left">
         <button class="btn btn-icon mobile-menu-btn" aria-label="${escHtml(t('openMenu'))}">${iconMenu}</button>
@@ -6466,6 +6997,7 @@ function renderChatThread(thread: Thread): string {
 
     <div class="message-list-wrap">
       <div class="message-list" id="message-list"></div>
+      <div class="message-overlay-slot" id="message-overlay-slot"></div>
       <button class="scroll-bottom-btn" id="scroll-bottom-btn"
               aria-label="${escHtml(t('scrollToBottom'))}" style="display:none">↓</button>
     </div>
@@ -6571,6 +7103,7 @@ function updateChatArea(): void {
     stopThreadGitDiffPolling()
     chat.innerHTML = renderChatEmpty()
     document.getElementById('new-thread-empty-btn')?.addEventListener('click', openNewThread)
+    bindSidebarToggle()
     document.querySelector('.mobile-menu-btn')?.addEventListener('click', () => {
       document.getElementById('sidebar')?.classList.toggle('sidebar--open')
     })
@@ -6579,13 +7112,9 @@ function updateChatArea(): void {
   }
 
   chat.innerHTML = renderChatThread(thread)
+  bindSidebarToggle()
   document.querySelector('.mobile-menu-btn')?.addEventListener('click', () => {
     document.getElementById('sidebar')?.classList.toggle('sidebar--open')
-  })
-  document.getElementById('chat-session-toggle-btn')?.addEventListener('click', event => {
-    event.preventDefault()
-    event.stopPropagation()
-    setSessionPanelExpanded(!sessionPanelExpanded)
   })
   syncSidebarChrome()
 
@@ -6614,6 +7143,7 @@ function updateChatArea(): void {
 
   appendOrRestoreStreamingBubble(thread)
   renderPendingPermissionCards(scopeKey)
+  renderActivePlanCard(scopeKey)
 
   updateInputState()
   bindSessionInfoPopover()
@@ -6623,6 +7153,7 @@ function updateChatArea(): void {
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
   syncThreadGitDiffControl(thread.threadId)
+  syncThreadGitDiffDrawer(thread.threadId)
   syncThreadGitControl(thread.threadId)
   syncSessionUsageControl(thread.threadId)
   void loadSelectedThreadGitDiff(thread, { force: true })
@@ -7179,7 +7710,6 @@ async function handleSend(): Promise<void> {
         ${renderStreamingBubbleHTML(
           agentMsgID,
           streamSegmentsByScope.get(capturedScopeKey),
-          undefined,
           activeContentSegmentID(capturedScopeKey),
           activeReasoningSegmentID(capturedScopeKey),
           activeToolCallSegmentID(capturedScopeKey),
@@ -7232,8 +7762,7 @@ function openNewThread(): void {
 function renderShell(): void {
   const root = document.getElementById('app')
   if (!root) return
-  const { activeThreadId, threads } = store.get()
-  const activeThread = activeThreadId ? threads.find(thread => thread.threadId === activeThreadId) ?? null : null
+  const { threads } = store.get()
 
   root.innerHTML = `
     <div class="layout-shell">
@@ -7277,19 +7806,17 @@ function renderShell(): void {
           <div class="thread-action-layer" id="thread-action-layer" hidden></div>
         </aside>
 
-        <aside class="session-sidebar" id="session-sidebar" ${activeThread ? '' : 'hidden'}>
-          ${activeThread ? renderSessionPanel() : ''}
-        </aside>
-
         <main class="chat" id="chat">
           ${renderChatEmpty()}
         </main>
+        <aside class="git-diff-preview-shell" id="git-diff-preview-shell" hidden></aside>
       </div>
     </div>`
 
   document.getElementById('settings-btn')?.addEventListener('click', () => settingsPanel.open())
   document.getElementById('new-thread-btn')?.addEventListener('click', openNewThread)
   document.getElementById('new-thread-empty-btn')?.addEventListener('click', openNewThread)
+  bindSidebarToggle()
 
   syncSidebarChrome()
 }
@@ -7297,7 +7824,6 @@ function renderShell(): void {
 function rerenderAppShell(): void {
   renderShell()
   updateThreadList()
-  updateSessionPanel()
   updateChatArea()
 }
 
@@ -7368,9 +7894,9 @@ async function init(): Promise<void> {
   }
   document.getElementById('thread-list')?.addEventListener('scroll', repositionThreadActionLayer, { passive: true })
   window.addEventListener('resize', repositionThreadActionLayer)
+  window.addEventListener('resize', debounce(() => syncSidebarChrome(), 120))
   window.addEventListener('resize', debounce(() => syncThreadTitleOverflow(), 120))
-  window.addEventListener('resize', debounce(() => syncSessionPanelTitleOverflow(), 120))
-  window.addEventListener('resize', debounce(() => syncSessionPanelSubtitleOverflow(), 120))
+  window.addEventListener('resize', debounce(() => syncActivePlanCardLayout(), 120))
   document.addEventListener('click', e => {
     const target = e.target as HTMLElement | null
     if (!target?.closest('.input-area')) {
@@ -7382,9 +7908,6 @@ async function init(): Promise<void> {
     }
     if (!target?.closest('.git-branch-picker')) {
       closeGitBranchMenu()
-    }
-    if (!target?.closest('.git-diff-widget')) {
-      closeThreadGitDiffPanel()
     }
 
     if (!openThreadActionMenuId) return
@@ -7413,7 +7936,6 @@ async function init(): Promise<void> {
     }
 
     updateThreadList()
-    updateSessionPanel()
 
     if (threadChanged || shouldRefreshForScopeChange) {
       lastRenderThreadId = activeThreadId
@@ -7435,6 +7957,7 @@ async function init(): Promise<void> {
         appendOrRestoreStreamingBubble(activeThread)
       }
       renderPendingPermissionCards(chatScopeKey)
+      renderActivePlanCard(chatScopeKey)
       updateInputState()
     }
   })

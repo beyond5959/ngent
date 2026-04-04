@@ -49,6 +49,7 @@ export interface SessionInfo {
   cwd?: string
   title?: string
   updatedAt?: string
+  isActive?: boolean
   _meta?: Record<string, unknown>
 }
 
@@ -91,6 +92,7 @@ export interface ThreadGitDiffFile {
   deleted: number
   binary?: boolean
   untracked?: boolean
+  viewable?: boolean
 }
 
 export interface ThreadGitDiffInfo {
@@ -99,6 +101,24 @@ export interface ThreadGitDiffInfo {
   repoRoot?: string
   summary: ThreadGitDiffSummary
   files: ThreadGitDiffFile[]
+}
+
+export interface ThreadGitDiffFileDetail {
+  threadId: string
+  available: boolean
+  repoRoot?: string
+  path: string
+  supported: boolean
+  kind?: 'diff' | 'file'
+  blocks?: ThreadGitDiffRenderedBlock[]
+  reason?: 'binary' | 'non_text'
+}
+
+export interface ThreadGitDiffRenderedBlock {
+  tone: 'plain' | 'meta' | 'hunk' | 'added' | 'deleted'
+  text: string[]
+  oldLineNumbers?: number[]
+  newLineNumbers?: number[]
 }
 
 export interface SessionUsage {

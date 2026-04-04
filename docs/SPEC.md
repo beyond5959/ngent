@@ -19,9 +19,9 @@ Modules:
 - `internal/runtime`: thread controller, turn state machine, cancellation coordination.
 - `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
   - the shared agent callback surface also carries ACP session-usage snapshots so HTTP/storage/Web UI code can persist and render them without provider-specific UI wiring.
-  - per-turn provider resolution selects implementation by thread metadata (agent id + cwd).
+  - turn/session-scope provider resolution selects implementation by thread metadata (`agent`, `cwd`, selected `sessionId`, and fresh-session marker).
   - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, and `cursor`; provider-specific hooks own command startup, request parameter shaping, permission mapping, auth/model quirks, and cancel behavior.
-- `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
+- prompt/context-window composition lives in `internal/httpapi/turn_handlers.go`, where ngent builds injected prompts from `threads.summary`, recent non-internal turns, and the current input.
 - `internal/sse`: event formatting and SSE writer helpers shared by both the initial turn stream and per-turn replay/tail streams.
 - `internal/storage`: SQLite repository and migration management.
 - `internal/gitutil`: host-side git capability checks, repository inspection, working-tree diff/untracked parsing, and local-branch checkout helpers for one validated thread `cwd`.
@@ -29,11 +29,34 @@ Modules:
 - `internal/webui`: embedded Vite + TypeScript SPA with a no-framework DOM renderer; Web UI visual redesigns must remain presentation-only and must not change API/runtime behavior.
   - on the send path, the Web UI invalidates any in-flight async message-list render and synchronously flushes persisted messages before mounting the live streaming reply bubble, so streaming replies stay directly below the just-sent user message even on long/heavy transcripts.
   - on history load, the Web UI can hydrate a still-running turn from persisted turn events, restore its live bubble/pending permissions, and then reattach to the per-turn SSE stream so browser refreshes do not cancel or visually lose the active response.
+  - the grouped thread/session rail can also consume server-decorated `session.isActive` flags from `GET /v1/threads/{threadId}/sessions`, so a second browser opening the same ngent instance can show the correct session-row spinner before it attaches to that session's chat pane.
+  - each grouped thread header also owns a browser-local collapsed/expanded state for its inline session list; collapsing a thread hides only that group's session rows and does not alter backend thread/session state.
+  - the grouped rail's leading agent glyph doubles as that disclosure control: expanded groups show the provider avatar at rest and swap to a chevron on hover/focus, while collapsed groups keep a right-chevron visible so hidden session rows remain discoverable.
+  - when the active running turn has `plan_update` entries, the Web UI renders the latest plan snapshot as an ephemeral bottom-floating card outside the transcript list; that card is hydrated from persisted running-turn events for refresh/secondary-browser recovery and disappears again once the turn finishes.
   - when a history load restores a running turn for a scope that does not yet have a mounted live bubble, the Web UI must finish rendering persisted messages before mounting that bubble, even for long/heavy transcripts that would normally use async list rendering; this keeps spectator/reconnect views anchored on the active reply instead of below it.
+  - when the grouped left rail collapses or reopens, the Web UI must recompute thread-title overflow after layout settles so short titles do not inherit stale marquee state from zero-width collapsed measurements.
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active thread also has a selected concrete session id, the composer can additionally poll `/v1/threads/{threadId}/git-diff` every 15 seconds and show a Kimi-style working-tree summary chip above the input; expanding it reveals parsed tracked `numstat` rows, untracked-file rows, and the repository root, while clean/non-git/unavailable-git cases render nothing.
+  - expanded git-diff rows may expose browser-clickable file previews through `GET /v1/threads/{threadId}/git-diff-file?path=...`:
+    - tracked text files render the `git --no-pager diff -- <path>` patch in a right-side drawer.
+    - untracked text files render current file contents directly in that same drawer.
+    - binary/non-text rows stay visibly disabled and do not open a preview drawer.
+  - `/git-diff-file` returns grouped rendered `blocks[]`, not duplicated raw preview text plus one JSON row per rendered line:
+    - each block carries `tone`, `text[]`, and only the relevant `oldLineNumbers[]` / `newLineNumbers[]`.
+    - adjacent rendered rows with the same tone and the same visible number-column shape are compacted into the same block.
+    - clients infer whether line-number columns should render from the presence of those old/new number arrays; there is no separate `showLineNumbers` field.
   - expanded git-diff rows can also show curated basename/extension-based type icons sourced from locally vendored `file-icons/vscode` font assets; unknown file types fall back to the generic file icon.
   - that chip's expanded/collapsed state is browser-local UI state and must not depend on polling cadence or incoming diff payload refreshes.
+  - once a git-diff file drawer is open, the visible drawer content is driven by a browser-local preview snapshot keyed by thread-session scope rather than by each incoming `/git-diff` poll response; polling may refresh the chip/list, but it must not implicitly close or rebuild the open drawer.
+  - browser-local preview state is presentation-only; selecting a file row must still issue a fresh `/git-diff-file` request for that file each time instead of reusing the previous open's detail payload as authoritative data.
+  - outside clicks or focus changes elsewhere in the workspace must not dismiss the open git-diff drawer, and collapsing the summary chip must not dismiss it either.
+  - the right-side git-diff drawer closes only from its own close button; summary-chip toggles and keyboard escape handling do not dismiss that drawer.
+  - the drawer content itself should stay visually quiet: no per-line horizontal separators, and the line typography should match the composer footer's model-label mono styling.
+  - because the drawer body uses `<code>` nodes for each rendered line, those nodes must explicitly inherit the parent font settings so the intended typography is not replaced by browser-default code styling.
+  - row-density adjustments should come from tighter line-height and vertical padding, not from reducing the text size.
+  - server-side diff/file preview shaping must stay concurrency-friendly: parse and compact blocks by scanning the already loaded text in memory once per request, without adding extra git subprocesses beyond the existing detail fetch.
+  - tracked unified-diff previews must be parsed server-side from hunk headers (`@@ -a,b +c,d @@`) so clients receive ready-to-render old/new line numbers, hunk-header rows without numbers, and pre-hunk diff metadata already suppressed.
+  - that backend parsing must remain one in-memory linear scan over the already fetched text, without adding extra git subprocess invocations per request.
   - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
   - the Web UI also owns a browser-local `language` preference (`en`, `zh-CN`, `es`, or `fr`); on first load it defaults from the closest supported browser locale (`zh-*` => `zh-CN`, `es-*` => `es`, `fr-*` => `fr`, otherwise `en`), and Settings can override it persistently per browser profile.
 
@@ -52,8 +75,8 @@ Modules:
 ## 4. Lazy Agent Startup
 
 - On server boot: no agent process is started.
-- On first thread usage: runtime requests provider instance for that thread.
-- On first turn execution for embedded-provider thread (currently `codex`): server creates the in-process runtime and initializes ACP session lazily.
+- On first scope usage: runtime resolves or creates a provider instance for that `(thread, session/fresh-session)` scope.
+- On first turn execution for an embedded-provider scope (currently `codex` and `claude`): server creates the in-process runtime and initializes ACP session lazily.
 - Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, `cursor`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
 - Embedded runtime `session/new` is created with `cwd=thread.cwd` (validated as absolute path at thread creation).
 - If `thread.agent_options_json` contains `modelId` / `configOverrides`, those values are the persisted desired session config for the thread.
@@ -87,6 +110,7 @@ Turn-side auxiliary callbacks:
 - reasoning is streamed/persisted as `reasoning_delta` events instead of being merged into `responseText`.
 - the Web UI renders reasoning in a lightweight collapsible reasoning toggle: labeled `Thinking` during live streaming, relabeled `Thought` once finalized history is reconstructed, collapsed by default after completion, with indented left-border content when opened and sanitized markdown rendering for finalized reasoning text.
 - plan replacements continue to flow as `plan_update`.
+  - the Web UI treats those plan replacements as live session UI state during a running turn and intentionally does not render them in finalized transcript history.
 
 ## 6. Persistence Model
 
@@ -95,6 +119,9 @@ SQLite stores:
 - threads
 - turns
 - events (append-only stream records)
+- turn attachments served back through the stable `/attachments/{attachmentId}` route
+- agent config catalogs keyed by `(agent_id, model_id)`
+- agent slash-command snapshots keyed by `agent_id`
 - per-session caches keyed by `(agent_id, cwd, session_id)` for:
   - transcript replay snapshots
   - ACP config-option snapshots
@@ -124,11 +151,21 @@ On restart:
 ## 8. API Overview
 
 - health and server metadata
+- agent catalog + stored model catalog (`GET /v1/agents`, `GET /v1/agents/{agentId}/models`)
+- path search + recent-directory suggestions (`GET /v1/path-search`, `GET /v1/recent-directories`)
 - thread CRUD (create/list/get/update/delete)
   - thread list/get responses include `hasActiveSession` so new browsers can spot live threads immediately.
+- thread session catalog (`GET /v1/threads/{threadId}/sessions`)
+  - each returned session row may include `isActive=true` when that concrete `(thread, session)` scope currently owns a live turn.
+  - ngent still prepends the thread's currently bound `sessionId` ahead of provider-listed sessions before returning the catalog, so a stale upstream session list does not hide the active session row.
+- thread session transcript replay (`GET /v1/threads/{threadId}/session-history?sessionId=...`)
+- thread config metadata + live config updates (`GET/POST /v1/threads/{threadId}/config-options`)
+- thread slash-command snapshot lookup (`GET /v1/threads/{threadId}/slash-commands`)
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
+- thread git diff summary + file preview (`GET /v1/threads/{threadId}/git-diff`, `GET /v1/threads/{threadId}/git-diff-file?path=...`)
 - thread session-usage snapshot lookup (`GET /v1/threads/{threadId}/session-usage?sessionId=...`)
-- turn create (`POST /v1/threads/{threadId}/turns`)
+- turn create (`POST /v1/threads/{threadId}/turns`, JSON or multipart for attachment-backed prompts)
+- attachment readback (`GET /attachments/{attachmentId}`)
 - per-turn SSE replay/tail for resumed or additional viewers (`GET /v1/turns/{turnId}/events?after=...`)
 - turn cancel (`POST /v1/turns/{turnId}/cancel`)
 - thread compact (`POST /v1/threads/{threadId}/compact`)
@@ -142,10 +179,11 @@ See `docs/API.md` for endpoint and schema contracts.
 
 - default bind: `127.0.0.1:8686` (local-only).
 - public bind allowed when `--allow-public=true`.
-- startup preflight determines the runtime agent allowlist; agents that fail preflight are omitted from `/v1/agents`, rejected by create-thread validation, and skipped by startup catalog refresh.
+- startup preflight determines the runtime agent allowlist; agents that fail preflight are omitted from `/v1/agents` and rejected by create-thread validation.
 - strict input validation:
   - agent must be allowlisted.
   - cwd must be absolute.
+  - cwd must stay inside configured allowed roots.
 - thread option updates that change shared thread state are rejected while any session on that thread is active; session-only selection updates are allowed while a different session is running.
 - logs are human-readable on stderr and redact sensitive data.
 - `--debug=true` raises log verbosity to debug level and emits sanitized ACP JSON-RPC request/response traces on stderr.
@@ -184,7 +222,13 @@ All API errors follow a common envelope with:
 
 See `docs/API.md` for concrete schema and codes.
 
-## 11. Planned Qwen ACP Integration (2026-03-03)
+## Appendix A. Historical Rollout Notes
+
+These dated notes are retained as implementation history. They are not the
+normative current-state spec; when they conflict with Sections 1-10 or the
+current code, Sections 1-10 and the code win.
+
+### A1. Qwen ACP Integration Notes (2026-03-03)
 
 ### 11.1 Objective and Scope
 
@@ -271,7 +315,7 @@ and upstream ACP schema:
   - Deliverable: clean baseline for merge.
   - DoD: `npm run build` and `go test ./...` pass.
 
-## 12. Thread Model Selection and Switching (2026-03-05)
+### A2. Thread Model Selection and Switching Notes (2026-03-05)
 
 ### 12.1 Scope
 
@@ -286,7 +330,7 @@ and upstream ACP schema:
 
 ### 12.2 API and Runtime Behavior
 
-## 13. Kimi CLI ACP Integration (2026-03-09)
+### A3. Kimi CLI ACP Integration Notes (2026-03-09)
 
 ### 13.1 Objective and Scope
 
@@ -347,7 +391,7 @@ and upstream ACP schema:
   - apply calls `PATCH /v1/threads/{threadId}`.
   - controls are disabled while model list is loading or while a turn is streaming.
 
-## 14. BLACKBOX AI ACP Integration (2026-03-22)
+### A4. BLACKBOX AI ACP Integration Notes (2026-03-22)
 
 ### 14.1 Objective and Scope
 
@@ -390,7 +434,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - shared model-discovery/config-catalog plumbing.
 - keep session browsing/replay unsupported until upstream BLACKBOX ACP exposes `session/list` / `session/load`.
 
-## 13. Thread Session Config Options and Immediate Model Switch (2026-03-05)
+### A5. Thread Session Config Options And Immediate Model Switch Notes (2026-03-05)
 
 ### 13.1 Scope
 
@@ -470,7 +514,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - refresh is best-effort and non-blocking for HTTP startup.
   - if some model refreshes fail, successful rows are upserted while older rows for failed models are preserved.
 
-## 14. Embedded Tool-Interaction Server Request Compatibility (2026-03-06)
+### A6. Embedded Tool-Interaction Server Request Compatibility Notes (2026-03-06)
 
 - Problem:
   - codex app-server can issue server requests `item/tool/requestUserInput` and `item/tool/call` during MCP/tool flows.
@@ -482,7 +526,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - this is a compatibility fallback, not full interactive tool-user-input UX.
   - multi-question/multi-select semantics and arbitrary free-text answers are not yet exposed through hub APIs/UI.
 
-## 15. ACP Session Sidebar and Resume (2026-03-11)
+### A7. ACP Session Sidebar And Resume Notes (2026-03-11)
 
 ### 15.1 Thread Metadata
 
@@ -542,26 +586,27 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 ### 15.5 Web UI
 
 - Layout:
-  - left edge: permanently expanded agent/thread rail plus a collapsible session panel for the active thread.
+  - left edge: one grouped thread/session rail.
   - center: chat.
-  - the agent/thread rail stays permanently expanded and always shows full thread rows and thread action controls; `New agent` sits below the list rather than in the header.
-- Session panel behavior:
-  - lives between the agent rail and the chat area instead of on the right edge.
-  - stays hidden until an active thread is selected, so the initial empty state does not reserve session-panel width.
-  - when expanded, shows the active thread title, provider badge, project path, and a full-width `New session` action before the session list.
-  - can collapse independently into a fully retracted state with no residual strip left in the layout.
-  - on desktop, collapse/expand is triggered from a hover-revealed button on the chat panel's left edge instead of from a persistent control inside the session panel header.
-  - loads the first page automatically when a thread becomes active and the session panel is expanded.
-  - shows `Show more` when `nextCursor` is present.
-  - highlights the currently selected `sessionId` with a stronger active surface and accent-tinted text hierarchy so the active row remains obvious in the compact workbench list styling without needing a separate badge.
-  - offers `New session` to clear `sessionId`.
+  - on desktop, the whole left rail can collapse/reopen from the chat-left hover affordance; there is no separate session drawer or independent session-only collapse control.
+  - when expanded, the left rail shows full thread rows and thread action controls; `New agent` sits below the list rather than in the header.
+- Grouped thread/session rail behavior:
+  - each thread renders as a neutral grouped header with that thread's ACP sessions listed directly underneath.
+  - the grouped header uses the provider/agent icon as its leading glyph and does not show `updatedAt` time.
+  - there is no dedicated session column and no independent session-drawer collapse/expand affordance.
+  - the rail loads the first page of session data automatically for visible thread groups.
+  - each thread shows at most 5 visible sessions at first render.
+  - `Show more` reveals the next chunk and continues using backend `nextCursor` pagination when more provider pages exist.
+  - the currently selected `sessionId` for the active thread is highlighted inline under that thread header; thread headers themselves do not have a selected state.
+  - each thread header offers `New session` to clear `sessionId`; session-list refresh is exposed from that thread's overflow menu.
   - when the active thread is already unbound, `New session` still rotates into a fresh client-side scope so the composer starts blank instead of reusing the previous anonymous buffer.
-  - refreshes after turns complete so newly created/bound sessions appear in the list.
+  - session switching from another thread's group activates that thread and the selected session in one step.
+  - refreshes after turns complete so newly created/bound sessions appear in the grouped rail.
   - applies live `session_info_update.title` notifications to the matching session row immediately and keeps that runtime title override until a later notification replaces it.
   - skips server history hydration for that temporary fresh-session scope until a real ACP session id is bound back into the thread.
   - filters empty cancelled placeholders from empty-session history replay so page reload does not resurrect abandoned pre-bind attempts.
 
-## 16. ACP Slash Commands Cache and Composer Picker (2026-03-13)
+### A8. ACP Slash Commands Cache And Composer Picker Notes (2026-03-13)
 
 ### 16.1 Backend Parsing and Persistence
 
@@ -623,7 +668,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - `Escape` closes the picker.
   - clicking a command inserts `/<name>` and appends a trailing space when the command advertises an input hint.
 
-## 17. Rich ACP Permission Requests and Streaming Placeholder (2026-03-14)
+### A9. Rich ACP Permission Requests And Streaming Placeholder Notes (2026-03-14)
 
 ### 17.1 Provider Permission Bridging
 
@@ -653,7 +698,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 - The first real delta populates the existing bubble without changing any other streaming semantics.
 - Hidden `agent_thought_chunk` content still remains non-user-visible while the assistant is waiting on a visible delta.
 
-## 18. ACP Tool Calls in Streaming and History (2026-03-16)
+### A10. ACP Tool Calls In Streaming And History Notes (2026-03-16)
 
 ### 18.1 Backend Event Model
 

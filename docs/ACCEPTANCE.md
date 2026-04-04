@@ -2,6 +2,38 @@
 
 This checklist defines executable acceptance checks for requirements 1-16.
 
+## Supplemental Web UI: Collapsible Grouped Session Lists
+
+- Operation:
+  - open the embedded Web UI with at least one thread that already has session rows visible in the grouped left rail.
+  - hover or focus the thread's leading agent glyph and verify the avatar switches to a disclosure chevron.
+  - click that glyph to collapse the thread's inline session list, then click it again to expand.
+  - while the group is collapsed, use the same thread header's `New session` action.
+- Expected:
+  - expanded groups show the provider avatar at rest and a down-chevron affordance on hover/focus.
+  - collapsed groups hide only that thread's inline session list and keep a right-chevron visible so the disclosure state remains obvious.
+  - collapsing one thread does not affect the other thread groups, and the thread header itself still activates the chat as before.
+  - invoking `New session` from a collapsed thread re-expands that group so the new/fresh session can appear immediately.
+- Verification command:
+  - `cd internal/webui/web && npm run build`
+  - manual browser check against a thread with multiple session rows
+
+## Supplemental Web UI: Cross-Client Active Session Spinner
+
+- Operation:
+  - create or select a thread bound to an existing concrete `sessionId`.
+  - from browser/client A, start a turn on that session and keep it running long enough to inspect from another browser.
+  - from browser/client B, open the same ngent instance and let the grouped thread/session rail load `GET /v1/threads/{threadId}/sessions`.
+  - after the turn completes, refresh/reopen the same thread's session list from browser/client B.
+- Expected:
+  - while the turn is active, the matching session row in browser/client B's grouped rail shows the same loading spinner as a locally started turn.
+  - the active session row is still shown and marked active even if the upstream provider's `session/list` result has not yet included that current bound session, because ngent prepends the thread's bound `sessionId`.
+  - after the turn completes and the session list is fetched again, `isActive` clears and the spinner disappears.
+- Verification command:
+  - `go test ./internal/httpapi -run 'TestThreadSessionsListEndpointIncludesCurrentBoundSession|TestThreadSessionsListEndpointMarksActiveBoundSessionForOtherClients' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - manual browser check with two browser windows/profiles
+
 ## Supplemental Web UI: Session Git Diff Summary
 
 - Operation:
@@ -9,6 +41,14 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - modify one or more tracked files in that repository and create at least one untracked file.
   - verify the composer immediately requests `/v1/threads/{threadId}/git-diff`, shows the summary chip above the input, and refreshes again within 15 seconds while the same session remains selected.
   - expand the chip and verify the per-file list matches tracked rows from `git --no-pager diff --numstat` plus the repository's untracked files.
+  - click one tracked text row and verify a right-side drawer opens with that file's patch content; then click a different viewable row and verify the drawer content switches in place instead of opening a second panel.
+  - after opening file A, switch to file B, then click file A again and verify the browser sends a fresh `/git-diff-file?path=A` request instead of reusing the previous A payload from memory.
+  - with the drawer open, click elsewhere in the workspace and verify the drawer stays visible until an explicit close control is used.
+  - with the drawer open, click the git-diff chip trigger to collapse the changed-file list and verify the drawer remains open with the same file content.
+  - leave the same drawer open through at least one subsequent `/git-diff` summary refresh and verify the visible drawer content does not flash/reload or jump scroll position just because the summary chip refreshed.
+  - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch.
+  - include at least one non-text/binary untracked file and verify its row stays disabled and does not open the drawer.
+  - inspect one `/git-diff-file` network response and verify it returns grouped rendered `blocks[]` rather than duplicated raw `content` plus fully expanded per-line rows.
   - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
 - Expected:
   - polling only happens when the active thread has a selected concrete session id.
@@ -17,11 +57,26 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - repeated clicks on the summary chip expand and collapse the panel immediately, without waiting for the next poll response.
   - expanded file rows show suffix/basename-matched file-type icons for common files such as `README.md`, `test.py`, `main.go`, `app.tsx`, and `Dockerfile`, and those icon tiles remain legible in both light and dark themes.
   - unmapped file types fall back to the generic file icon instead of rendering a broken/missing asset.
+  - clicking a viewable row opens a single right-side drawer with a close button, and selecting another viewable file swaps the drawer content without requiring the chip to collapse first.
+  - reopening the same file after viewing another one triggers a fresh backend detail fetch rather than serving the previous open's cached drawer payload.
+  - outside clicks in the rest of the workspace do not dismiss the open drawer.
+  - collapsing the git-diff chip hides only the changed-file list; it does not dismiss the already open right-side drawer.
+  - `/git-diff` polling continues to refresh the chip/list, but an already open drawer keeps the same visible content and scroll position until the user explicitly changes or closes that preview.
+  - drawer content rows render without horizontal separator rules between every line.
+  - drawer content typography matches the composer footer's model-label styling.
+  - the actual rendered code/content nodes inherit that typography as well, rather than falling back to the browser's default `code` font family.
+  - drawer rows use tighter vertical spacing than before, without shrinking the visible text size.
+  - tracked diff previews show real old/new line numbers derived from hunk headers, with separate old/new columns rather than one synthetic row counter.
+  - hunk headers remain visible but do not show line numbers.
+  - raw diff header metadata such as `diff --git`, `index`, `---`, and `+++` is hidden from the drawer content.
+  - `/git-diff-file` responses compact adjacent same-tone rows into `blocks[]` carrying `text[]` plus only the relevant `oldLineNumbers[]` / `newLineNumbers[]`, and the response no longer duplicates the same preview as raw `content`.
+  - tracked text rows show patch output, while untracked text rows show direct file contents.
+  - binary/non-text rows remain visibly non-clickable and do not open an unsupported preview surface.
   - non-git/unavailable-git environments return no visible diff surface.
   - clean repositories also omit the chip instead of showing a zero-state badge.
 - Verification command:
   - `go test ./internal/gitutil -run TestDiff -count=1`
-  - `go test ./internal/httpapi -run 'TestThreadGitDiffDoesNotRequireSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles' -count=1`
+  - `go test ./internal/httpapi -run 'TestThreadGitDiffDoesNotRequireSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles|TestThreadGitDiffFileReturnsPatchForTrackedFile|TestThreadGitDiffFileReturnsContentsForUntrackedTextFile|TestThreadGitDiffFileMarksBinaryUntrackedFilesUnsupported|TestThreadGitDiffFileRejectsUnsafePath' -count=1`
   - `cd internal/webui/web && npm run build`
   - manual browser check against a repository-backed thread/session
 
@@ -30,7 +85,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Operation:
   - open the embedded Web UI in a browser/profile with no existing `ngent:language` localStorage key.
   - verify first-load language follows the closest supported browser locale (`zh-*` => Simplified Chinese, `es-*` => Spanish, `fr-*` => French, otherwise English).
-  - open Settings, switch language, and verify the sidebar, session rail, composer, empty states, and permission/markdown controls update immediately without a full page reload.
+  - open Settings, switch language, and verify the sidebar, grouped thread/session rail, composer, empty states, and permission/markdown controls update immediately without a full page reload.
 - Expected:
   - browser default locale is respected on first visit.
   - explicit Settings language choice persists locally and overrides browser detection on subsequent visits.
@@ -44,6 +99,22 @@ This checklist defines executable acceptance checks for requirements 1-16.
     - open the UI under an `es-ES` browser locale
     - open the UI under a `fr-FR` browser locale
     - switch languages in Settings and verify immediate UI re-render
+
+## Supplemental Web UI: Live Plan Overlay
+
+- Operation:
+  - start a turn whose provider emits one or more `plan_update` events before completion.
+  - verify the active chat shows the latest plan as a bottom-floating card while the response is still running.
+  - refresh the browser or open the same thread/session from another browser while that turn is still running.
+  - let the turn complete and inspect the finalized transcript.
+- Expected:
+  - the latest plan stays visible near the bottom of the chat without needing to scroll back to the top of the assistant reply.
+  - the floating card is hydrated again after refresh/secondary-browser attach for the same active session and continues updating from the resumed turn-event stream.
+  - once the turn completes, the floating card disappears and the finalized assistant transcript does not retain a standalone plan block.
+  - the floating card does not cover the newest transcript content or the scroll-to-bottom button.
+- Verification command:
+  - `cd internal/webui/web && npm run build`
+  - manual browser check against a provider/fixture that emits `plan_update`
 
 ## Requirement 1: HTTP/JSON plus SSE
 
@@ -150,7 +221,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 13: Embedded Web UI
 
 - Operation: start server; open browser at `http://127.0.0.1:8686/`; begin a live turn; refresh the page or open the same thread from another browser while that turn is still running.
-- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, permissions can be resolved, history is browsable, and the shell/composer/modals render with the current restrained desktop-workbench styling on both desktop and narrow/mobile widths; on desktop the session panel fully retracts without leaving a strip, its collapse/expand affordance is revealed from the chat panel's left edge, and the selected session row is visually obvious through the stronger active treatment alone without needing a separate badge. When the active session has ACP session-usage `contextUsed/contextSize`, the composer footer shows a compact neutral ring-only context-pressure indicator to the right of the git branch pill; when usage is absent, no placeholder is rendered. For Codex-backed sessions, the usage cache and Web UI lookup must key off the same stable session id shown in the session list instead of raw ACP load ids like `session-1`. The indicator remains a fixed neutral tone instead of switching to warning/danger hues at higher usage. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming. Switching into an existing session that has no browser-local cache yet must keep the chat-pane loading spinner visible until the history/transcript fetch resolves, instead of dropping to a blank/empty pane and then popping the history in later. Refreshing the browser or attaching another browser during an active turn must keep the active session visible, restore the live bubble from persisted events, continue streaming the remaining response instead of cancelling the turn, update permission cards when another browser approves/denies the same request, and show active-thread state in the left thread list through the server-provided `hasActiveSession` flag.
+- Expected: UI loads, threads can be created, turns stream in real time, ACP plan/reasoning updates render as live agent-side sections, live reasoning shows `Thinking`, finalized reasoning shows `Thought`, finalized reasoning uses a lightweight inline toggle, renders markdown, and collapses by default, live ACP plans stay pinned in a bottom-floating card during the running turn and disappear from finalized transcript history after completion, permissions can be resolved, history is browsable, and the shell/composer/modals render with the current restrained desktop-workbench styling on both desktop and narrow/mobile widths; on desktop the merged thread/session rail fully retracts without leaving a strip, its collapse/expand affordance is revealed from the chat panel's left edge, the selected session row in the grouped rail is visually obvious through the stronger active treatment alone without needing a separate badge, and reopening the rail does not cause short thread titles to animate horizontally on hover. When the active session has ACP session-usage `contextUsed/contextSize`, the composer footer shows a compact neutral ring-only context-pressure indicator to the right of the git branch pill; when usage is absent, no placeholder is rendered. For Codex-backed sessions, the usage cache and Web UI lookup must key off the same stable session id shown in the session list instead of raw ACP load ids like `session-1`. The indicator remains a fixed neutral tone instead of switching to warning/danger hues at higher usage. In long/heavy chats that use async message-list rendering, the newest user message must be committed before the live agent bubble so the visible order remains `... previous message -> new user -> streaming reply`. Unsent composer text must also survive switching to another session/agent and back, and must survive response completion if the user typed while the current turn was still streaming. Switching into an existing session that has no browser-local cache yet must keep the chat-pane loading spinner visible until the history/transcript fetch resolves, instead of dropping to a blank/empty pane and then popping the history in later. Refreshing the browser or attaching another browser during an active turn must keep the active session visible, restore the live bubble from persisted events, restore the current live plan card from persisted `plan_update` history, continue streaming the remaining response instead of cancelling the turn, update permission cards when another browser approves/denies the same request, and show active-thread state in the left thread list through the server-provided `hasActiveSession` flag.
 - Verification command:
   - `go test ./internal/webui -count=1` (checks `GET /` returns 200 with `text/html` content-type and SPA fallback)
   - `go test ./internal/httpapi -run TestTurnsSSEIncludesReasoningAndPersistsHistory -count=1`
@@ -159,7 +230,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/httpapi -run TestTurnSessionUsageUpdateSSEHistoryAndCache -count=1`
   - `go test ./internal/agents/codex -run 'TestNotifyCachedSessionUsagePromotesRawID|TestConsumeCodexReplayUpdateNormalizesSessionUsageID' -count=1`
   - `cd internal/webui/web && npm run build`
-  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, the session panel fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the session list, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, uncached existing-session switches keep the spinner visible until history resolves, unsent textarea content survives both session/agent switches and turn completion rebuilds, and refreshing or opening the same thread in another browser during an active turn keeps the same session visible, keeps the live response pinned to the bottom of the message list, and continues streaming instead of being cancelled
+  - manual: `make run` → open `http://127.0.0.1:8686/` or scan the startup QR code from another device, confirm the restrained shell/sidebars/chat composer render cleanly, live `Thinking` stays expanded while streaming, finalized reasoning label changes to `Thought`, markdown inside expanded `Thought` renders correctly, the section collapses after the turn completes, live plan updates stay visible in a bottom-floating card during the turn and disappear after completion, the merged thread/session rail fully retracts and reopens from the chat-left hover handle on desktop, the selected session row is clearly distinguished from the rest of the grouped session list, reopening the rail does not make short thread titles slide on hover, settings/new-agent overlays remain polished and usable, the compact usage indicator appears only for sessions that actually emit ACP usage, is ring-only with no numeric label, stays on a fixed neutral tone, and sits to the right of the branch pill, and for Codex sessions the indicator still appears after switching to an existing session selected from the session list even though the upstream raw load id differs from the stable UI session id; in a long existing session the visible order stays `... previous message -> new user -> streaming reply`, uncached existing-session switches keep the spinner visible until history resolves, unsent textarea content survives both session/agent switches and turn completion rebuilds, and refreshing or opening the same thread in another browser during an active turn keeps the same session visible, keeps the live response pinned to the bottom of the message list, restores the live plan card, and continues streaming instead of being cancelled
 
 ## Global Gate
 
@@ -231,7 +302,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `GET /v1/agents` includes `{"id":"blackbox","name":"BLACKBOX AI","status":"available"}` when `blackbox` is in PATH, and omits `blackbox` entirely when the binary is unavailable.
   - thread creation accepts `agent=blackbox`.
   - turn streaming emits `message_delta` and finishes with `turn_completed` (or explicit upstream error envelope).
-  - current upstream BLACKBOX ACP capability limits are reflected accurately: no `session/load` / session sidebar replay and no ACP model catalog until upstream exposes those surfaces.
+  - current upstream BLACKBOX ACP capability limits are reflected accurately: no `session/load`-backed historical-session replay and no ACP model catalog until upstream exposes those surfaces.
 - Verification commands:
   - `blackbox --version`
   - `go test ./internal/agents/blackbox -count=1`
@@ -406,7 +477,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
 
-## Requirement 23: ACP Session Sidebar and Resume
+## Requirement 23: ACP Session Grouped Rail and Resume
 
 - Operation:
   - create a thread/agent in the Web UI or API.
@@ -418,25 +489,28 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - the backend proxies ACP `session/list` through `GET /v1/threads/{threadId}/sessions`.
   - response includes `supported`, `sessions`, and `nextCursor`.
   - for providers that replay transcript over ACP `session/load`, the first `GET /v1/threads/{threadId}/session-history?sessionId=...` warms sqlite `session_transcript_cache`, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
-  - the Web UI renders a left-side collapsible session panel beside a permanently expanded agent rail.
-  - when no agent/thread is selected yet, the session panel stays hidden and does not reserve layout width.
-  - when collapsed, the session panel fully retracts and does not leave behind a visible strip.
-  - on desktop, the session panel collapse/expand affordance is exposed from a hover-revealed control on the chat panel's left edge instead of from the panel header.
-  - the expanded session panel shows the active thread title, agent metadata, project path, and a `New session` entry above the session list.
-  - the agent rail exposes the thread list plus a `New agent` button below it.
-  - first-page session load happens when an active thread is selected and the session panel is expanded.
-  - `Show more` pagination appears when `nextCursor` is present.
-  - `New session` action that clears the selected `sessionId`.
+  - the Web UI renders one left grouped rail where each thread header shows its session rows directly underneath.
+  - there is no dedicated session column and no chat-edge session-drawer collapse control.
+  - each thread header uses the agent/provider icon as its leading visual and does not show a thread-level relative timestamp.
+  - the agent rail still exposes the thread list plus a `New agent` button below it.
+  - first-page session load happens automatically for visible thread groups.
+  - each thread group shows at most 5 sessions initially.
+  - `Show more` reveals the next chunk and uses backend `nextCursor` pagination when more provider pages exist.
+  - each thread header exposes `New session`, while session refresh is available from the thread three-dot overflow menu.
+  - only session rows have an active/selected visual state; thread headers/groups do not.
   - repeated `New session` clicks while the thread is still unbound must still open a blank fresh-session view instead of reusing the prior anonymous buffer.
+  - selecting an existing session from another thread group activates that thread and selected session in one step.
   - selecting an existing session requests provider-owned transcript replay before the next turn.
   - turn SSE emits `session_bound`, and the thread persists `agentOptions.sessionId`.
-  - when an ACP agent emits `session/update` with `sessionUpdate="session_info_update"` and a non-null `title`, turn SSE emits `session_info_update` and the Web UI uses that title for the matching `sessionId` in the session sidebar.
+  - when an ACP agent emits `session/update` with `sessionUpdate="session_info_update"` and a non-null `title`, turn SSE emits `session_info_update` and the Web UI uses that title for the matching `sessionId` in the grouped rail.
   - once a thread is session-bound, subsequent prompt building no longer injects prior local turns into the provider prompt.
   - cancelled turns that never emitted `session_bound` and never produced visible response text do not reappear when the user opens a newer fresh session or reloads the thread.
 - Verification commands (executed 2026-03-13):
   - `go test ./internal/httpapi -run 'TestThreadSessionsListEndpoint|TestTurnSessionBoundPersistsSessionIDAndSkipsContextInjection|TestNewSessionResetSkipsContextInjection' -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
+- Additional verification commands (executed 2026-04-03 after grouped-left-rail refactor):
+  - `cd internal/webui/web && npm run build`
 - Additional verification commands (executed 2026-03-12):
   - `go test ./internal/agents/kimi -run 'SessionTranscript' -count=1`
   - `go test ./internal/agents/opencode -run 'SessionTranscript' -count=1`
@@ -635,7 +709,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 
 - Operation:
   - create or reuse a thread that contains many persisted turns/events across multiple sessions.
-  - select one historical session from the Web UI session sidebar.
+  - select one historical session from the Web UI grouped left rail.
   - inspect the history request sent by the browser and the returned payload size.
 - Expected:
   - the Web UI calls `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSessionId>` instead of fetching the whole thread and filtering only in browser memory.
@@ -650,16 +724,16 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 31: Session Switching Stays Responsive On Old Delta-Heavy History
 
 - Operation:
-  - reuse a thread whose persisted history was created before write-side delta merging existed.
+  - reuse a thread whose persisted history contains many append-only `message_delta` / `reasoning_delta` rows.
   - switch from a light historical session (for example `hello`) back to a heavy session that contains many persisted `message_delta` / `reasoning_delta` rows.
   - inspect the returned `/history?includeEvents=1&sessionId=...` payload and observe the browser during the switch.
 - Expected:
-  - `/history` compacts adjacent same-turn `message_delta`, `reasoning_delta`, and `thought_delta` runs in the response even when the SQLite rows are still stored unmerged.
+  - `/history` compacts adjacent same-turn `message_delta`, `reasoning_delta`, and `thought_delta` runs in the response even though SQLite keeps the underlying turn events append-only on write.
   - the Web UI history replay yields while reconstructing messages and while rebuilding a heavy message list.
   - the switch does not produce a visible long main-thread stall from history replay alone.
 - Verification commands (executed 2026-03-26):
   - `go test ./internal/httpapi -run TestThreadHistoryCompactsConsecutiveDeltaEvents -count=1`
-  - `go test ./internal/storage -run TestAppendEventMergesConsecutiveDeltaRuns -count=1`
+  - `go test ./internal/storage -run TestAppendEventKeepsConsecutiveDeltaRunsAppendOnly -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
   - real repro on the provided Codex thread:

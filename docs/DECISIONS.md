@@ -2,6 +2,25 @@
 
 ## ADR Index
 
+- ADR-091: Persist learned config snapshots per provider session. (Accepted)
+- ADR-090: Learn model/reasoning metadata only from real session lifecycle events. (Accepted)
+- ADR-089: Share repeated ACP discovery and session-param helpers across built-in providers. (Accepted)
+- ADR-088: Derive the runtime agent list from startup preflight results. (Accepted)
+- ADR-087: Render assistant turns as ordered UI segments instead of one aggregated bubble. (Accepted)
+- ADR-086: Preserve ACP tool-call updates as first-class turn events. (Accepted)
+- ADR-085: Normalize rich ACP permission requests before bridging them into ngent. (Accepted)
+- ADR-084: Persist ACP slash commands as agent-level SQLite snapshots. (Accepted)
+- ADR-083: Allow concurrent turns across different sessions on the same thread. (Accepted)
+- ADR-082: Scope Web UI chat playback to the selected ACP session. (Accepted)
+- ADR-081: Persist thread-level ACP session selection and resume through provider sessions. (Accepted)
+- ADR-080: Persist agent config catalogs in SQLite and refresh them asynchronously on startup. (Accepted)
+- ADR-079: Thread-level model switching via ACP session config options. (Accepted)
+- ADR-078: Keep the Web UI git-diff drawer explicitly dismissed and stable across summary polling. (Accepted)
+- ADR-077: Preview git-diff file details in a right-side drawer, with text-only support for new files. (Accepted)
+- ADR-076: Make grouped thread session lists collapsible from the leading agent glyph. (Accepted)
+- ADR-075: Decorate thread session-list responses with cross-client active-session state. (Accepted)
+- ADR-074: Merge thread and session browsing into one grouped left rail. (Accepted)
+- ADR-073: Render live ACP plan updates as an ephemeral bottom overlay instead of transcript history. (Accepted)
 - ADR-072: Render git-diff expanded file rows with locally vendored suffix-based file icons. (Accepted)
 - ADR-071: Surface session-selected git diff summaries above the Web UI composer, including untracked files. (Accepted)
 - ADR-070: Expand embedded Web UI localization and repository READMEs to Spanish and French. (Accepted)
@@ -11,14 +30,21 @@
 - ADR-066: Surface thread-scoped git branch state in the Web UI composer. (Accepted)
 - ADR-065: Recast the embedded Web UI as a restrained desktop workbench. (Accepted)
 - ADR-064: Share threads and sessions across browser-scoped client IDs on the same ngent instance. (Accepted)
+- ADR-062: Decouple viewed Web UI session from backend thread session during active turns. (Accepted)
+- ADR-061: Compact historical delta runs on read and render large chats incrementally. (Accepted)
+- ADR-060: Make thread history session-scoped for Web UI session switches. (Accepted)
+- ADR-059: Store uploaded attachments under the configurable data directory and serve them back through a stable attachment route. (Accepted)
 - ADR-058: Render bracketed inline base64 user-image placeholders as safe Web UI previews. (Accepted)
+- ADR-057: Persist Web UI uploads as local temp files and forward them as ACP resource links. (Accepted)
+- ADR-056: Preserve exact provider permission options through the hub permission flow. (Accepted)
+- ADR-055: Preserve non-text assistant ACP content as first-class turn events. (Accepted)
 - ADR-054: Refresh the embedded Web UI as a premium workbench without changing behavior. (Superseded)
 - ADR-053: Replace `slog` JSON output with a human-readable stderr logger and colored access logs. (Accepted)
 - ADR-001: HTTP/JSON API with SSE streaming transport. (Accepted)
-- ADR-002: Client identity via `X-Client-ID` header. (Accepted)
+- ADR-002: Client identity via `X-Client-ID` header. (Superseded)
 - ADR-003: SQLite append-only events table as interaction source of truth. (Accepted)
 - ADR-004: Permission handling defaults to fail-closed. (Accepted)
-- ADR-005: Default bind is localhost only. (Superseded)
+- ADR-005: Default bind is localhost only. (Accepted)
 - ADR-006: M1 API baseline for health/auth/agents. (Accepted)
 - ADR-007: M3 thread API tenancy and path policy. (Accepted)
 - ADR-008: M4 turn streaming over SSE with persisted event log. (Accepted)
@@ -33,7 +59,6 @@
 - ADR-018: Embedded Web UI via Go embed. (Accepted)
 - ADR-019: OpenCode ACP stdio provider. (Accepted)
 - ADR-020: Gemini CLI ACP stdio provider. (Accepted)
-- ADR-021: Public-by-default bind with local-only opt-out. (Accepted)
 - ADR-022: Qwen Code ACP stdio provider integration. (Accepted)
 - ADR-023: Shared ACP stdio transport for OpenCode and Qwen providers. (Accepted)
 - ADR-024: Claude Code embedded provider via claudeacp runtime. (Accepted)
@@ -64,6 +89,171 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-078: Keep The Web UI Git-Diff Drawer Explicitly Dismissed And Stable Across Summary Polling
+
+- Status: Accepted
+- Date: 2026-04-04
+- Context:
+  - ADR-077 introduced the right-side git-diff file drawer, but follow-up usage showed two UX regressions in the embedded SPA:
+    - after opening a file preview, clicking elsewhere in the workspace could close the drawer because both widget-level `focusout` and document-level click handlers treated it like a transient popover.
+    - the existing `/git-diff` polling path re-rendered the open drawer and force-refetched its selected file detail, causing visible flicker, content jumping, and scroll resets even when the user was still reading the same file.
+  - the summary chip and expanded file list still need fresh repository state, but the opened drawer should behave like a stable inspection surface rather than a poll-driven tooltip.
+- Decision:
+  - stop using outside-click/focus-leave behavior to dismiss the git-diff drawer.
+  - collapsing or re-expanding the git-diff summary chip must not dismiss the already open right-side drawer.
+  - the right-side drawer itself is dismissed only from its own close button, not from summary-chip toggles or keyboard escape handling.
+  - keep `/git-diff` polling responsible for the summary chip and expanded changed-file list only.
+  - once a file drawer is opened, render it from a browser-local preview snapshot keyed by thread-session scope, and update that snapshot only when the user selects another file or that file-detail request itself changes state.
+  - every explicit file-row selection must reissue the backend `git-diff-file` request for that path; reopening the same file later must not reuse a stale cached detail payload from a previous open.
+  - keep the drawer's line-content presentation visually lightweight: no horizontal row separators, and use the same mono typography treatment as the composer footer's model label.
+  - because the drawer content is rendered inside `<code>` nodes, explicitly force those nodes to inherit the parent font settings so the browser's default code font cannot override the intended model-label typography.
+  - keep drawer rows compact by reducing vertical padding/line-height rather than shrinking the text itself.
+  - for tracked unified diffs, derive visible line numbers from each hunk header and render both old/new line-number columns instead of a synthetic monotonically increasing row counter.
+  - keep hunk headers visible as structural markers, but do not assign them line numbers; hide raw diff header metadata lines (`diff --git`, `index`, `---`, `+++`, and similar pre-hunk patch headers) from the drawer content.
+  - serialize `/git-diff-file` as grouped rendered `blocks[]` rather than duplicating both raw `content` and per-line `lines[]`; adjacent rows with the same tone are compacted into one block containing `text[]` plus only the relevant old/new line-number arrays.
+  - drop the old `showLineNumbers` response field and let clients infer visible columns from the presence of `oldLineNumbers[]` / `newLineNumbers[]` for each rendered block.
+  - keep server-side parsing cheap under parallel requests by scanning the already produced diff/file text once per request in memory, and perform block compaction within that same pass without adding any extra git subprocesses beyond the existing file-detail fetch.
+  - keep the preview snapshot browser-local and session-scoped; do not persist it to backend thread/session metadata.
+- Consequences:
+  - users can inspect a file diff while clicking elsewhere in the workspace without losing the drawer.
+  - users can collapse the changed-file list to recover vertical space without losing the file they are reading in the right-side drawer.
+  - periodic summary refreshes no longer rebuild the open drawer DOM or force a loading-state flash for the currently viewed file.
+  - reselecting a file may briefly show the loading state again, but the drawer content now always reflects a fresh backend read instead of a reused earlier response.
+  - switching sessions within the same thread no longer leaks one session's open drawer into another session's chat pane; each session restores only its own last local preview snapshot.
+  - `/git-diff-file` responses are materially smaller because they no longer carry duplicate raw text plus one JSON object per rendered row.
+- Alternatives considered:
+  - keep outside-click dismissal and try to special-case a few targets (rejected: brittle and still wrong for a reading surface meant to stay open).
+  - continue rendering the drawer directly from the live polled diff state (rejected: keeps poll cadence coupled to preview stability and scroll position).
+  - persist drawer-open state to backend thread/session metadata (rejected: this is local presentation state, not shared runtime/domain state).
+
+## ADR-077: Preview Git-Diff File Details In A Right-Side Drawer, With Text-Only Support For New Files
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-071 already established the session-scoped git diff summary chip and expandable file list above the Web UI composer.
+  - product now requires the next interaction step after expanding that chip:
+    - clicking a changed file should open its concrete diff/details.
+    - switching between files should reuse one panel instead of stacking multiple overlays.
+    - newly created text files should still be previewable even though `git diff` has no tracked patch for an untracked path.
+  - the embedded SPA remains browser-only, so all git/file access still has to happen server-side against the validated thread `cwd`.
+- Decision:
+  - add `GET /v1/threads/{threadId}/git-diff-file?path=...` as a thread-scoped read-only detail endpoint alongside the existing summary endpoint.
+  - keep summary parsing/backend authority in `internal/gitutil` and extend per-file rows with `viewable`, so the frontend can disable unsupported rows before the user clicks them.
+  - for tracked text rows, return raw patch content from `git --no-pager diff -- <path>`.
+  - for untracked text rows, return direct file contents instead of synthesizing a fake patch.
+  - keep binary/non-text rows non-previewable and render them as disabled UI state instead of attempting inline binary viewers or downloads from the git-diff surface.
+  - render the detail payload in one browser-local right-side drawer whose open/selected-file state is scoped to the active thread session and never persisted to backend thread metadata.
+- Consequences:
+  - users can inspect one changed file without leaving the conversation or opening separate modal layers.
+  - new text files are previewable even before they are staged or committed.
+  - the feature remains local-first and safe because path resolution stays repo-relative on the backend and non-text files are fail-closed.
+- Alternatives considered:
+  - inline-expand raw diff text under each row in the chip panel (rejected: too tall/noisy above the composer and awkward for file switching).
+  - open a full-screen modal (rejected: heavier than necessary and visually disconnected from the existing git chip surface).
+  - attempt to preview arbitrary binary files (rejected: higher complexity, broader security/UI surface, and not required for the requested workflow).
+
+## ADR-076: Make Grouped Thread Session Lists Collapsible From The Leading Agent Glyph
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-074 already merged thread and session browsing into one grouped left rail, but every thread group always rendered its inline session list expanded.
+  - once several threads each expose multiple recent sessions, the rail becomes visually dense and harder to scan, especially when the user only needs the thread header as a waypoint into the main chat pane.
+  - product now requires a Codex-style interaction where the thread's leading agent glyph also acts as the disclosure control:
+    - expanded at rest still looks like the provider avatar.
+    - hover/focus reveals a down-chevron affordance for collapse.
+    - collapsed groups keep a right-chevron visible so the hidden sessions remain discoverable.
+- Decision:
+  - keep the backend thread/session APIs, paging, and runtime model unchanged; this is a Web UI-only behavior layered on top of the existing grouped rail.
+  - treat collapse state as browser-local per-thread UI state keyed by `threadId`, independent from thread selection, session binding, or provider session data.
+  - collapse only the inline session-list region for that thread group; keep the thread header itself, `New session`, and overflow actions available even while the group is collapsed.
+  - automatically reopen a collapsed group when the user explicitly starts `New session` from that thread header so the fresh session can surface immediately.
+- Consequences:
+  - dense thread/session rails become easier to scan without adding a second navigation drawer back into the layout.
+  - the leading glyph now carries both branding and disclosure affordance, so the UI stays compact without adding another dedicated expand/collapse column.
+  - because the state is browser-local UI state and not persisted server-side, full-page reloads currently reset all groups back to expanded.
+- Alternatives considered:
+  - add a dedicated disclosure column before every thread (rejected: adds visual weight and wastes horizontal space in an already compact rail).
+  - persist collapsed state in backend thread metadata (rejected: this is presentation state, not shared thread/domain state).
+  - collapse groups automatically based on active selection only (rejected: removes user control and makes the rail jump unexpectedly during navigation).
+
+## ADR-075: Decorate Thread Session-List Responses With Cross-Client Active-Session State
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-069 already exposed thread-level `hasActiveSession`, which lets a fresh browser see that some session on a thread is live.
+  - the grouped left rail introduced by ADR-074 renders concrete session rows and already has a session-row spinner, but before this change that spinner only reflected browser-local `streamStates`.
+  - product now requires another browser opening the same ngent instance to immediately tell which specific session row is streaming, without first selecting that session and reconstructing its running turn state in the chat pane.
+- Decision:
+  - keep runtime ownership of active-turn truth in `internal/runtime.TurnController`; do not add a second persisted/session-active cache.
+  - extend `GET /v1/threads/{threadId}/sessions` so each returned session row may include `isActive=true` when that concrete `(thread, session)` scope currently has a live turn.
+  - continue prepending the thread's currently bound `sessionId` ahead of provider-listed sessions before computing `isActive`, so stale upstream `session/list` catalogs do not hide the active session row.
+  - in the embedded Web UI, merge server-reported `session.isActive` with the existing browser-local `streamStates` set so the same row spinner works both for locally started turns and for active sessions discovered from another browser on first load/refresh.
+- Consequences:
+  - a newly opened or manually refreshed secondary browser can spot the exact active session row directly in the grouped rail.
+  - session-row loading UI now has one shared rendering path regardless of whether the active state came from local streaming state or the server's session-list response.
+  - already-open background browsers still do not receive push-based rail updates for another browser's newly started session until they reload or re-fetch that thread's session list.
+- Alternatives considered:
+  - add a dedicated push channel for session-list activity state (rejected: heavier protocol/UI coordination than needed for the requested "open another browser and see it" behavior).
+  - infer the active row purely from thread-level `hasActiveSession` (rejected: does not identify which concrete session is active).
+  - persist session-active flags in SQLite (rejected: runtime already owns the authoritative live-turn state and persistence would introduce stale-state cleanup risk).
+
+## ADR-074: Merge Thread And Session Browsing Into One Grouped Left Rail
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-049 and ADR-050 moved session browsing onto the left side of the workspace, but the resulting two-column navigation still kept thread selection and session selection visually separate.
+  - product now requires the left side to behave closer to Codex App's grouped project list:
+    - one left rail only.
+    - each thread/project header followed immediately by its recent sessions.
+    - no dedicated session drawer and no separate collapse affordance.
+  - the existing backend session APIs, paging contract, and thread/session runtime model remain valid and do not need schema changes.
+- Decision:
+  - keep `GET /v1/threads/{threadId}/sessions`, `nextCursor`, `PATCH /v1/threads/{threadId}` session binding, and fresh-session scope semantics exactly as they are.
+  - in the embedded Web UI, render one left navigation rail where each thread row becomes a grouped header and its ACP session rows render inline beneath that header.
+  - remove the dedicated session sidebar column and the chat-edge hover toggle used to collapse/expand it.
+  - keep per-thread `New session`, refresh, and live title updates inside each grouped thread block, but expose refresh from the thread overflow menu instead of as a dedicated inline control.
+  - remove persistent selected styling from thread headers/groups; only session rows carry the active selection state.
+  - use the provider/agent icon as the leading grouped-thread glyph instead of a generic folder icon.
+  - cap the initially visible rows to 5 sessions per thread in the Web UI and use `Show more` to reveal the next chunk while still honoring backend `nextCursor` pagination when additional provider pages exist.
+- Consequences:
+  - thread and session context are scanned together in one place, so switching to another thread's historical session is a single visual/interaction step.
+  - chat width increases because the middle session drawer no longer reserves a second navigation column.
+  - thread headers now read as neutral group labels rather than a second competing selection state next to the actual selected session.
+  - the backend remains unchanged; the grouping and 5-row initial cap are frontend concerns layered on top of the existing session-list API.
+- Alternatives considered:
+  - keep the two-column left layout and only restyle it (rejected: does not satisfy the requested Codex-style grouped browsing model).
+  - keep the separate session drawer but auto-expand it for every thread (rejected: still preserves the wrong interaction model and wastes horizontal space).
+  - move grouping/paging into a new backend endpoint (rejected: unnecessary because current thread/session APIs already provide the required data).
+
+## ADR-073: Render Live ACP Plan Updates As An Ephemeral Bottom Overlay Instead Of Transcript History
+
+- Status: Accepted
+- Date: 2026-04-03
+- Context:
+  - ADR-033 already promoted ACP `plan_update` to a first-class SSE/history signal, and the Web UI rendered the latest plan inside the assistant message itself.
+  - in long-running turns, that placement forces users to scroll back toward the top of the reply to see whether the agent has advanced to the next step.
+  - product now requires the plan to behave more like a live session-status surface:
+    - always visible at the bottom of the active chat while the turn is running.
+    - gone once that turn finishes.
+    - still visible to refreshed or secondary browsers that attach to the same active session.
+- Decision:
+  - keep `plan_update` persistence and replay exactly as-is on the backend; do not add a new session-plan API or separate runtime cache.
+  - in the embedded Web UI, treat the latest running-turn plan as streaming-only session UI state sourced from `streamPlanByScope`, hydrated from persisted running-turn events during history replay and then kept fresh via the resumed per-turn SSE stream.
+  - render that live plan in a dedicated bottom-floating card outside the transcript list, and reserve dynamic bottom inset space in the message list so the overlay does not cover the latest messages or the scroll-to-bottom affordance.
+  - stop rendering plan sections inside finalized assistant transcript bubbles, so the card disappears after completion/error/cancel just like other streaming-only session affordances.
+- Consequences:
+  - users can watch plan progress continuously during long replies without leaving the bottom of the conversation.
+  - multi-browser/session-refresh recovery keeps working without any protocol change because the live card reuses persisted `plan_update` history plus `GET /v1/turns/{turnId}/events?after=<seq>`.
+  - completed transcript history becomes cleaner, but the final plan snapshot is no longer visible after the turn ends unless a future product requirement explicitly brings back historical plan browsing.
+- Alternatives considered:
+  - keep plan inside the assistant message and rely on auto-scroll/top anchors (rejected: still hides progress in long replies).
+  - persist/render the last plan snapshot inside finalized history as well as the live overlay (rejected: conflicts with the requested streaming-only lifecycle).
+  - add a separate backend-maintained session-plan endpoint or SSE channel (rejected: duplicates existing turn-event persistence and replay mechanisms).
 
 ## ADR-072: Render Git-Diff Expanded File Rows With Locally Vendored Suffix-Based File Icons
 
@@ -420,7 +610,7 @@
 
 - Status: Accepted
 - Date: 2026-03-19
-- Current-status note: the left rail decision in this ADR still stands, and the later 2026-03-26 Web UI polish kept the same single collapsible secondary panel model while refining the session-panel affordance into a chat-edge hover handle with a full-retract collapsed state.
+- Current-status note: the permanently expanded left-rail part of this ADR still stands, but ADR-074 later removed the separate session drawer entirely and merged session browsing back into the same grouped left rail.
 - Context:
   - ADR-049 introduced a collapsible compact agent rail to mimic OpenCode's left-most project strip more closely.
   - in follow-up product review, that compact state was judged less useful than expected because the ngent left column represents full agent/thread items rather than tiny project icons, and collapsing it hid search plus thread metadata too aggressively.
@@ -444,7 +634,7 @@
 
 - Status: Accepted
 - Date: 2026-03-19
-- Current-status note: this ADR established the left-side two-column navigation model, but its compact agent-rail default was later superseded by ADR-050, and the original slim-strip session collapse affordance was later replaced by a full-collapse chat-edge hover control in the 2026-03-26 Web UI polish.
+- Current-status note: this ADR established the first left-side session-navigation move, but its two-column left layout was later superseded by ADR-074, which merged thread and session browsing back into one grouped left rail.
 - Context:
   - the Web UI had been using a wide left thread list plus a separate right session sidebar.
   - users wanted the navigation model to feel closer to OpenCode's web UI, where project/session browsing sits on the left side of the workspace and the first column can collapse into a compact rail.
@@ -886,7 +1076,7 @@ Use this template for new decisions.
 
 ## ADR-002: Client Identity via `X-Client-ID`
 
-- Status: Accepted
+- Status: Superseded by ADR-064
 - Date: 2026-02-28
 - Context: server must isolate resources across multiple clients.
 - Decision: require `X-Client-ID` on authenticated endpoints and scope data by that identity.
@@ -916,7 +1106,7 @@ Use this template for new decisions.
 
 ## ADR-005: Localhost-by-Default Network Policy
 
-- Status: Superseded by ADR-021
+- Status: Accepted
 - Date: 2026-02-28
 - Context: server may expose local filesystem and command capabilities.
 - Decision: default bind `127.0.0.1:8686`; require explicit `--allow-public=true` for public interfaces.
@@ -1219,7 +1409,7 @@ Use this template for new decisions.
 - Follow-up actions:
   - add permission round-trip E2E test for Claude (approved/declined/cancelled paths).
 
-## ADR-025: Thread-level model switching via ACP session config options
+## ADR-079: Thread-level model switching via ACP session config options
 
 - Status: Accepted
 - Date: 2026-03-05
@@ -1246,7 +1436,7 @@ Use this template for new decisions.
 - Follow-up actions:
   - optionally add richer Web UI rendering for non-model config categories (e.g. reasoning level) using the same API.
 
-## ADR-026: Persist agent config catalogs in SQLite and refresh them asynchronously on startup
+## ADR-080: Persist agent config catalogs in SQLite and refresh them asynchronously on startup
 
 - Status: Accepted
 - Date: 2026-03-06
@@ -1411,7 +1601,7 @@ Use this template for new decisions.
   - add per-provider bespoke debug flags (rejected: fragmented UX and duplicated plumbing).
   - expose raw unredacted ACP dumps (rejected: conflicts with repository logging/redaction requirements).
 
-## ADR-036: Persist thread-level ACP session selection and resume through provider sessions
+## ADR-081: Persist thread-level ACP session selection and resume through provider sessions
 
 - Status: Accepted
 - Date: 2026-03-11
@@ -1438,7 +1628,7 @@ Use this template for new decisions.
   - keep relying on hub prompt injection even after binding to an ACP session (rejected: duplicates already-restored conversation context).
   - add a dedicated sessions table instead of reusing `agentOptions` JSON (rejected: unnecessary schema churn for a single thread-scoped selection value).
 
-## ADR-037: Scope Web UI chat playback to the selected ACP session
+## ADR-082: Scope Web UI chat playback to the selected ACP session
 
 - Status: Accepted
 - Date: 2026-03-11
@@ -1460,7 +1650,7 @@ Use this template for new decisions.
   - add a session-scoped history endpoint immediately (rejected: larger server contract change while turn events already contain the session discriminator).
   - keep all thread turns visible regardless of selected session (rejected: does not meet the expected session playback behavior).
 
-## ADR-038: Allow concurrent turns across different sessions on the same thread
+## ADR-083: Allow concurrent turns across different sessions on the same thread
 
 - Status: Accepted
 - Date: 2026-03-13
@@ -1482,7 +1672,7 @@ Use this template for new decisions.
   - keep thread-wide turn serialization and force users to create separate threads per ACP session (rejected: poor UX and redundant thread duplication).
   - remove the conflict check without changing provider cache scope (rejected: would mix session-bound provider state and route turns to the wrong ACP session).
 
-## ADR-039: Persist ACP slash commands as agent-level SQLite snapshots
+## ADR-084: Persist ACP slash commands as agent-level SQLite snapshots
 
 - Status: Accepted
 - Date: 2026-03-13
@@ -1516,7 +1706,7 @@ Use this template for new decisions.
   - persist slash commands per thread (rejected: duplicates identical agent data and prevents reuse across threads).
   - append slash-command updates into `turns/events` only (rejected: complicates retrieval for the composer and mixes capability cache with transcript history).
 
-## ADR-040: Normalize rich ACP permission requests before bridging them into ngent
+## ADR-085: Normalize rich ACP permission requests before bridging them into ngent
 
 - Status: Accepted
 - Date: 2026-03-14
@@ -1558,7 +1748,7 @@ Use this template for new decisions.
   - keep using the single empty-session scope `${threadId}::` for all fresh-session attempts (rejected: this is the bug).
   - persist a backend-generated fresh-session nonce in thread metadata (rejected for now: more invasive than needed for the Web UI reset bug).
 
-## ADR-049: Preserve ACP tool-call updates as first-class turn events
+## ADR-086: Preserve ACP tool-call updates as first-class turn events
 
 - Status: Accepted
 - Date: 2026-03-16
@@ -1580,7 +1770,7 @@ Use this template for new decisions.
   - flatten tool-call payloads into `message_delta` text (rejected: destroys structure and makes incremental updates ambiguous).
   - keep tool-call state only in browser memory (rejected: reload/history would still lose it).
 
-## ADR-050: Render assistant turns as ordered UI segments instead of one aggregated bubble
+## ADR-087: Render assistant turns as ordered UI segments instead of one aggregated bubble
 
 - Status: Accepted
 - Date: 2026-03-19
@@ -1620,7 +1810,7 @@ Use this template for new decisions.
   - flatten tool/thought events into one markdown transcript string (rejected: harder to update incrementally and loses structured tool metadata).
   - move `plan_update` into the same segment list immediately (deferred: it is replace-style state and needs separate UX rules).
 
-## ADR-051: Derive the runtime agent list from startup preflight results
+## ADR-088: Derive the runtime agent list from startup preflight results
 
 - Status: Accepted
 - Date: 2026-03-20
@@ -1640,7 +1830,7 @@ Use this template for new decisions.
   - keep returning unavailable agents and suppress only refresh warnings (rejected: frontend/runtime behavior would still disagree about what is usable).
   - make refresh failures silent while leaving the static allowlist intact (rejected: still permits users to create threads for agents that cannot start).
 
-## ADR-052: Share repeated ACP discovery and session-param helpers across built-in providers
+## ADR-089: Share repeated ACP discovery and session-param helpers across built-in providers
 
 - Status: Accepted
 - Date: 2026-03-21
@@ -1664,7 +1854,7 @@ Use this template for new decisions.
   - leave the param builders local because they are short (rejected: they were identical across four providers and changed together conceptually).
   - move the local-config branch into `acpcli` as well (rejected: that behavior is provider-specific and should stay in `kimi`).
 
-## ADR-053: Learn model/reasoning metadata only from real session lifecycle events
+## ADR-090: Learn model/reasoning metadata only from real session lifecycle events
 
 - Status: Accepted
 - Date: 2026-03-22
@@ -1693,12 +1883,12 @@ Use this template for new decisions.
   - keep using one shared default catalog row for threads without explicit `modelId` (rejected: stale or unrelated session config can leak between threads).
   - update only the agent catalog and leave thread rows untouched (rejected: thread-level model/reasoning state would stay ambiguous when multiple sessions of the same agent differ).
 
-## ADR-054: Persist learned config snapshots per provider session
+## ADR-091: Persist learned config snapshots per provider session
 
 - Status: Accepted
 - Date: 2026-03-22
 - Context:
-  - ADR-053 removed probe sessions and made real `session/new` / `session/load` the only source of config metadata.
+  - ADR-090 removed probe sessions and made real `session/new` / `session/load` the only source of config metadata.
   - ngent persisted those learned snapshots into the thread row and `agent_config_catalogs`, but a later switch to another existing session intentionally clears stale thread-local `modelId` / `configOverrides`.
   - when the user switched back to the original session before sending another turn, ngent only had the `sessionId`; the learned model/reasoning snapshot was no longer addressable, so the Web UI hid the controls again.
 - Decision:

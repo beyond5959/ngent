@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -20,6 +22,8 @@ var (
 	ErrNotRepository = errors.New("cwd is not inside a git repository")
 	// ErrBranchNotFound indicates the requested branch does not exist locally.
 	ErrBranchNotFound = errors.New("git branch not found")
+	// ErrDiffFileNotFound indicates the requested path is not part of the visible diff.
+	ErrDiffFileNotFound = errors.New("git diff file not found")
 )
 
 // Branch describes one local branch.
@@ -51,6 +55,7 @@ type DiffFile struct {
 	Deleted   int
 	Binary    bool
 	Untracked bool
+	Viewable  bool
 }
 
 // DiffStatus captures the current visible diff state for one worktree.
@@ -60,10 +65,48 @@ type DiffStatus struct {
 	Files    []DiffFile
 }
 
+const (
+	// DiffFileDetailKindDiff indicates the content came from `git diff -- <path>`.
+	DiffFileDetailKindDiff = "diff"
+	// DiffFileDetailKindFile indicates the content came from directly reading the file.
+	DiffFileDetailKindFile = "file"
+
+	// DiffFileDetailReasonBinary indicates git marked the file as binary.
+	DiffFileDetailReasonBinary = "binary"
+	// DiffFileDetailReasonNonText indicates the file is not a text file we can preview.
+	DiffFileDetailReasonNonText = "non_text"
+
+	diffRenderedLineTonePlain   = "plain"
+	diffRenderedLineToneMeta    = "meta"
+	diffRenderedLineToneHunk    = "hunk"
+	diffRenderedLineToneAdded   = "added"
+	diffRenderedLineToneDeleted = "deleted"
+)
+
+// DiffFileDetail captures the preview payload for one changed file.
+type DiffFileDetail struct {
+	RepoRoot  string
+	Path      string
+	Kind      string
+	Content   string
+	Blocks    []DiffRenderedBlock
+	Supported bool
+	Reason    string
+}
+
+// DiffRenderedBlock captures one or more adjacent rendered rows with the same tone.
+type DiffRenderedBlock struct {
+	Tone           string
+	Text           []string
+	OldLineNumbers []int
+	NewLineNumbers []int
+}
+
 var (
 	shortstatFilesPattern      = regexp.MustCompile(`(\d+)\s+files?\s+changed`)
 	shortstatInsertionsPattern = regexp.MustCompile(`(\d+)\s+insertions?\(\+\)`)
 	shortstatDeletionsPattern  = regexp.MustCompile(`(\d+)\s+deletions?\(-\)`)
+	diffHunkHeaderPattern      = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 )
 
 // Inspect loads local branch information for one working tree.
@@ -174,7 +217,11 @@ func Diff(ctx context.Context, cwd string) (DiffStatus, error) {
 	if err != nil {
 		return DiffStatus{}, fmt.Errorf("parse diff numstat: %w", err)
 	}
+	for i := range files {
+		files[i].Viewable = !files[i].Binary
+	}
 	untrackedFiles := parseUntrackedFiles(untrackedOut)
+	markUntrackedDiffFiles(repoRoot, untrackedFiles)
 	if len(untrackedFiles) > 0 {
 		summary.FilesChanged += len(untrackedFiles)
 		files = append(files, untrackedFiles...)
@@ -188,6 +235,227 @@ func Diff(ctx context.Context, cwd string) (DiffStatus, error) {
 		Summary:  summary,
 		Files:    files,
 	}, nil
+}
+
+// FileDetail loads previewable diff content for one visible diff file.
+func FileDetail(ctx context.Context, cwd, rawPath string) (DiffFileDetail, error) {
+	normalizedPath, err := normalizeRepoRelativePath(rawPath)
+	if err != nil {
+		return DiffFileDetail{}, err
+	}
+
+	status, err := Diff(ctx, cwd)
+	if err != nil {
+		return DiffFileDetail{}, err
+	}
+
+	file, ok := diffFileByPath(status.Files, normalizedPath)
+	if !ok {
+		return DiffFileDetail{}, ErrDiffFileNotFound
+	}
+	if !file.Viewable {
+		reason := DiffFileDetailReasonBinary
+		if file.Untracked {
+			reason = DiffFileDetailReasonNonText
+		}
+		return DiffFileDetail{
+			RepoRoot:  status.RepoRoot,
+			Path:      normalizedPath,
+			Supported: false,
+			Reason:    reason,
+		}, nil
+	}
+
+	if file.Untracked {
+		fullPath := filepath.Join(status.RepoRoot, filepath.FromSlash(normalizedPath))
+		content, ok, readErr := readTextFile(fullPath)
+		if readErr != nil {
+			return DiffFileDetail{}, readErr
+		}
+		if !ok {
+			return DiffFileDetail{
+				RepoRoot:  status.RepoRoot,
+				Path:      normalizedPath,
+				Supported: false,
+				Reason:    DiffFileDetailReasonNonText,
+			}, nil
+		}
+		return DiffFileDetail{
+			RepoRoot:  status.RepoRoot,
+			Path:      normalizedPath,
+			Kind:      DiffFileDetailKindFile,
+			Content:   content,
+			Blocks:    buildFileRenderedBlocks(content),
+			Supported: true,
+		}, nil
+	}
+
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		return DiffFileDetail{}, ErrGitUnavailable
+	}
+
+	diffOut, stderr, err := runGit(ctx, gitPath, cwd, "--no-pager", "diff", "--", normalizedPath)
+	if err != nil {
+		if looksLikeNotRepository(stderr) {
+			return DiffFileDetail{}, ErrNotRepository
+		}
+		return DiffFileDetail{}, fmt.Errorf("load diff for %q: %w", normalizedPath, err)
+	}
+
+	return DiffFileDetail{
+		RepoRoot:  status.RepoRoot,
+		Path:      normalizedPath,
+		Kind:      DiffFileDetailKindDiff,
+		Content:   diffOut,
+		Blocks:    buildDiffRenderedBlocks(diffOut),
+		Supported: true,
+	}, nil
+}
+
+func splitRenderedLines(content string) []string {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	rawLines := strings.Split(normalized, "\n")
+	if len(rawLines) > 1 && rawLines[len(rawLines)-1] == "" {
+		return rawLines[:len(rawLines)-1]
+	}
+	return rawLines
+}
+
+func buildFileRenderedBlocks(content string) []DiffRenderedBlock {
+	lines := splitRenderedLines(content)
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	newLineNumbers := make([]int, 0, len(lines))
+	for index := range lines {
+		newLineNumbers = append(newLineNumbers, index+1)
+	}
+	return []DiffRenderedBlock{{
+		Tone:           diffRenderedLineTonePlain,
+		Text:           append([]string(nil), lines...),
+		NewLineNumbers: newLineNumbers,
+	}}
+}
+
+func isDiffPatchHeaderLine(line string) bool {
+	return strings.HasPrefix(line, "diff --git") ||
+		strings.HasPrefix(line, "index ") ||
+		strings.HasPrefix(line, "--- ") ||
+		strings.HasPrefix(line, "+++ ") ||
+		strings.HasPrefix(line, "old mode ") ||
+		strings.HasPrefix(line, "new mode ") ||
+		strings.HasPrefix(line, "deleted file mode ") ||
+		strings.HasPrefix(line, "new file mode ") ||
+		strings.HasPrefix(line, "similarity index ") ||
+		strings.HasPrefix(line, "rename from ") ||
+		strings.HasPrefix(line, "rename to ") ||
+		strings.HasPrefix(line, "copy from ") ||
+		strings.HasPrefix(line, "copy to ") ||
+		strings.HasPrefix(line, "Binary files ")
+}
+
+func parseDiffHunkHeader(line string) (oldLineNumber, newLineNumber int, ok bool) {
+	match := diffHunkHeaderPattern.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return 0, 0, false
+	}
+
+	oldLineNumber, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	newLineNumber, err = strconv.Atoi(match[2])
+	if err != nil {
+		return 0, 0, false
+	}
+	return oldLineNumber, newLineNumber, true
+}
+
+func appendRenderedBlock(
+	blocks []DiffRenderedBlock,
+	tone, text string,
+	oldLineNumber, newLineNumber int,
+) []DiffRenderedBlock {
+	includeOldLineNumber := oldLineNumber > 0
+	includeNewLineNumber := newLineNumber > 0
+	if len(blocks) > 0 {
+		last := &blocks[len(blocks)-1]
+		if last.Tone == tone &&
+			(len(last.OldLineNumbers) > 0) == includeOldLineNumber &&
+			(len(last.NewLineNumbers) > 0) == includeNewLineNumber {
+			last.Text = append(last.Text, text)
+			if includeOldLineNumber {
+				last.OldLineNumbers = append(last.OldLineNumbers, oldLineNumber)
+			}
+			if includeNewLineNumber {
+				last.NewLineNumbers = append(last.NewLineNumbers, newLineNumber)
+			}
+			return blocks
+		}
+	}
+
+	block := DiffRenderedBlock{
+		Tone: tone,
+		Text: []string{text},
+	}
+	if includeOldLineNumber {
+		block.OldLineNumbers = []int{oldLineNumber}
+	}
+	if includeNewLineNumber {
+		block.NewLineNumbers = []int{newLineNumber}
+	}
+	return append(blocks, block)
+}
+
+func buildDiffRenderedBlocks(content string) []DiffRenderedBlock {
+	lines := splitRenderedLines(content)
+	rendered := make([]DiffRenderedBlock, 0, len(lines))
+	oldLineNumber := 0
+	newLineNumber := 0
+	sawHunkHeader := false
+
+	for _, line := range lines {
+		if isDiffPatchHeaderLine(line) {
+			continue
+		}
+		if strings.HasPrefix(line, "@@") {
+			if parsedOld, parsedNew, ok := parseDiffHunkHeader(line); ok {
+				oldLineNumber = parsedOld
+				newLineNumber = parsedNew
+			}
+			sawHunkHeader = true
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneHunk, line, 0, 0)
+			continue
+		}
+		if !sawHunkHeader {
+			continue
+		}
+		if line == `\ No newline at end of file` {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneMeta, line, 0, 0)
+			continue
+		}
+		if strings.HasPrefix(line, "+") {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneAdded, line, 0, newLineNumber)
+			newLineNumber++
+			continue
+		}
+		if strings.HasPrefix(line, "-") {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneDeleted, line, oldLineNumber, 0)
+			oldLineNumber++
+			continue
+		}
+		if strings.HasPrefix(line, " ") {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineTonePlain, line, oldLineNumber, newLineNumber)
+			oldLineNumber++
+			newLineNumber++
+			continue
+		}
+
+		rendered = appendRenderedBlock(rendered, diffRenderedLineToneMeta, line, 0, 0)
+	}
+
+	return rendered
 }
 
 func repoRoot(ctx context.Context, gitPath, cwd string) (string, error) {
@@ -406,6 +674,69 @@ func parseUntrackedFiles(raw string) []DiffFile {
 		})
 	}
 	return files
+}
+
+func diffFileByPath(files []DiffFile, normalizedPath string) (DiffFile, bool) {
+	for _, file := range files {
+		if filepath.ToSlash(strings.TrimSpace(file.Path)) == normalizedPath {
+			return file, true
+		}
+	}
+	return DiffFile{}, false
+}
+
+func markUntrackedDiffFiles(repoRoot string, files []DiffFile) {
+	for i := range files {
+		fullPath := filepath.Join(repoRoot, filepath.FromSlash(files[i].Path))
+		ok, err := isTextFile(fullPath)
+		files[i].Viewable = err == nil && ok
+		files[i].Binary = !files[i].Viewable
+	}
+}
+
+func normalizeRepoRelativePath(rawPath string) (string, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return "", fmt.Errorf("path is required")
+	}
+
+	cleaned := filepath.Clean(filepath.FromSlash(trimmed))
+	if cleaned == "." || cleaned == string(filepath.Separator) || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("path must be a repository-relative file path")
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path must stay within the repository root")
+	}
+	return filepath.ToSlash(cleaned), nil
+}
+
+func readTextFile(path string) (content string, ok bool, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, err
+	}
+	if !isLikelyText(data) {
+		return "", false, nil
+	}
+	return string(data), true, nil
+}
+
+func isTextFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return isLikelyText(data), nil
+}
+
+func isLikelyText(data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return false
+	}
+	return utf8.Valid(data)
 }
 
 func runGit(ctx context.Context, gitPath, cwd string, args ...string) (stdout string, stderr string, err error) {

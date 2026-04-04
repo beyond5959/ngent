@@ -3,7 +3,7 @@
 ## Project Overview
 
 Ngent Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
-The system targets ACP-compatible agent providers, lazily starts per-thread agents, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
+The system targets ACP-compatible agent providers, lazily resolves per-thread/session-scope providers, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
 Current built-in providers are `codex`, `claude`, `cursor`, `opencode`, `gemini`, `kimi`, `qwen`, and `blackbox`.
 This file is the source of milestone progress, validation commands, and next actions.
 
@@ -11,7 +11,90 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-04-02)
+## Latest Update (2026-04-04)
+
+- `Post-M8` memory-file redundancy cleanup completed:
+  - kept `docs/SPEC.md` focused on current-state behavior while retaining older rollout notes in the appendix instead of duplicating them in the normative sections.
+  - kept `docs/DECISIONS.md` aligned with the canonical ADR set so superseded/current entries and later ADR numbering stay unambiguous.
+  - split `docs/KNOWN_ISSUES.md` maintenance into active and closed sections so closed entries no longer live partly in the active registry and partly in a tail section.
+  - kept `docs/ACCEPTANCE.md` requirement 31 aligned with the current append-only event storage plus read-time history compaction behavior.
+  - consolidated repeated same-day `PROGRESS.md` headings while preserving the underlying change notes.
+  - validation:
+    - pass: `git diff --check`
+    - pass: memory-file structure review across `PROGRESS.md`, `docs/KNOWN_ISSUES.md`, `docs/SPEC.md`, `docs/DECISIONS.md`, and `docs/ACCEPTANCE.md`
+
+- `Post-M8` Web UI git-diff drawer stability fix completed:
+  - opening a changed file in the git-diff chip no longer installs outside-click or focus-leave auto-dismiss behavior, so the right-side drawer stays open during normal workspace interaction instead of collapsing on the next arbitrary click.
+  - the open drawer now renders from a browser-local preview snapshot keyed by thread session, while `/v1/threads/{threadId}/git-diff` polling continues to refresh only the chip and file list.
+  - keeping the drawer off the poll-driven re-render path prevents forced detail reloads, DOM replacement flicker, and scroll/content jumping while the same file preview is open.
+  - follow-up fix: collapsing the git-diff chip no longer closes the right-side drawer; the drawer is now dismissed only by its own close button.
+  - follow-up fix: clicking a file row now always refetches that file's detail from the backend instead of reusing the prior open's cached drawer payload.
+  - follow-up polish: the drawer content rows no longer render horizontal separators, and the diff/content typography now matches the composer footer's model-label styling.
+  - follow-up fix: the drawer's `<code>` content now explicitly inherits that model-label font family instead of falling back to the browser's default code font.
+  - follow-up polish: the drawer content rows now use tighter line-height and vertical padding so each row is shorter without reducing text size.
+  - follow-up fix: tracked diff previews now derive real old/new line numbers from each hunk header, show both line-number columns in the drawer, keep hunk headers visible without numbers, and hide raw diff header metadata such as `diff --git` / `index` / `---` / `+++`.
+  - follow-up API compaction: `/v1/threads/{threadId}/git-diff-file` now returns grouped rendered `blocks[]` instead of duplicating raw `content` plus per-line `lines[]`; adjacent same-tone rows are merged into one block carrying `text[]` and only the relevant `oldLineNumbers[]` / `newLineNumbers[]`.
+  - follow-up simplification: the Web UI now renders those server-produced blocks directly and infers whether old/new line-number columns should appear from the presence of the corresponding number arrays, so the old `showLineNumbers` flag is gone.
+  - performance note: the structured diff blocks are still produced server-side in one linear scan over the already loaded file/diff text, without introducing extra git subprocess calls per request.
+  - session-scoped preview snapshots are preserved separately per selected session, so switching sessions hides unrelated previews and returning to the prior session restores that session's last opened drawer content.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+## Previous Update (2026-04-03)
+
+- `Post-M8` Web UI git-diff per-file preview drawer completed:
+  - added `GET /v1/threads/{threadId}/git-diff-file?path=...`, backed by `internal/gitutil.FileDetail`, so the server can return per-file preview payloads for the currently visible working-tree diff.
+  - tracked text changes now load raw patch content from `git --no-pager diff -- <path>`, while untracked text files return their current file contents directly; binary/non-text files are marked non-viewable instead of opening a broken preview.
+  - `GET /v1/threads/{threadId}/git-diff` file rows now also expose `viewable`, allowing the embedded SPA to disable unsupported rows up front.
+  - the embedded Web UI git-diff chip still expands to the changed-file list, but clicking a viewable row now opens a right-side slide-out drawer over the chat pane, with close affordance, per-line diff/content rendering, and same-session file switching without leaving the current conversation.
+  - follow-up polish: untracked binary rows now still show the existing `New` badge while remaining disabled, and the drawer keeps its selection/browser-local open state scoped to the active thread session instead of leaking into backend state.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-M8` grouped thread-session collapse affordance completed:
+  - the embedded Web UI grouped left rail now lets each thread collapse or expand its own inline session list without affecting other threads.
+  - the leading agent glyph now doubles as the collapse toggle:
+    - expanded groups keep the provider avatar at rest and switch to a down-chevron affordance on hover/focus.
+    - collapsed groups keep a right-chevron visible so hidden sessions remain discoverable.
+  - toggling collapse preserves the existing thread activation flow, overflow menu, and `New session` action; starting a new session auto-expands that thread again so the fresh session row can appear immediately.
+  - no backend/API/runtime behavior changed; this is a browser-local Web UI interaction update layered on top of the existing grouped rail.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+- `Post-M8` cross-client active session spinner visibility completed:
+  - `GET /v1/threads/{threadId}/sessions` now decorates each returned session row with `isActive` when that concrete `(thread, session)` scope currently owns a live turn.
+  - the response still prepends the thread's currently bound `sessionId`, so even if the upstream provider session catalog is stale, a newly opened browser can still see the active session row and its loading spinner.
+  - the embedded Web UI now merges server-reported `session.isActive` with its existing local in-browser `streamStates`, so the grouped left rail shows the same spinner both for turns started in the current browser and for sessions another browser opens while already active.
+  - targeted HTTP coverage now verifies that a second client querying `/sessions` during a running bound-session turn sees `isActive=true` on the active session row and that the flag clears again after completion.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- `Post-M8` Web UI merged thread/session left rail completed:
+  - removed the dedicated middle session drawer and its chat-edge collapse toggle; the workspace now uses one left navigation column plus the main chat area.
+  - the left rail now renders each thread as a grouped header with its ACP session rows directly underneath, closer to Codex App's project/session browsing model while preserving the existing thread-based backend model.
+  - session switching now activates the clicked thread and selected session in one step, so choosing a historical session from another thread opens the correct transcript immediately instead of briefly rendering that thread's default session first.
+  - each thread group now shows at most 5 sessions at first render; `Show more` expands the next chunk and still honors backend `nextCursor` pagination when additional provider pages exist.
+  - per-thread `New session`, refresh, loading indicators, session-title live updates, and post-turn session-list refresh behavior were all retained inside the merged grouped rail.
+  - follow-up polish: thread headers no longer show relative timestamps or any selected/highlighted state; only session rows carry selection styling.
+  - follow-up polish: session refresh moved out of the inline header controls into the thread three-dot overflow menu, and the grouped thread header now uses the agent/provider icon as its leading visual instead of a generic folder glyph.
+  - follow-up polish: thread-group hover/background feedback was removed so only session rows react on hover, thread-header actions now stay visible without hover reveal, and inter-group spacing was tightened so the rail reads as one continuous list.
+  - follow-up polish: the thread overflow trigger is now permanently visible like `New session`, active session rows use a stronger accent treatment for clearer selection, and the rail side padding was reduced so content sits closer to the panel edge.
+  - follow-up polish: thread-header overflow buttons now react only to direct button hover instead of inheriting whole-row hover feedback, the rail padding/indent was tightened again, thread headers no longer show a streaming spinner for active sessions, and the active-session left accent line was softened.
+  - follow-up polish: the old chat-edge collapse handle pattern that previously controlled the session drawer now controls the merged threads rail, so the left thread/session panel can collapse and expand with the same hover-reveal affordance.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+
+- `Post-M8` Web UI live-plan bottom overlay completed:
+  - ACP `sessionUpdate:"plan"` updates no longer render inside the assistant transcript bubble or finalized history message.
+  - the embedded Web UI now renders the current running turn's latest plan as an ephemeral bottom-floating card anchored above the chat input, so users can track step progress without scrolling back to the top of a long reply.
+  - the floating card is hydrated from the same persisted `plan_update` turn events already used for running-turn recovery, so a refreshed browser or another browser entering the same active session sees the current live plan and continues receiving updates through the resumed per-turn SSE stream.
+  - when the turn completes, errors, or disconnect-finalizes, the live plan card disappears together with the turn's streaming-only runtime state instead of remaining in transcript history.
+  - the message list now reserves dynamic bottom inset space while the live plan card is visible, preventing the floating card from covering the latest transcript content or the scroll-to-bottom button.
+  - follow-up fix: history cache hydration no longer reattaches stale `planEntries` from already-rendered in-memory messages, which previously could resurrect the old top-of-message plan block after session switches or history reloads.
+
+## Previous Update (2026-04-02)
 
 - `Post-M8` session-scoped Web UI git diff summary and file-change panel completed:
   - added `GET /v1/threads/{threadId}/git-diff`, backed by `internal/gitutil`, which parses `git --no-pager diff --shortstat`, `git --no-pager diff --numstat`, and untracked file paths from `git ls-files --others --exclude-standard -z` for the thread working tree.
@@ -24,9 +107,6 @@ This file is the source of milestone progress, validation commands, and next act
   - follow-up fix: the chip now tracks pending self-toggles separately from polled diff data, so the trigger's own `focusout` during DOM re-render no longer reopens the panel and repeated real clicks open/close it immediately.
   - follow-up polish: expanded git-diff file rows now show suffix/file-name based type icons sourced from a locally vendored subset of `file-icons/vscode` font assets, with theme-aware tinted icon tiles and a generic fallback for unknown file types.
   - clean repositories, non-git directories, and hosts without `git` show no diff chip at all.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 ## Previous Update (2026-04-01)
 
@@ -39,10 +119,6 @@ This file is the source of milestone progress, validation commands, and next act
     - all other locales default to `en`.
   - localized the client-owned SPA chrome and relative-time labels for Spanish and French, and added Settings language switches for all four supported UI languages.
   - added root `README.es.md` and `README.fr.md`, and cross-linked all root README variants so the repository landing docs are available in four languages.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-
-## Previous Update (2026-04-01)
 
 - `Post-M8` active-turn viewer disconnect decoupling and resumable shared live SSE completed:
   - server-side turn execution is no longer tied to the lifetime of the original `POST /v1/threads/{threadId}/turns` response, so browser refreshes and other viewer disconnects no longer cancel a healthy in-flight turn unless the user explicitly requests cancel.
@@ -51,11 +127,6 @@ This file is the source of milestone progress, validation commands, and next act
   - restored turn-event persistence to true append-only-on-write semantics, which keeps per-turn `seq` ordering stable for safe live resume while leaving any delta coalescing to read-time history serialization only.
   - thread list/get responses now expose `hasActiveSession`, so a newly opened browser can immediately see which agent/thread currently owns a live session before opening that conversation.
   - the embedded Web UI now rehydrates running turns from persisted events on history load, restores the active session/live bubble/pending permissions after refresh, consumes `permission_resolved`, fixes streaming-bubble dedupe during running-turn hydration, and reconnects transport-level viewer drops without converting them into user-visible turn cancellation.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
-
-## Previous Update (2026-04-01)
 
 - `Post-M8` Web UI Simplified Chinese localization and Settings language switch completed:
   - added a browser-local persisted `language` preference to the embedded Vite + TypeScript SPA, alongside the existing theme/auth/server settings.
@@ -64,8 +135,6 @@ This file is the source of milestone progress, validation commands, and next act
     - all other locales default to `en`.
   - moved language switching into the Settings drawer and wired root-shell re-rendering so changing language updates the sidebar, session rail, composer, empty states, permission cards, markdown controls, and other primary UI chrome immediately.
   - localized client-owned Web UI strings and relative-time labels for English + Simplified Chinese while keeping provider/server payload text as-is.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
 
 ## Previous Update (2026-03-30)
 
@@ -77,11 +146,6 @@ This file is the source of milestone progress, validation commands, and next act
   - the badge is intentionally fail-soft:
     - if a provider never returns usage, the Web UI shows nothing.
     - if a provider returns token totals but no context-window `used/size`, the data is still cached in sqlite but the Web UI stays hidden because no safe percentage can be computed.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
-
-## Previous Update (2026-03-30)
 
 - `Post-M8` Web UI git-branch footer and checkout switcher completed:
   - added thread-scoped git inspection/switch support through new `GET/POST /v1/threads/{threadId}/git` endpoints backed by `internal/gitutil`.
@@ -89,11 +153,6 @@ This file is the source of milestone progress, validation commands, and next act
   - missing `git` binaries and non-repository working directories are handled as optional capability absence, so the API returns `available=false` and the frontend hides the control instead of surfacing a hard error.
   - the embedded Web UI composer now shows a Codex-style branch pill at the bottom-right only when the active thread's `cwd` is inside a local git repository; expanding it reveals local branches and clicking a branch checks it out immediately.
   - after each turn settles, the Web UI refreshes git state so agent-driven branch changes are reflected without requiring a full page reload.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
-
-## Earlier Update (2026-03-30)
 
 - `Post-M8` restrained desktop-workbench Web UI redesign completed:
   - Phase 0 baseline completed:
@@ -111,9 +170,6 @@ This file is the source of milestone progress, validation commands, and next act
     - tuned dark mode independently instead of relying on a simple inversion, and kept the mobile layout structurally coherent when the side rails collapse.
   - behavior compatibility:
     - kept the existing no-framework Vite + TypeScript SPA architecture, HTTP/JSON API usage, POST SSE stream path, `activeStreamMsgId` sentinel semantics, history-load guards, permission workflow, `bindMarkdownControls(...)` calls, and existing thread/session/input/cancel bindings intact.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 ## Previous Update (2026-03-27)
 
@@ -124,9 +180,6 @@ This file is the source of milestone progress, validation commands, and next act
   - changed recent-directory suggestions to use one global recency list instead of browser-scoped filtering.
   - updated the Web UI attachment URL builder to stop sending `client_id` on `/attachments/*`.
   - removed the Web UI's visible Client ID settings entirely; the browser now sends one fixed compatibility `X-Client-ID` header internally instead of exposing per-browser identity controls.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 ## Previous Update (2026-03-26)
 
@@ -136,19 +189,6 @@ This file is the source of milestone progress, validation commands, and next act
   - history reload now recognizes fresh-session scope promotion into a bound session and reuses the in-memory message cache for that first replay pass, preventing immediate transcript/history refresh from stripping streamed `thinking` / `tool_call` sections off the just-finished first reply.
   - full-page refresh is also preserved now: when transcript replay overlaps with persisted turn history, the Web UI rehydrates the replayed messages from the richer event-backed local turn reconstruction so `reasoning` / `tool_call` sections survive reload.
   - backend `GET /v1/threads/{threadId}/sessions` now also prepends the thread's currently bound `sessionId`, so the active session remains visible even when the upstream provider `session/list` result is stale or has not surfaced that new session yet.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
-
-- `Post-M8` Web UI fresh-session binding/render preservation fix completed:
-  - when a fresh session receives `session_bound`, the left session panel now upserts that bound `sessionId` immediately and forces a panel refresh instead of waiting for the first turn to finish and refresh session history.
-  - session-panel dedupe now preserves richer later metadata (`title`, `cwd`, `updatedAt`) for duplicate session ids, so temporary placeholders do not block later server-provided session details.
-  - history reload now recognizes fresh-session scope promotion into a bound session and reuses the in-memory message cache for that first replay pass, preventing immediate transcript/history refresh from stripping streamed `thinking` / `tool_call` sections off the just-finished first reply.
-  - full-page refresh is also preserved now: when transcript replay overlaps with persisted turn history, the Web UI rehydrates the replayed messages from the richer event-backed local turn reconstruction so `reasoning` / `tool_call` sections survive reload.
-  - backend `GET /v1/threads/{threadId}/sessions` now also prepends the thread's currently bound `sessionId`, so the active session remains visible even when the upstream provider `session/list` result is stale or has not surfaced that new session yet.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` initial Web UI visual refresh completed (later superseded by the 2026-03-30 desktop-workbench redesign):
   - kept the existing no-framework SPA data flow, SSE behavior, store semantics, and API contracts unchanged; the change set is UI-only.
@@ -157,17 +197,11 @@ This file is the source of milestone progress, validation commands, and next act
   - updated the visual token system while keeping light/dark themes and responsive behavior intact.
   - follow-up: reduced the chat-header session title size on both desktop and narrow/mobile breakpoints so long titles feel less heavy and consume less vertical attention.
   - follow-up: switched sidebar/chat provider avatars from inline `<img>` tags to CSS background-image icons so session switches and `New session` resets no longer trigger repeat icon fetches for Codex avatars.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` Web UI user-message base64 image placeholder rendering completed:
   - user prompt bubbles now detect inline placeholders that start with `[Image: data:image/...;base64,...]` and render them as immediate inline image previews instead of raw base64 text.
   - the parser is fail-soft and image-only: it accepts only `data:image/*;base64,...` payloads, strips incidental whitespace inside the data URL, and falls back to ordinary markdown rendering for malformed or non-image placeholders.
   - ordinary user markdown/text rendering remains unchanged around those placeholders, and the message copy action still preserves the original raw message text.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 go test ./...`
 
 ## Previous Update (2026-03-23)
 
@@ -176,9 +210,6 @@ This file is the source of milestone progress, validation commands, and next act
   - changed HTTP request completion logs to a compact nginx-style access-log format such as `INFO: 2026-03-23 15:30:45 127.0.0.1 - "GET /v1/threads HTTP/1.1" 200 OK 12.4ms`.
   - kept ACP `--debug` tracing and secret redaction intact; debug traces now render as readable text with sanitized embedded JSON payloads instead of JSON log envelopes.
   - enabled ANSI color for level/status segments only when `stderr` is a TTY, so redirected output remains plain text.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` Cursor CLI ACP integration completed:
   - added `internal/agents/cursor` on top of the shared `acpcli` driver, with startup fallback across `agent acp` and `cursor-agent acp`.
@@ -203,17 +234,11 @@ This file is the source of milestone progress, validation commands, and next act
   - added a first-class assistant message-content callback in the agent layer and bridged those blocks through HTTP/SSE/history as `message_content` events alongside the existing `message_delta` text stream.
   - updated the Web UI assistant segment timeline to render `message_content` blocks during streaming and after reload/history reconstruction, with dedicated cards for image content and embedded resource content plus JSON fallback for unknown block shapes.
   - kept `responseText` as the visible-text aggregate only, so existing API consumers remain compatible while structured content survives in turn events.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` BLACKBOX Web UI tool-call rendering normalization completed:
   - dropped standalone whitespace-only assistant chunks when they arrive as isolated separators around tool calls, preventing BLACKBOX turns from rendering large blank answer blocks or effectively empty assistant messages.
   - widened Web UI tool-call payload handling so `content` / `locations` no longer require array-only shapes; single-object payloads are normalized and still rendered.
   - improved tool-call titles for generic BLACKBOX payloads such as search calls titled only `.` by falling back to kind/path-derived labels.
-  - validation:
-    - pending: `cd internal/webui/web && npm run build`
-    - pending: `go test ./...`
 
 - `Post-M8` BLACKBOX AI ACP integration completed:
   - added `internal/agents/blackbox` on top of the shared `acpcli` driver, using `blackbox --experimental-acp` with stdout-noise tolerance because the CLI can emit non-JSON process/telemetry lines before or between ACP frames.
@@ -228,9 +253,6 @@ This file is the source of milestone progress, validation commands, and next act
     - model forwarding through startup args plus ACP `session/new` / `session/prompt`.
     - fail-closed structured permission bridging.
     - unsupported `session/list` behavior when `loadSession=false`.
-  - validation:
-    - pending: `cd internal/webui/web && npm run build`
-    - pending: `go test ./...`
 
 - `Post-M8` Web UI agent-list overflow trigger hover-only reveal completed:
   - changed the agent-list three-dot trigger to stay hidden by default and reveal only on row hover, keyboard focus, or while its menu is open.
@@ -250,9 +272,6 @@ This file is the source of milestone progress, validation commands, and next act
   - hid the session panel entirely until an agent/thread is selected, so first load no longer reserves a blank middle column.
   - fixed the CSS visibility rule so the hidden session panel truly leaves the flex layout instead of still occupying width via `.session-sidebar { display:flex }`.
   - flattened the expanded session panel surface so its header and list share the same background plane instead of reading as two differently colored sections.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 ## Earlier Update (2026-03-16)
 
@@ -260,51 +279,33 @@ This file is the source of milestone progress, validation commands, and next act
   - extended shared ACP `session/update` parsing to preserve structured `tool_call` and `tool_call_update` payloads, including `toolCallId`, status/title/kind, content blocks, locations, and raw input/output payloads.
   - added first-class turn callbacks plus HTTP/SSE/history persistence for those tool-call events instead of dropping them at the provider boundary.
   - updated the Web UI stream state and history reconstruction to merge tool-call events by `toolCallId` and render live/persisted tool-call cards alongside plan/reasoning/message output.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` Web UI fresh-session reset fix completed:
   - explicit `New session` now allocates a client-side fresh-session scope even when the active thread already has no persisted `sessionId`, so repeated `New session` clicks no longer reuse the same anonymous chat buffer.
   - empty-session history replay now drops cancelled turns that never emitted `session_bound` and never produced visible response text, preventing stale cancelled placeholders from reappearing after reload.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` deferred thread config apply completed:
   - changed `POST /v1/threads/{threadId}/config-options` to validate against available config options and persist thread `agentOptions.modelId` / `agentOptions.configOverrides` without mutating the live provider.
   - narrowed cached provider scope from full `agentOptions` to thread + session/fresh-session identity, so picker edits no longer evict the current session provider by themselves.
   - added turn-start config sync: right before streaming a new turn, ngent compares persisted thread selections against the cached provider's current model/reasoning state and only then applies changed options.
   - updated acceptance/spec/ADR docs to describe the new "persist now, apply on next turn" behavior.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 ## Previous Update (2026-03-14)
 
 - `Post-M8` Web UI thinking tense alignment completed:
   - kept the live reasoning toggle label as `Thinking` while deltas are still streaming.
   - switched finalized reasoning labels to `Thought` so completed content reads in the past tense.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` Web UI thinking markdown rendering completed:
   - switched finalized `Thinking` content from escaped plain text to the same sanitized markdown renderer used by finalized assistant replies.
   - kept streaming reasoning as plain text so partial markdown does not reflow while deltas are still arriving.
   - extended markdown typography/code styles to apply inside expanded `Thinking` content as well as normal assistant message bubbles.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` Web UI thinking fold UX completed:
   - changed the `Thinking` section to a native collapsible panel in the Web UI.
   - keep in-flight reasoning panels expanded while `reasoning_delta` is still streaming.
   - once the turn settles into persisted history, render the same `Thinking` content collapsed by default so final replies stay compact.
   - preserve manual expand/collapse state for finalized messages across in-page list re-renders.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - `Post-M8` Web UI thinking/reasoning visibility completed:
   - added a per-turn reasoning callback bridge in `internal/agents` so ACP `thought_message_chunk` / `agent_thought_chunk` updates no longer stop at provider parsing.
@@ -314,9 +315,6 @@ This file is the source of milestone progress, validation commands, and next act
   - added regression coverage for:
     - ACP notification routing of thought chunks into reasoning callbacks.
     - SSE/history persistence of `reasoning_delta` events.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 ## Previous Update (2026-03-13)
 
@@ -328,9 +326,6 @@ This file is the source of milestone progress, validation commands, and next act
     - `gemini` keeps temporary `GEMINI_CLI_HOME` bootstrapping and stdout noise filtering.
     - `qwen` / `kimi` keep selectable permission-option mapping and fail-closed timeout handling.
     - `opencode` keeps synchronous `session/cancel` behavior.
-  - validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
     - pass: real host smoke `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESmoke -count=1 -v -timeout 180s`
     - pass: real host replay `E2E_QWEN=1 go test ./internal/agents/qwen -run TestQwenE2ESessionTranscriptReplay -count=1 -v -timeout 240s`
     - pass: real host config probe `E2E_KIMI=1 go test ./internal/agents/kimi -run TestKimiConfigOptionsE2EDoesNotCreateSession -count=1 -v -timeout 240s`
@@ -369,9 +364,7 @@ This file is the source of milestone progress, validation commands, and next act
   - validation:
     - pass: `go test ./internal/agents/qwen -count=1`
     - pass: `E2E_QWEN=1 go test ./internal/agents/qwen -run 'TestQwenE2E(Smoke|SessionTranscriptReplay)$' -count=1 -v -timeout 180s`
-    - pass: `go test ./internal/agents/...`
     - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
     - pass: real `opencode` `/session-history` regression on rebuilt ngent
     - pass: real `codex` `/session-history` regression on rebuilt ngent
     - observed: real `kimi` `session/load` returns no replay updates on Kimi CLI 1.20.0
@@ -845,7 +838,6 @@ This file is the source of milestone progress, validation commands, and next act
   - local validation:
     - first call `GET /v1/agents/codex/models` took ~16s (initial discovery).
     - second call returned in ~0ms from shared client (no repeated startup/shutdown).
-  - executed validation:
 
 - `Post-F9` persisted agent config catalog completed:
   - added sqlite-backed `agent_config_catalogs` storage keyed by `agent_id + model_id`, with a reserved default snapshot row used when a thread has no explicit model selection yet.
@@ -855,7 +847,6 @@ This file is the source of milestone progress, validation commands, and next act
     - current model config catalog into sqlite for reuse across threads/restarts
   - service startup now launches a background catalog refresher that silently re-queries built-in agents and refreshes stored model/reasoning catalogs without delaying frontend availability.
   - Web UI config cache is now keyed by `agent + selected model`, so different threads on the same agent no longer accidentally reuse the wrong reasoning list for another model.
-  - executed validation:
 
 - `Post-F9` streaming bubble typing-indicator persistence completed:
   - Web UI streaming agent bubble now keeps the three animated dots rendered at the bottom of the bubble after the first delta arrives, until the turn finishes.
@@ -869,19 +860,16 @@ This file is the source of milestone progress, validation commands, and next act
 - `Post-F9` streaming bubble empty-line removal:
   - removed the blank spacer above the three animated dots before the first token arrives by hiding the empty text container in streaming bubbles.
   - typing indicator now sits directly under the top padding until real content starts streaming.
-  - executed validation:
 
 - `Post-F9` sidebar thread activity indicators completed:
   - thread list now shows a live spinner for any thread with an in-flight turn, so background work stays visible after switching to another thread.
   - when a background turn finishes, the spinner flips to a green check badge that stays on that thread until the user opens it again.
   - slowed the sidebar thread spinner slightly so the activity indicator reads as background work instead of a high-frequency busy loop.
-  - executed validation:
 
 - `Post-F9` sidebar thread drawer actions and rename completed:
   - replaced the direct delete icon in sidebar thread rows with a drawer trigger.
   - added drawer actions for inline rename and delete, with rename ordered before delete and delete styled as the only dangerous text action.
   - extended `PATCH /v1/threads/{threadId}` so thread title updates reuse the existing ownership and active-turn conflict model.
-  - executed validation:
 
 - `Post-F9` sidebar thread action popover refinement completed:
   - replaced the expanding inline drawer with a floating popover anchored to the three-dot trigger, so opening thread actions no longer changes sidebar row height.
@@ -892,7 +880,6 @@ This file is the source of milestone progress, validation commands, and next act
   - added shared ACP `session/update` parsing for both `agent_message_chunk` and `plan`, with plan routed through a new per-turn `PlanHandler` context callback.
   - introduced SSE/history event `plan_update` so ACP plans are persisted alongside other turn events instead of being dropped at provider boundaries.
   - updated the Web UI to render live plan cards during streaming and restore the latest plan from turn history on reload.
-  - executed validation:
 
  
 - 2026-03-06: Removed the thread action trigger's per-thread actionLabel/title tooltip in the Web UI popover menu; the three-dot button now uses a neutral `aria-label` only, without hover text tied to the thread title.
@@ -1198,11 +1185,6 @@ This file is the source of milestone progress, validation commands, and next act
   - updated the Web UI permission card to render all advertised options dynamically, fall back to `Allow` / `Deny` only when no options are provided, and show the selected option label in the resolved state.
   - added regression coverage for exact option pass-through at the HTTP layer and for Kimi's structured permission handler preserving non-default selected option ids.
   - updated API / spec / frontend docs and acceptance criteria to describe dynamic permission options.
-  - executed validation:
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./internal/agents/kimi -run 'TestHandlePermissionRequest(ParsesRichToolCallPayload|HonorsSelectedOptionID)' -count=1`
-    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./internal/httpapi -run 'TestTurnPermission(RequiredSSEEvent|ApprovedContinuesAndCompletes|SelectedOptionFlowsThroughExactAgentChoice|TimeoutFailClosed|SSEDisconnectFailClosed)' -count=1`
-    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
 
 - 2026-03-26: moved uploaded Web UI attachments into the configurable data directory and made persisted attachment cards survive reload.
   - replaced the CLI storage root flag with `--data-path` (default `$HOME/.ngent/`), deriving sqlite as `data-path/ngent.db` instead of accepting a standalone `--db-path` file.
@@ -1236,11 +1218,6 @@ This file is the source of milestone progress, validation commands, and next act
   - real repro on the provided Codex session after both changes:
     - browser `Response.json()` for that history payload measured about `1.3 ms`
     - `hello -> first session` replay no longer showed a `>50 ms` main-thread gap; measured max RAF gap was about `9.4 ms` on the patched local server
-  - executed validation:
-    - pass: `go test ./internal/httpapi -run 'TestThreadHistory(FiltersBySessionID|CompactsConsecutiveDeltaEvents)' -count=1`
-    - pass: `go test ./internal/storage -run TestAppendEventMergesConsecutiveDeltaRuns -count=1`
-    - pass: `cd internal/webui/web && npm run build`
-    - pass: `go test ./...`
 
 - 2026-03-26: let the Web UI browse other sessions while one turn is still streaming.
   - root cause: the session sidebar treated "currently viewed session" and `thread.agentOptions.sessionId` as the same thing, so clicking another session during an active turn always tried `PATCH /v1/threads/{threadId}` and surfaced `409 thread has an active turn`.

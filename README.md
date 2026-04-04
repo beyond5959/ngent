@@ -31,11 +31,12 @@ Ngent acts as a bridge between **ACP-compatible agents** (like Codex, Kimi CLI, 
 
 - 🔌 **Multi-Agent Support**: Works with any ACP-compatible agent (Codex, Kimi CLI, OpenCode, etc.)
 - 🌐 **Web API**: HTTP/JSON endpoints with Server-Sent Events (SSE) for streaming responses
-- 🖥️ **Built-in UI**: No separate frontend deployment needed — the web UI is embedded in the binary
-- 🌏 **Localized UI**: English, 简体中文, Español, and Français in the embedded Web UI
+- 🖥️ **Built-in UI**: No separate frontend deployment needed — the web UI is embedded in the binary with support for multiple languages
 - 🔒 **Permission Control**: Fine-grained approval system for agent file/system operations
 - 💾 **Persistent State**: SQLite-backed conversation history across sessions
 - 📱 **Mobile Friendly**: QR code for easy access from mobile devices on the same network
+- 🌿 **Git Branch Controls**: View per-thread branch information and switch local branches directly from the built-in Web UI
+- 🧾 **Git Diff Inspector**: Show session-scoped working tree diff summaries, list tracked and untracked files, and open per-file previews
 
 
 ## Supported Agents

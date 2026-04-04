@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1087,6 +1088,124 @@ func TestThreadSessionsListEndpointIncludesCurrentBoundSession(t *testing.T) {
 	}
 	if got := body.Sessions[1].SessionID; got != "ses_existing" {
 		t.Fatalf("sessions[1].sessionId = %q, want %q", got, "ses_existing")
+	}
+}
+
+func TestThreadSessionsListEndpointMarksActiveBoundSessionForOtherClients(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	firstDelivered := make(chan struct{}, 1)
+	streamer := &blockingSessionListStreamer{
+		result: agents.SessionListResult{
+			Sessions: []agents.SessionInfo{{
+				SessionID: "ses_existing",
+				CWD:       root,
+				Title:     "Existing session",
+			}},
+		},
+		firstDelivered: firstDelivered,
+		release:        release,
+	}
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	updateStatus, updateBody := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"sessionId": "ses_bound_current"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if updateStatus != http.StatusOK {
+		t.Fatalf("update thread status = %d, want %d, body=%s", updateStatus, http.StatusOK, updateBody)
+	}
+
+	resp, cancelStream := startTurnStreamHTTP(t, ts.URL, "client-a", threadID, "work")
+	defer cancelStream()
+	defer resp.Body.Close()
+	_, doneCh := streamSSEEvents(resp.Body)
+
+	select {
+	case <-firstDelivered:
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timeout waiting for running turn to produce first delta")
+	}
+
+	status, body := doJSON(t, http.MethodGet, ts.URL+"/v1/threads/"+threadID+"/sessions", nil, map[string]string{
+		"X-Client-ID": "client-b",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("session list status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	type sessionListResponse struct {
+		Supported bool `json:"supported"`
+		Sessions  []struct {
+			SessionID string `json:"sessionId"`
+			IsActive  bool   `json:"isActive"`
+		} `json:"sessions"`
+	}
+	var list sessionListResponse
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("unmarshal session list: %v", err)
+	}
+	if !list.Supported {
+		t.Fatal("supported = false, want true")
+	}
+	if got, want := len(list.Sessions), 2; got != want {
+		t.Fatalf("len(sessions) = %d, want %d", got, want)
+	}
+	if got := list.Sessions[0].SessionID; got != "ses_bound_current" {
+		t.Fatalf("sessions[0].sessionId = %q, want %q", got, "ses_bound_current")
+	}
+	if !list.Sessions[0].IsActive {
+		t.Fatal("sessions[0].isActive = false, want true")
+	}
+	if got := list.Sessions[1].SessionID; got != "ses_existing" {
+		t.Fatalf("sessions[1].sessionId = %q, want %q", got, "ses_existing")
+	}
+	if list.Sessions[1].IsActive {
+		t.Fatal("sessions[1].isActive = true, want false")
+	}
+
+	close(release)
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("running turn stream ended with error: %v", err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timeout waiting for running turn stream to finish")
+	}
+
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		status, body = doJSON(t, http.MethodGet, ts.URL+"/v1/threads/"+threadID+"/sessions", nil, map[string]string{
+			"X-Client-ID": "client-b",
+		})
+		if status != http.StatusOK {
+			t.Fatalf("session list after completion status = %d, want %d, body=%s", status, http.StatusOK, body)
+		}
+		list = sessionListResponse{}
+		if err := json.Unmarshal([]byte(body), &list); err != nil {
+			t.Fatalf("unmarshal session list after completion: %v", err)
+		}
+		if len(list.Sessions) > 0 && !list.Sessions[0].IsActive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sessions[0].isActive stayed true after completion")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -2595,6 +2714,7 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 			Deleted   int    `json:"deleted"`
 			Binary    bool   `json:"binary"`
 			Untracked bool   `json:"untracked"`
+			Viewable  bool   `json:"viewable"`
 		} `json:"files"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
@@ -2627,6 +2747,7 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 		Deleted   int
 		Binary    bool
 		Untracked bool
+		Viewable  bool
 	}{}
 	for _, file := range body.Files {
 		byPath[file.Path] = struct {
@@ -2634,22 +2755,199 @@ func TestThreadGitDiffSummaryAndFiles(t *testing.T) {
 			Deleted   int
 			Binary    bool
 			Untracked bool
+			Viewable  bool
 		}{
 			Added:     file.Added,
 			Deleted:   file.Deleted,
 			Binary:    file.Binary,
 			Untracked: file.Untracked,
+			Viewable:  file.Viewable,
 		}
 	}
 
-	if got := byPath["README.md"]; got.Added != 1 || got.Deleted != 0 || got.Binary || got.Untracked {
-		t.Fatalf("README.md diff = %#v, want Added=1 Deleted=0 Binary=false Untracked=false", got)
+	if got := byPath["README.md"]; got.Added != 1 || got.Deleted != 0 || got.Binary || got.Untracked || !got.Viewable {
+		t.Fatalf("README.md diff = %#v, want Added=1 Deleted=0 Binary=false Untracked=false Viewable=true", got)
 	}
-	if got := byPath["pkg/app.txt"]; got.Added != 0 || got.Deleted != 1 || got.Binary || got.Untracked {
-		t.Fatalf("pkg/app.txt diff = %#v, want Added=0 Deleted=1 Binary=false Untracked=false", got)
+	if got := byPath["pkg/app.txt"]; got.Added != 0 || got.Deleted != 1 || got.Binary || got.Untracked || !got.Viewable {
+		t.Fatalf("pkg/app.txt diff = %#v, want Added=0 Deleted=1 Binary=false Untracked=false Viewable=true", got)
 	}
-	if got := byPath["docs/todo.txt"]; got.Added != 0 || got.Deleted != 0 || got.Binary || !got.Untracked {
-		t.Fatalf("docs/todo.txt diff = %#v, want Added=0 Deleted=0 Binary=false Untracked=true", got)
+	if got := byPath["docs/todo.txt"]; got.Added != 0 || got.Deleted != 0 || got.Binary || !got.Untracked || !got.Viewable {
+		t.Fatalf("docs/todo.txt diff = %#v, want Added=0 Deleted=0 Binary=false Untracked=true Viewable=true", got)
+	}
+}
+
+func TestThreadGitDiffFileReturnsPatchForTrackedFile(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(README.md): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("README.md"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		ThreadID  string `json:"threadId"`
+		Available bool   `json:"available"`
+		Path      string `json:"path"`
+		Supported bool   `json:"supported"`
+		Kind      string `json:"kind"`
+		Blocks    []struct {
+			Tone           string   `json:"tone"`
+			Text           []string `json:"text"`
+			OldLineNumbers []int    `json:"oldLineNumbers"`
+			NewLineNumbers []int    `json:"newLineNumbers"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := body.ThreadID, threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if !body.Available || !body.Supported {
+		t.Fatalf("available/supported = %v/%v, want true/true", body.Available, body.Supported)
+	}
+	if got, want := body.Kind, "diff"; got != want {
+		t.Fatalf("kind = %q, want %q", got, want)
+	}
+	if got, want := body.Path, "README.md"; got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if len(body.Blocks) != 3 {
+		t.Fatalf("len(blocks) = %d, want 3", len(body.Blocks))
+	}
+	if got := body.Blocks[0]; got.Tone != "hunk" || len(got.Text) != 1 || got.Text[0] != "@@ -1 +1,2 @@" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 0 {
+		t.Fatalf("blocks[0] = %#v, want hunk header without line numbers", got)
+	}
+	if got := body.Blocks[1]; got.Tone != "plain" || len(got.Text) != 1 || got.Text[0] != " hello" || len(got.OldLineNumbers) != 1 || got.OldLineNumbers[0] != 1 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 1 {
+		t.Fatalf("blocks[1] = %#v, want context line old=1 new=1", got)
+	}
+	if got := body.Blocks[2]; got.Tone != "added" || len(got.Text) != 1 || got.Text[0] != "+world" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 2 {
+		t.Fatalf("blocks[2] = %#v, want added line new=2", got)
+	}
+}
+
+func TestThreadGitDiffFileReturnsContentsForUntrackedTextFile(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	untrackedPath := filepath.Join(repo, "docs", "todo.txt")
+	if err := os.MkdirAll(filepath.Dir(untrackedPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(untrackedPath): %v", err)
+	}
+	if err := os.WriteFile(untrackedPath, []byte("draft\nnext\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(untrackedPath): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("docs/todo.txt"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		Available bool   `json:"available"`
+		Supported bool   `json:"supported"`
+		Kind      string `json:"kind"`
+		Blocks    []struct {
+			Tone           string   `json:"tone"`
+			Text           []string `json:"text"`
+			OldLineNumbers []int    `json:"oldLineNumbers"`
+			NewLineNumbers []int    `json:"newLineNumbers"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !body.Available || !body.Supported {
+		t.Fatalf("available/supported = %v/%v, want true/true", body.Available, body.Supported)
+	}
+	if got, want := body.Kind, "file"; got != want {
+		t.Fatalf("kind = %q, want %q", got, want)
+	}
+	if len(body.Blocks) != 1 {
+		t.Fatalf("len(blocks) = %d, want 1", len(body.Blocks))
+	}
+	if got := body.Blocks[0]; got.Tone != "plain" || len(got.Text) != 2 || got.Text[0] != "draft" || got.Text[1] != "next" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 2 || got.NewLineNumbers[0] != 1 || got.NewLineNumbers[1] != 2 {
+		t.Fatalf("blocks[0] = %#v, want grouped file lines", got)
+	}
+}
+
+func TestThreadGitDiffFileMarksBinaryUntrackedFilesUnsupported(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	binaryPath := filepath.Join(repo, "assets", "logo.png")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(binaryPath): %v", err)
+	}
+	if err := os.WriteFile(binaryPath, []byte{0x89, 'P', 'N', 'G', 0x00}, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(binaryPath): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("assets/logo.png"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		Available bool   `json:"available"`
+		Supported bool   `json:"supported"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !body.Available {
+		t.Fatal("available = false, want true")
+	}
+	if body.Supported {
+		t.Fatal("supported = true, want false")
+	}
+	if got, want := body.Reason, "non_text"; got != want {
+		t.Fatalf("reason = %q, want %q", got, want)
+	}
+}
+
+func TestThreadGitDiffFileRejectsUnsafePath(t *testing.T) {
+	repo := newGitRepoForHTTPTest(t)
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{repo}})
+
+	threadID := createThreadForClient(t, h, "client-a", repo)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/git-diff-file?path="+url.QueryEscape("../README.md"),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
 	}
 }
 
@@ -5972,6 +6270,43 @@ func (s *sessionListStreamer) Stream(ctx context.Context, input string, onDelta 
 func (s *sessionListStreamer) ListSessions(ctx context.Context, req agents.SessionListRequest) (agents.SessionListResult, error) {
 	_ = ctx
 	s.lastCursor.Store(strings.TrimSpace(req.Cursor))
+	return agents.CloneSessionListResult(s.result), nil
+}
+
+type blockingSessionListStreamer struct {
+	result         agents.SessionListResult
+	firstDelivered chan<- struct{}
+	release        <-chan struct{}
+}
+
+func (s *blockingSessionListStreamer) Name() string {
+	return "blocking-session-list-streamer"
+}
+
+func (s *blockingSessionListStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	_ = input
+	if err := onDelta("working"); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if s.firstDelivered != nil {
+		select {
+		case s.firstDelivered <- struct{}{}:
+		default:
+		}
+	}
+	if s.release != nil {
+		select {
+		case <-ctx.Done():
+			return agents.StopReasonCancelled, ctx.Err()
+		case <-s.release:
+		}
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+func (s *blockingSessionListStreamer) ListSessions(ctx context.Context, req agents.SessionListRequest) (agents.SessionListResult, error) {
+	_ = ctx
+	_ = req
 	return agents.CloneSessionListResult(s.result), nil
 }
 

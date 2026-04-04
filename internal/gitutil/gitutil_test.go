@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -131,6 +132,9 @@ func TestDiff(t *testing.T) {
 	if readme.Added != 1 || readme.Deleted != 0 || readme.Binary {
 		t.Fatalf("README.md diff = %#v, want Added=1 Deleted=0 Binary=false", readme)
 	}
+	if !readme.Viewable {
+		t.Fatalf("README.md Viewable = false, want true")
+	}
 
 	app, ok := byPath["pkg/app.txt"]
 	if !ok {
@@ -139,6 +143,9 @@ func TestDiff(t *testing.T) {
 	if app.Added != 0 || app.Deleted != 1 || app.Binary {
 		t.Fatalf("pkg/app.txt diff = %#v, want Added=0 Deleted=1 Binary=false", app)
 	}
+	if !app.Viewable {
+		t.Fatalf("pkg/app.txt Viewable = false, want true")
+	}
 
 	untracked, ok := byPath["docs/todo.txt"]
 	if !ok {
@@ -146,6 +153,9 @@ func TestDiff(t *testing.T) {
 	}
 	if untracked.Added != 0 || untracked.Deleted != 0 || untracked.Binary || !untracked.Untracked {
 		t.Fatalf("docs/todo.txt diff = %#v, want Added=0 Deleted=0 Binary=false Untracked=true", untracked)
+	}
+	if !untracked.Viewable {
+		t.Fatalf("docs/todo.txt Viewable = false, want true")
 	}
 }
 
@@ -171,6 +181,144 @@ func TestDiffNotRepository(t *testing.T) {
 	_, err := Diff(context.Background(), t.TempDir())
 	if !errors.Is(err, ErrNotRepository) {
 		t.Fatalf("Diff() error = %v, want %v", err, ErrNotRepository)
+	}
+}
+
+func TestDiffMarksUntrackedBinaryFilesAsNotViewable(t *testing.T) {
+	repo := newGitRepo(t)
+
+	binaryPath := filepath.Join(repo, "assets", "logo.png")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(): %v", err)
+	}
+	if err := os.WriteFile(binaryPath, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(binaryPath): %v", err)
+	}
+
+	status, err := Diff(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Diff(): %v", err)
+	}
+
+	asset, ok := mapDiffFilesByPath(status.Files)["assets/logo.png"]
+	if !ok {
+		t.Fatalf("assets/logo.png not found in Files: %#v", status.Files)
+	}
+	if !asset.Untracked || !asset.Binary || asset.Viewable {
+		t.Fatalf("assets/logo.png diff = %#v, want Untracked=true Binary=true Viewable=false", asset)
+	}
+}
+
+func TestFileDetailReturnsPatchForTrackedFile(t *testing.T) {
+	repo := newGitRepo(t)
+
+	readmePath := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readmePath, []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(README.md): %v", err)
+	}
+
+	detail, err := FileDetail(context.Background(), repo, "README.md")
+	if err != nil {
+		t.Fatalf("FileDetail(): %v", err)
+	}
+
+	if !detail.Supported {
+		t.Fatalf("Supported = false, want true: %#v", detail)
+	}
+	if got, want := detail.Kind, DiffFileDetailKindDiff; got != want {
+		t.Fatalf("Kind = %q, want %q", got, want)
+	}
+	if !strings.Contains(detail.Content, "diff --git a/README.md b/README.md") {
+		t.Fatalf("Content = %q, want git diff header", detail.Content)
+	}
+	if !strings.Contains(detail.Content, "+world") {
+		t.Fatalf("Content = %q, want added line", detail.Content)
+	}
+	if len(detail.Blocks) != 3 {
+		t.Fatalf("len(Blocks) = %d, want 3", len(detail.Blocks))
+	}
+	if got := detail.Blocks[0]; got.Tone != "hunk" || len(got.Text) != 1 || got.Text[0] != "@@ -1 +1,2 @@" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 0 {
+		t.Fatalf("Blocks[0] = %#v, want hunk header block without line numbers", got)
+	}
+	if got := detail.Blocks[1]; got.Tone != "plain" || len(got.Text) != 1 || got.Text[0] != " hello" || len(got.OldLineNumbers) != 1 || got.OldLineNumbers[0] != 1 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 1 {
+		t.Fatalf("Blocks[1] = %#v, want context block old=1 new=1", got)
+	}
+	if got := detail.Blocks[2]; got.Tone != "added" || len(got.Text) != 1 || got.Text[0] != "+world" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 2 {
+		t.Fatalf("Blocks[2] = %#v, want added block new=2 only", got)
+	}
+}
+
+func TestFileDetailReturnsFileContentsForUntrackedTextFile(t *testing.T) {
+	repo := newGitRepo(t)
+
+	draftPath := filepath.Join(repo, "docs", "todo.txt")
+	if err := os.MkdirAll(filepath.Dir(draftPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(): %v", err)
+	}
+	if err := os.WriteFile(draftPath, []byte("draft\nnext\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(draftPath): %v", err)
+	}
+
+	detail, err := FileDetail(context.Background(), repo, "docs/todo.txt")
+	if err != nil {
+		t.Fatalf("FileDetail(): %v", err)
+	}
+
+	if !detail.Supported {
+		t.Fatalf("Supported = false, want true: %#v", detail)
+	}
+	if got, want := detail.Kind, DiffFileDetailKindFile; got != want {
+		t.Fatalf("Kind = %q, want %q", got, want)
+	}
+	if got, want := detail.Content, "draft\nnext\n"; got != want {
+		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if len(detail.Blocks) != 1 {
+		t.Fatalf("len(Blocks) = %d, want 1", len(detail.Blocks))
+	}
+	if got := detail.Blocks[0]; got.Tone != "plain" || len(got.Text) != 2 || got.Text[0] != "draft" || got.Text[1] != "next" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 2 || got.NewLineNumbers[0] != 1 || got.NewLineNumbers[1] != 2 {
+		t.Fatalf("Blocks[0] = %#v, want plain file-content block with new line numbers", got)
+	}
+}
+
+func TestFileDetailRejectsBinaryUntrackedFile(t *testing.T) {
+	repo := newGitRepo(t)
+
+	binaryPath := filepath.Join(repo, "assets", "logo.png")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(): %v", err)
+	}
+	if err := os.WriteFile(binaryPath, []byte{0x89, 'P', 'N', 'G', 0x00}, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(binaryPath): %v", err)
+	}
+
+	detail, err := FileDetail(context.Background(), repo, "assets/logo.png")
+	if err != nil {
+		t.Fatalf("FileDetail(): %v", err)
+	}
+
+	if detail.Supported {
+		t.Fatalf("Supported = true, want false: %#v", detail)
+	}
+	if got, want := detail.Reason, DiffFileDetailReasonNonText; got != want {
+		t.Fatalf("Reason = %q, want %q", got, want)
+	}
+}
+
+func TestFileDetailRejectsUnsafePath(t *testing.T) {
+	repo := newGitRepo(t)
+
+	if _, err := FileDetail(context.Background(), repo, "../README.md"); err == nil {
+		t.Fatal("FileDetail() error = nil, want non-nil")
+	}
+}
+
+func TestFileDetailReturnsNotFoundWhenPathIsNotInDiff(t *testing.T) {
+	repo := newGitRepo(t)
+
+	_, err := FileDetail(context.Background(), repo, "README.md")
+	if !errors.Is(err, ErrDiffFileNotFound) {
+		t.Fatalf("FileDetail() error = %v, want %v", err, ErrDiffFileNotFound)
 	}
 }
 
@@ -226,4 +374,12 @@ func evalPath(t *testing.T, path string) string {
 		return resolved
 	}
 	return filepath.Clean(path)
+}
+
+func mapDiffFilesByPath(files []DiffFile) map[string]DiffFile {
+	result := make(map[string]DiffFile, len(files))
+	for _, file := range files {
+		result[file.Path] = file
+	}
+	return result
 }

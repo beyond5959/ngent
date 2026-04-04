@@ -13,7 +13,62 @@
 - Follow-up plan:
 ```
 
-## Open Issues
+## Active Issues
+
+Status is authoritative for each entry. This section keeps only open and
+mitigated items so active work does not share space with already closed issues.
+
+- ID: KI-051
+- Title: Grouped thread session-collapse state resets after a full page reload
+- Status: Open
+- Severity: Low
+- Affects: browser users who manually collapse one or more thread groups in the embedded Web UI left rail
+- Symptom:
+  - each thread group now supports collapsing its inline session list from the leading agent glyph, but that state currently lives only in browser-local runtime memory.
+  - refreshing the page or reopening the Web UI expands every thread group again, even if the user had intentionally collapsed several of them before.
+- Workaround:
+  - re-collapse the desired thread groups after reload; the behavior remains stable during ordinary in-page re-renders while the browser tab stays open.
+- Follow-up plan:
+  - evaluate whether the collapse map should be persisted in browser local storage without turning it into shared server-side thread metadata.
+
+- ID: KI-050
+- Title: Cross-client session-row activity spinner is refreshed on fetch, not pushed live to already-open browsers
+- Status: Open
+- Severity: Low
+- Affects: secondary browsers that already have the grouped thread/session rail open before another browser starts a new turn
+- Symptom:
+  - `GET /v1/threads/{threadId}/sessions` now marks concrete session rows with `isActive`, so a newly opened browser or a manual session-list refresh shows the correct spinner for the active session.
+  - however, the grouped rail still does not subscribe to a separate push channel for background thread/session activity, so an already-open browser will not see another browser's new session-row spinner until it reloads or re-fetches that thread's sessions.
+- Workaround:
+  - reload the page, reopen the relevant thread, or use the thread menu's session refresh action.
+- Follow-up plan:
+  - evaluate whether the grouped rail needs lightweight polling or a dedicated push/resume path for cross-browser background session-activity updates.
+
+- ID: KI-049
+- Title: Live plan overlay is only pinned for the currently open session
+- Status: Open
+- Severity: Low
+- Affects: operators watching multiple active sessions/threads at once in the embedded Web UI
+- Symptom:
+  - the new live plan card stays pinned at the bottom only for the session currently open in the chat pane.
+  - if another session/thread is also streaming in the background, its live plan is not shown globally until the user switches into that conversation.
+- Workaround:
+  - switch into the running session whose plan you want to inspect; the card rehydrates from persisted `plan_update` events and resumes live updates.
+- Follow-up plan:
+  - evaluate whether the grouped left rail eventually needs a compact cross-thread live-plan indicator for background sessions.
+
+- ID: KI-059
+- Title: Git-diff drawer preview is intentionally limited to tracked patches and new text files
+- Status: Open
+- Severity: Low
+- Affects: Web UI users opening the per-file git-diff drawer for staged-only additions, binary assets, or other non-text untracked files
+- Symptom:
+  - tracked working-tree changes preview correctly through `git diff`, and new untracked text files preview through their current file contents.
+  - binary/non-text untracked rows stay disabled, and staged-only additions that do not appear in the existing working-tree diff summary still have no drawer entry.
+- Workaround:
+  - inspect binary assets with external tooling, or stage/commit/re-diff through a workflow that makes the needed change visible in the current working-tree summary first.
+- Follow-up plan:
+  - evaluate whether the git-diff surface should eventually cover staged-only previews or a separate asset viewer without expanding the current local-only safety boundary.
 
 - ID: KI-048
 - Title: Git-diff file icons currently cover a curated subset of common file types
@@ -83,15 +138,15 @@
   - evaluate whether ngent should eventually add an explicit optional namespace/project isolation flag instead of relying on browser-local identifiers.
 
 - ID: KI-044
-- Title: Session history rail can still become dense on threads with very large provider catalogs
+- Title: Grouped left rail can still become dense on threads with very large provider session catalogs
 - Status: Open
 - Severity: Low
 - Affects: Web UI threads whose providers return long session lists for the current working directory
 - Symptom:
-  - the redesign makes session rows more compact, but the left session rail is still a straight scrollable list with truncation and no in-rail filtering/search.
-  - on threads with many historical sessions, scanning the rail can still feel dense even though the panel now recedes visually.
+  - the redesign now groups sessions directly under each thread header, but the left rail is still a straight scrollable list with truncation and no in-rail filtering/search.
+  - on threads with many historical sessions, scanning the grouped rail can still feel dense even though the separate session drawer is gone.
 - Workaround:
-  - collapse the session rail when it is not needed, or rely on the provider's recent-session ordering near the top of the list.
+  - rely on the provider's recent-session ordering near the top of each thread group and use `Show more` only when older sessions are needed.
 - Follow-up plan:
   - evaluate adding optional session search/grouping if large-history threads remain common in real usage.
 
@@ -146,15 +201,6 @@
 - Symptom: transient `database is locked` errors
 - Workaround: enable WAL, busy timeout, and retry with jitter
 - Follow-up plan: benchmark and tune connection settings in M2 and M8
-
-- ID: KI-004
-- Title: `cwd` validation false positives
-- Status: Closed
-- Severity: Low
-- Affects: legacy deployments that used restrictive allow-root policies
-- Symptom: historical issue where valid paths could be rejected as outside allowed roots
-- Workaround: N/A after ADR-016 default absolute-cwd policy
-- Follow-up plan: none
 
 - ID: KI-005
 - Title: External agent process crash
@@ -302,16 +348,16 @@
 - Severity: Medium
 - Affects: threads that select an existing ACP `sessionId` from the Web UI/API
 - Symptom: ngent now caches prior provider transcript snapshots in SQLite for `GET /v1/threads/{threadId}/session-history`, but that replay is still not imported into SQLite `turns/events`; history APIs remain source-of-truth only for hub-created turns.
-- Workaround: use the session sidebar replay for provider-owned historical context, but rely on persisted hub `/history` for turns created through ngent itself.
+- Workaround: use the grouped session-list replay for provider-owned historical context, but rely on persisted hub `/history` for turns created through ngent itself.
 - Follow-up plan: evaluate importing selected provider transcript into local persisted history, or exposing an explicit merged-history view, without duplicating future hub-originated turns.
 
 - ID: KI-022
-- Title: Codex session sidebar titles can still show provider wrapper text
+- Title: Codex grouped session-list titles can still show provider wrapper text
 - Status: Open
 - Severity: Low
-- Affects: Codex `session/list` entries rendered in the Web UI session sidebar
+- Affects: Codex `session/list` entries rendered in the Web UI grouped left rail
 - Symptom: Codex provider metadata and replayed transcript can expose long wrapper-generated text such as `[Conversation Summary] ... [Current User Input] ...` or IDE context blocks because ngent now shows the raw provider-owned ACP replay.
-- Workaround: use the thread title or the most recent visible turn content when the sidebar label or replayed prompt body is noisy.
+- Workaround: use the thread title or the most recent visible turn content when the grouped-rail session label or replayed prompt body is noisy.
 - Follow-up plan: normalize Codex `session/list` display titles in the backend, likely by preferring the first replayable user prompt over raw provider preview text when available.
 
 - ID: KI-023
@@ -321,7 +367,7 @@
 - Affects: newly created Kimi sessions bound through ngent ACP turns
 - Symptom:
   - a just-created Kimi `sessionId` can be resumed successfully through ACP `session/load`, but may still be absent from Kimi's own `session/list`, `kimi export`, and local `~/.kimi/sessions/*/<sessionId>` files for a while.
-  - ngent can continue the bound session on the same or another thread if the `sessionId` is already known, but the session sidebar may not show the new session immediately after creation.
+  - ngent can continue the bound session on the same or another thread if the `sessionId` is already known, but the grouped left rail may not show the new session immediately after creation.
 - Workaround:
   - continue using the bound `sessionId` directly in ngent even if Kimi's own session browser has not caught up yet.
   - retry session browsing later after Kimi finishes persisting its own session index/files.
@@ -445,13 +491,13 @@
 - Affects: threads that switch to a model whose sqlite config catalog has not been refreshed yet
 - Symptom:
   - `POST /v1/threads/{threadId}/config-options` now persists the selected model immediately without mutating the live provider.
-  - if sqlite does not yet have a catalog snapshot for the newly selected model, the immediate response can only fall back to the current in-memory option set, so the Web UI may temporarily show the previous reasoning list until the next turn or a later catalog refresh fills in the new model snapshot.
+  - if sqlite does not yet have a catalog snapshot for the newly selected model, the immediate response can only fall back to the current in-memory option set, so the Web UI may temporarily show the previous reasoning list until a later real session lifecycle teaches ngent the new model snapshot.
 - Workaround:
-  - send the next turn, or wait for background catalog refresh / a later config fetch to repopulate the target model's reasoning choices.
+  - send the next turn on that model, or switch back after a real `session/new` / `session/load` has populated sqlite for the target model.
 - Follow-up plan:
-  - add an explicit background fetch path for missing target-model catalogs so the picker can self-heal without waiting for the next turn.
+  - add an explicit on-demand fetch path for missing target-model catalogs so the picker can self-heal without waiting for the next turn.
 
-- ID: KI-034
+- ID: KI-060
 - Title: Some ACP tool-call payload shapes render as generic JSON
 - Status: Open
 - Severity: Low
@@ -464,7 +510,7 @@
 - Follow-up plan:
   - add richer renderers for additional ACP content block variants once real provider payloads stabilize.
 
-- ID: KI-035
+- ID: KI-061
 - Title: Full-suite `go test ./...` can flake when ACP-heavy agent packages run in parallel
 - Status: Open
 - Severity: Low
@@ -499,7 +545,7 @@
 - Title: BLACKBOX ACP currently lacks session resume and catalog discovery surfaces
 - Status: Open
 - Severity: Medium
-- Affects: `blackbox` threads, `/session-history`, session sidebar browsing, and model picker/catalog endpoints for BLACKBOX
+- Affects: `blackbox` threads, `/session-history`, grouped-rail session browsing, and model picker/catalog endpoints for BLACKBOX
 - Symptom:
   - local probing on 2026-03-22 against `blackbox 1.2.47` showed `initialize` advertising `agentCapabilities.loadSession=false`.
   - real `session/load` currently returns `-32601 method not found`.
@@ -541,15 +587,110 @@
 - Follow-up plan:
   - add an age-based or thread-reference-aware attachment janitor once real usage clarifies safe retention expectations for provider retries and history-driven debugging.
 
-## Recently Closed
+## Closed Issues
+
+Closed issues are kept in one place to avoid split bookkeeping across the file.
+Newer closures should appear first when practical.
+
+- ID: KI-058
+- Title: `/git-diff-file` duplicated raw text and per-line JSON, inflating preview payload size
+- Status: Closed
+- Severity: Low
+- Affects: thread-scoped git-diff file preview responses consumed by the embedded Web UI and any future mobile client
+- Symptom:
+  - the endpoint previously returned both the full raw `content` string and a fully expanded `lines[]` array for the same preview.
+  - large patches therefore paid for the same payload twice and also repeated `showLineNumbers` on every rendered row even though tone/line-number presence already implied that presentation.
+- Workaround:
+  - none required after the 2026-04-04 response compaction.
+- Follow-up plan:
+  - keep future clients on the compact grouped `blocks[]` response shape unless a separate raw-patch export use case appears that genuinely needs the unrendered text.
+
+- ID: KI-057
+- Title: Git-diff drawer used a synthetic single line counter instead of real old/new diff line numbers
+- Status: Closed
+- Severity: Medium
+- Affects: embedded Web UI users reading tracked git patches in the right-side drawer
+- Symptom:
+  - the drawer previously rendered one monotonically increasing counter for every visible row, regardless of whether the row came from the old file, the new file, or a hunk header.
+  - raw diff header metadata such as `diff --git`, `index`, `---`, and `+++` also remained visible even though they were not part of the requested code-reading surface.
+- Workaround:
+  - none required after the 2026-04-04 unified-diff line-number rendering fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-056
+- Title: Git-diff drawer rows used excessive vertical spacing
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users reading multi-line diff/file content in the right-side drawer
+- Symptom:
+  - each rendered drawer row used relatively tall line-height and vertical padding, so long diffs consumed too much vertical space.
+  - the requested fix was to make rows denser without reducing the visible text size.
+- Workaround:
+  - none required after the 2026-04-04 row-density polish.
+- Follow-up plan:
+  - none.
+
+- ID: KI-055
+- Title: Git-diff drawer code nodes still fell back to the browser default code font
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users comparing the drawer content typography to the composer footer's model-label typography
+- Symptom:
+  - even after the drawer row container switched to the model-label typography, the actual rendered content still sat inside `<code>` nodes.
+  - browser default `code` styling could therefore keep showing a different font family until the drawer content explicitly inherited the parent font settings.
+- Workaround:
+  - none required after the 2026-04-04 explicit font-inheritance fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-054
+- Title: Git-diff drawer content used heavy row separators and mismatched typography
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users reading the right-side git-diff file preview drawer
+- Symptom:
+  - the drawer content used horizontal separators between every rendered line, which made the preview feel visually noisy.
+  - the drawer text styling also differed from the composer footer's model-label typography requested for this surface.
+- Workaround:
+  - none required after the 2026-04-04 drawer typography polish.
+- Follow-up plan:
+  - none.
+
+- ID: KI-053
+- Title: Git-diff drawer reused the previous file-detail payload when reopening the same file
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users who open file A, switch to another file, and then return to file A in the git-diff drawer
+- Symptom:
+  - reopening the same file could reuse the last fetched drawer detail from browser memory instead of issuing a fresh `/git-diff-file` request.
+  - this made the drawer look stale when the user expected a new backend fetch on every file selection.
+- Workaround:
+  - none required after the 2026-04-04 follow-up fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-052
+- Title: Git-diff drawer used to auto-close on outside clicks and flicker under summary polling
+- Status: Closed
+- Severity: Medium
+- Affects: embedded Web UI users reading a per-file git-diff preview in the right-side drawer
+- Symptom:
+  - after opening a changed file from the git-diff chip, clicking elsewhere in the workspace could close the drawer even though the user had not clicked its close affordance.
+  - collapsing the git-diff chip itself could also dismiss the right-side drawer even though the user only intended to hide the changed-file list.
+  - while the drawer remained open, periodic `/git-diff` summary refreshes could rebuild the drawer and force a detail refresh, causing visible loading flashes and scroll/content jumping.
+- Workaround:
+  - none required after the 2026-04-04 Web UI stability fix.
+- Follow-up plan:
+  - none.
 
 - ID: KI-042
-- Title: Web UI session sidebar raised 409 conflicts while another session was still streaming
+- Title: Web UI session browsing raised 409 conflicts while another session was still streaming
 - Status: Closed
 - Severity: Medium
 - Affects: switching between sessions in the Web UI while the thread already has an active turn
 - Symptom:
-  - choosing another session from the sidebar previously always issued `PATCH /v1/threads/{threadId}` immediately.
+  - choosing another session from the session browser previously always issued `PATCH /v1/threads/{threadId}` immediately.
   - if any turn in that thread was still active, the server returned `409 thread has an active turn`, so even read-only session browsing produced an error dialog.
 - Workaround:
   - none; fixed on 2026-03-26 by separating local viewed-session state from backend thread session binding and deferring backend sync until the thread is idle.
@@ -593,3 +734,12 @@
   - none; fixed on 2026-03-16.
 - Follow-up plan:
   - monitor whether explicit fresh-session scope state ever needs backend persistence beyond the current Web UI behavior.
+
+- ID: KI-004
+- Title: `cwd` validation false positives
+- Status: Closed
+- Severity: Low
+- Affects: legacy deployments that used restrictive allow-root policies
+- Symptom: historical issue where valid paths could be rejected as outside allowed roots
+- Workaround: N/A after ADR-016 default absolute-cwd policy
+- Follow-up plan: none

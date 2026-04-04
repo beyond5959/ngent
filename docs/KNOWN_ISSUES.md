@@ -15,6 +15,71 @@
 
 ## Open Issues
 
+- ID: KI-058
+- Title: `/git-diff-file` duplicated raw text and per-line JSON, inflating preview payload size
+- Status: Closed
+- Severity: Low
+- Affects: thread-scoped git-diff file preview responses consumed by the embedded Web UI and any future mobile client
+- Symptom:
+  - the endpoint previously returned both the full raw `content` string and a fully expanded `lines[]` array for the same preview.
+  - large patches therefore paid for the same payload twice and also repeated `showLineNumbers` on every rendered row even though tone/line-number presence already implied that presentation.
+- Workaround:
+  - none required after the 2026-04-04 response compaction.
+- Follow-up plan:
+  - keep future clients on the compact grouped `blocks[]` response shape unless a separate raw-patch export use case appears that genuinely needs the unrendered text.
+
+- ID: KI-057
+- Title: Git-diff drawer used a synthetic single line counter instead of real old/new diff line numbers
+- Status: Closed
+- Severity: Medium
+- Affects: embedded Web UI users reading tracked git patches in the right-side drawer
+- Symptom:
+  - the drawer previously rendered one monotonically increasing counter for every visible row, regardless of whether the row came from the old file, the new file, or a hunk header.
+  - raw diff header metadata such as `diff --git`, `index`, `---`, and `+++` also remained visible even though they were not part of the requested code-reading surface.
+- Workaround:
+  - none required after the 2026-04-04 unified-diff line-number rendering fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-056
+- Title: Git-diff drawer rows used excessive vertical spacing
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users reading multi-line diff/file content in the right-side drawer
+- Symptom:
+  - each rendered drawer row used relatively tall line-height and vertical padding, so long diffs consumed too much vertical space.
+  - the requested fix was to make rows denser without reducing the visible text size.
+- Workaround:
+  - none required after the 2026-04-04 row-density polish.
+- Follow-up plan:
+  - none.
+
+- ID: KI-055
+- Title: Git-diff drawer code nodes still fell back to the browser default code font
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users comparing the drawer content typography to the composer footer's model-label typography
+- Symptom:
+  - even after the drawer row container switched to the model-label typography, the actual rendered content still sat inside `<code>` nodes.
+  - browser default `code` styling could therefore keep showing a different font family until the drawer content explicitly inherited the parent font settings.
+- Workaround:
+  - none required after the 2026-04-04 explicit font-inheritance fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-054
+- Title: Git-diff drawer content used heavy row separators and mismatched typography
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users reading the right-side git-diff file preview drawer
+- Symptom:
+  - the drawer content used horizontal separators between every rendered line, which made the preview feel visually noisy.
+  - the drawer text styling also differed from the composer footer's model-label typography requested for this surface.
+- Workaround:
+  - none required after the 2026-04-04 drawer typography polish.
+- Follow-up plan:
+  - none.
+
 - ID: KI-053
 - Title: Git-diff drawer reused the previous file-detail payload when reopening the same file
 - Status: Closed

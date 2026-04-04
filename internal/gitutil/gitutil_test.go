@@ -234,6 +234,18 @@ func TestFileDetailReturnsPatchForTrackedFile(t *testing.T) {
 	if !strings.Contains(detail.Content, "+world") {
 		t.Fatalf("Content = %q, want added line", detail.Content)
 	}
+	if len(detail.Blocks) != 3 {
+		t.Fatalf("len(Blocks) = %d, want 3", len(detail.Blocks))
+	}
+	if got := detail.Blocks[0]; got.Tone != "hunk" || len(got.Text) != 1 || got.Text[0] != "@@ -1 +1,2 @@" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 0 {
+		t.Fatalf("Blocks[0] = %#v, want hunk header block without line numbers", got)
+	}
+	if got := detail.Blocks[1]; got.Tone != "plain" || len(got.Text) != 1 || got.Text[0] != " hello" || len(got.OldLineNumbers) != 1 || got.OldLineNumbers[0] != 1 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 1 {
+		t.Fatalf("Blocks[1] = %#v, want context block old=1 new=1", got)
+	}
+	if got := detail.Blocks[2]; got.Tone != "added" || len(got.Text) != 1 || got.Text[0] != "+world" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 2 {
+		t.Fatalf("Blocks[2] = %#v, want added block new=2 only", got)
+	}
 }
 
 func TestFileDetailReturnsFileContentsForUntrackedTextFile(t *testing.T) {
@@ -260,6 +272,12 @@ func TestFileDetailReturnsFileContentsForUntrackedTextFile(t *testing.T) {
 	}
 	if got, want := detail.Content, "draft\nnext\n"; got != want {
 		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if len(detail.Blocks) != 1 {
+		t.Fatalf("len(Blocks) = %d, want 1", len(detail.Blocks))
+	}
+	if got := detail.Blocks[0]; got.Tone != "plain" || len(got.Text) != 2 || got.Text[0] != "draft" || got.Text[1] != "next" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 2 || got.NewLineNumbers[0] != 1 || got.NewLineNumbers[1] != 2 {
+		t.Fatalf("Blocks[0] = %#v, want plain file-content block with new line numbers", got)
 	}
 }
 

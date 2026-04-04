@@ -38,15 +38,25 @@ Modules:
   - when the active thread `cwd` is inside a local git repository and the host has `git`, the composer footer can show the current branch plus a local-branch switcher backed by the thread git API; non-git threads omit this control entirely.
   - when the active thread also has a selected concrete session id, the composer can additionally poll `/v1/threads/{threadId}/git-diff` every 15 seconds and show a Kimi-style working-tree summary chip above the input; expanding it reveals parsed tracked `numstat` rows, untracked-file rows, and the repository root, while clean/non-git/unavailable-git cases render nothing.
   - expanded git-diff rows may expose browser-clickable file previews through `GET /v1/threads/{threadId}/git-diff-file?path=...`:
-    - tracked text files render the raw `git --no-pager diff -- <path>` patch in a right-side drawer.
+    - tracked text files render the `git --no-pager diff -- <path>` patch in a right-side drawer.
     - untracked text files render current file contents directly in that same drawer.
     - binary/non-text rows stay visibly disabled and do not open a preview drawer.
+  - `/git-diff-file` returns grouped rendered `blocks[]`, not duplicated raw preview text plus one JSON row per rendered line:
+    - each block carries `tone`, `text[]`, and only the relevant `oldLineNumbers[]` / `newLineNumbers[]`.
+    - adjacent rendered rows with the same tone and the same visible number-column shape are compacted into the same block.
+    - clients infer whether line-number columns should render from the presence of those old/new number arrays; there is no separate `showLineNumbers` field.
   - expanded git-diff rows can also show curated basename/extension-based type icons sourced from locally vendored `file-icons/vscode` font assets; unknown file types fall back to the generic file icon.
   - that chip's expanded/collapsed state is browser-local UI state and must not depend on polling cadence or incoming diff payload refreshes.
   - once a git-diff file drawer is open, the visible drawer content is driven by a browser-local preview snapshot keyed by thread-session scope rather than by each incoming `/git-diff` poll response; polling may refresh the chip/list, but it must not implicitly close or rebuild the open drawer.
   - browser-local preview state is presentation-only; selecting a file row must still issue a fresh `/git-diff-file` request for that file each time instead of reusing the previous open's detail payload as authoritative data.
   - outside clicks or focus changes elsewhere in the workspace must not dismiss the open git-diff drawer, and collapsing the summary chip must not dismiss it either.
   - the right-side git-diff drawer closes only from its own close button; summary-chip toggles and keyboard escape handling do not dismiss that drawer.
+  - the drawer content itself should stay visually quiet: no per-line horizontal separators, and the line typography should match the composer footer's model-label mono styling.
+  - because the drawer body uses `<code>` nodes for each rendered line, those nodes must explicitly inherit the parent font settings so the intended typography is not replaced by browser-default code styling.
+  - row-density adjustments should come from tighter line-height and vertical padding, not from reducing the text size.
+  - server-side diff/file preview shaping must stay concurrency-friendly: parse and compact blocks by scanning the already loaded text in memory once per request, without adding extra git subprocesses beyond the existing detail fetch.
+  - tracked unified-diff previews must be parsed server-side from hunk headers (`@@ -a,b +c,d @@`) so clients receive ready-to-render old/new line numbers, hunk-header rows without numbers, and pre-hunk diff metadata already suppressed.
+  - that backend parsing must remain one in-memory linear scan over the already fetched text, without adding extra git subprocess invocations per request.
   - when the active session has cached/live ACP usage with `contextUsed/contextSize`, the composer footer can also show a compact neutral ring-only context-pressure indicator to the right of the branch control; sessions with no usage data omit the indicator entirely.
   - the Web UI also owns a browser-local `language` preference (`en`, `zh-CN`, `es`, or `fr`); on first load it defaults from the closest supported browser locale (`zh-*` => `zh-CN`, `es-*` => `es`, `fr-*` => `fr`, otherwise `en`), and Settings can override it persistently per browser profile.
 

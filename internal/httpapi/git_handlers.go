@@ -52,14 +52,21 @@ type threadGitDiffFileRow struct {
 }
 
 type threadGitDiffFileResponse struct {
-	ThreadID  string `json:"threadId"`
-	Available bool   `json:"available"`
-	RepoRoot  string `json:"repoRoot,omitempty"`
-	Path      string `json:"path,omitempty"`
-	Supported bool   `json:"supported"`
-	Kind      string `json:"kind,omitempty"`
-	Content   string `json:"content,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	ThreadID  string                     `json:"threadId"`
+	Available bool                       `json:"available"`
+	RepoRoot  string                     `json:"repoRoot,omitempty"`
+	Path      string                     `json:"path,omitempty"`
+	Supported bool                       `json:"supported"`
+	Kind      string                     `json:"kind,omitempty"`
+	Blocks    []threadGitDiffRenderBlock `json:"blocks,omitempty"`
+	Reason    string                     `json:"reason,omitempty"`
+}
+
+type threadGitDiffRenderBlock struct {
+	Tone           string   `json:"tone"`
+	Text           []string `json:"text"`
+	OldLineNumbers []int    `json:"oldLineNumbers,omitempty"`
+	NewLineNumbers []int    `json:"newLineNumbers,omitempty"`
 }
 
 func (s *Server) handleThreadGit(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
@@ -307,6 +314,15 @@ func threadGitDiffResponseForStatus(threadID string, status gitutil.DiffStatus) 
 }
 
 func threadGitDiffFileResponseForDetail(threadID string, detail gitutil.DiffFileDetail) threadGitDiffFileResponse {
+	blocks := make([]threadGitDiffRenderBlock, 0, len(detail.Blocks))
+	for _, block := range detail.Blocks {
+		blocks = append(blocks, threadGitDiffRenderBlock{
+			Tone:           block.Tone,
+			Text:           append([]string(nil), block.Text...),
+			OldLineNumbers: append([]int(nil), block.OldLineNumbers...),
+			NewLineNumbers: append([]int(nil), block.NewLineNumbers...),
+		})
+	}
 	return threadGitDiffFileResponse{
 		ThreadID:  threadID,
 		Available: true,
@@ -314,7 +330,7 @@ func threadGitDiffFileResponseForDetail(threadID string, detail gitutil.DiffFile
 		Path:      detail.Path,
 		Supported: detail.Supported,
 		Kind:      detail.Kind,
-		Content:   detail.Content,
+		Blocks:    blocks,
 		Reason:    detail.Reason,
 	}
 }

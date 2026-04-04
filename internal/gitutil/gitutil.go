@@ -75,6 +75,12 @@ const (
 	DiffFileDetailReasonBinary = "binary"
 	// DiffFileDetailReasonNonText indicates the file is not a text file we can preview.
 	DiffFileDetailReasonNonText = "non_text"
+
+	diffRenderedLineTonePlain   = "plain"
+	diffRenderedLineToneMeta    = "meta"
+	diffRenderedLineToneHunk    = "hunk"
+	diffRenderedLineToneAdded   = "added"
+	diffRenderedLineToneDeleted = "deleted"
 )
 
 // DiffFileDetail captures the preview payload for one changed file.
@@ -83,14 +89,24 @@ type DiffFileDetail struct {
 	Path      string
 	Kind      string
 	Content   string
+	Blocks    []DiffRenderedBlock
 	Supported bool
 	Reason    string
+}
+
+// DiffRenderedBlock captures one or more adjacent rendered rows with the same tone.
+type DiffRenderedBlock struct {
+	Tone           string
+	Text           []string
+	OldLineNumbers []int
+	NewLineNumbers []int
 }
 
 var (
 	shortstatFilesPattern      = regexp.MustCompile(`(\d+)\s+files?\s+changed`)
 	shortstatInsertionsPattern = regexp.MustCompile(`(\d+)\s+insertions?\(\+\)`)
 	shortstatDeletionsPattern  = regexp.MustCompile(`(\d+)\s+deletions?\(-\)`)
+	diffHunkHeaderPattern      = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 )
 
 // Inspect loads local branch information for one working tree.
@@ -269,6 +285,7 @@ func FileDetail(ctx context.Context, cwd, rawPath string) (DiffFileDetail, error
 			Path:      normalizedPath,
 			Kind:      DiffFileDetailKindFile,
 			Content:   content,
+			Blocks:    buildFileRenderedBlocks(content),
 			Supported: true,
 		}, nil
 	}
@@ -291,8 +308,154 @@ func FileDetail(ctx context.Context, cwd, rawPath string) (DiffFileDetail, error
 		Path:      normalizedPath,
 		Kind:      DiffFileDetailKindDiff,
 		Content:   diffOut,
+		Blocks:    buildDiffRenderedBlocks(diffOut),
 		Supported: true,
 	}, nil
+}
+
+func splitRenderedLines(content string) []string {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	rawLines := strings.Split(normalized, "\n")
+	if len(rawLines) > 1 && rawLines[len(rawLines)-1] == "" {
+		return rawLines[:len(rawLines)-1]
+	}
+	return rawLines
+}
+
+func buildFileRenderedBlocks(content string) []DiffRenderedBlock {
+	lines := splitRenderedLines(content)
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	newLineNumbers := make([]int, 0, len(lines))
+	for index := range lines {
+		newLineNumbers = append(newLineNumbers, index+1)
+	}
+	return []DiffRenderedBlock{{
+		Tone:           diffRenderedLineTonePlain,
+		Text:           append([]string(nil), lines...),
+		NewLineNumbers: newLineNumbers,
+	}}
+}
+
+func isDiffPatchHeaderLine(line string) bool {
+	return strings.HasPrefix(line, "diff --git") ||
+		strings.HasPrefix(line, "index ") ||
+		strings.HasPrefix(line, "--- ") ||
+		strings.HasPrefix(line, "+++ ") ||
+		strings.HasPrefix(line, "old mode ") ||
+		strings.HasPrefix(line, "new mode ") ||
+		strings.HasPrefix(line, "deleted file mode ") ||
+		strings.HasPrefix(line, "new file mode ") ||
+		strings.HasPrefix(line, "similarity index ") ||
+		strings.HasPrefix(line, "rename from ") ||
+		strings.HasPrefix(line, "rename to ") ||
+		strings.HasPrefix(line, "copy from ") ||
+		strings.HasPrefix(line, "copy to ") ||
+		strings.HasPrefix(line, "Binary files ")
+}
+
+func parseDiffHunkHeader(line string) (oldLineNumber, newLineNumber int, ok bool) {
+	match := diffHunkHeaderPattern.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return 0, 0, false
+	}
+
+	oldLineNumber, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	newLineNumber, err = strconv.Atoi(match[2])
+	if err != nil {
+		return 0, 0, false
+	}
+	return oldLineNumber, newLineNumber, true
+}
+
+func appendRenderedBlock(
+	blocks []DiffRenderedBlock,
+	tone, text string,
+	oldLineNumber, newLineNumber int,
+) []DiffRenderedBlock {
+	includeOldLineNumber := oldLineNumber > 0
+	includeNewLineNumber := newLineNumber > 0
+	if len(blocks) > 0 {
+		last := &blocks[len(blocks)-1]
+		if last.Tone == tone &&
+			(len(last.OldLineNumbers) > 0) == includeOldLineNumber &&
+			(len(last.NewLineNumbers) > 0) == includeNewLineNumber {
+			last.Text = append(last.Text, text)
+			if includeOldLineNumber {
+				last.OldLineNumbers = append(last.OldLineNumbers, oldLineNumber)
+			}
+			if includeNewLineNumber {
+				last.NewLineNumbers = append(last.NewLineNumbers, newLineNumber)
+			}
+			return blocks
+		}
+	}
+
+	block := DiffRenderedBlock{
+		Tone: tone,
+		Text: []string{text},
+	}
+	if includeOldLineNumber {
+		block.OldLineNumbers = []int{oldLineNumber}
+	}
+	if includeNewLineNumber {
+		block.NewLineNumbers = []int{newLineNumber}
+	}
+	return append(blocks, block)
+}
+
+func buildDiffRenderedBlocks(content string) []DiffRenderedBlock {
+	lines := splitRenderedLines(content)
+	rendered := make([]DiffRenderedBlock, 0, len(lines))
+	oldLineNumber := 0
+	newLineNumber := 0
+	sawHunkHeader := false
+
+	for _, line := range lines {
+		if isDiffPatchHeaderLine(line) {
+			continue
+		}
+		if strings.HasPrefix(line, "@@") {
+			if parsedOld, parsedNew, ok := parseDiffHunkHeader(line); ok {
+				oldLineNumber = parsedOld
+				newLineNumber = parsedNew
+			}
+			sawHunkHeader = true
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneHunk, line, 0, 0)
+			continue
+		}
+		if !sawHunkHeader {
+			continue
+		}
+		if line == `\ No newline at end of file` {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneMeta, line, 0, 0)
+			continue
+		}
+		if strings.HasPrefix(line, "+") {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneAdded, line, 0, newLineNumber)
+			newLineNumber++
+			continue
+		}
+		if strings.HasPrefix(line, "-") {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineToneDeleted, line, oldLineNumber, 0)
+			oldLineNumber++
+			continue
+		}
+		if strings.HasPrefix(line, " ") {
+			rendered = appendRenderedBlock(rendered, diffRenderedLineTonePlain, line, oldLineNumber, newLineNumber)
+			oldLineNumber++
+			newLineNumber++
+			continue
+		}
+
+		rendered = appendRenderedBlock(rendered, diffRenderedLineToneMeta, line, 0, 0)
+	}
+
+	return rendered
 }
 
 func repoRoot(ctx context.Context, gitPath, cwd string) (string, error) {

@@ -5683,31 +5683,46 @@ button:active:not(:disabled),
 
 .git-diff-drawer__line {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: 52px 52px minmax(0, 1fr);
   align-items: stretch;
   font-family: var(--font-mono);
   font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--text-1);
+  line-height: 1.42;
+  color: var(--text-2);
 }
 
 .git-diff-drawer__line + .git-diff-drawer__line {
-  border-top: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-top: none;
+}
+
+.git-diff-drawer__line--no-numbers {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .git-diff-drawer__line-no {
-  padding: 8px 10px 8px 12px;
+  padding: 6px 8px;
   border-right: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
   color: var(--text-3);
   text-align: right;
   user-select: none;
 }
 
+.git-diff-drawer__line-no--old {
+  padding-left: 12px;
+}
+
 .git-diff-drawer__line-text {
   display: block;
-  padding: 8px 14px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
   white-space: pre;
   tab-size: 2;
+}
+
+.git-diff-drawer__line--no-numbers .git-diff-drawer__line-text {
+  grid-column: 1;
 }
 
 .git-diff-drawer__line--meta {

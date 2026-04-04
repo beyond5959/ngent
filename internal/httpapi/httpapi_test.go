@@ -2802,7 +2802,12 @@ func TestThreadGitDiffFileReturnsPatchForTrackedFile(t *testing.T) {
 		Path      string `json:"path"`
 		Supported bool   `json:"supported"`
 		Kind      string `json:"kind"`
-		Content   string `json:"content"`
+		Blocks    []struct {
+			Tone           string   `json:"tone"`
+			Text           []string `json:"text"`
+			OldLineNumbers []int    `json:"oldLineNumbers"`
+			NewLineNumbers []int    `json:"newLineNumbers"`
+		} `json:"blocks"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
@@ -2819,8 +2824,17 @@ func TestThreadGitDiffFileReturnsPatchForTrackedFile(t *testing.T) {
 	if got, want := body.Path, "README.md"; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
-	if !strings.Contains(body.Content, "diff --git a/README.md b/README.md") {
-		t.Fatalf("content = %q, want git diff header", body.Content)
+	if len(body.Blocks) != 3 {
+		t.Fatalf("len(blocks) = %d, want 3", len(body.Blocks))
+	}
+	if got := body.Blocks[0]; got.Tone != "hunk" || len(got.Text) != 1 || got.Text[0] != "@@ -1 +1,2 @@" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 0 {
+		t.Fatalf("blocks[0] = %#v, want hunk header without line numbers", got)
+	}
+	if got := body.Blocks[1]; got.Tone != "plain" || len(got.Text) != 1 || got.Text[0] != " hello" || len(got.OldLineNumbers) != 1 || got.OldLineNumbers[0] != 1 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 1 {
+		t.Fatalf("blocks[1] = %#v, want context line old=1 new=1", got)
+	}
+	if got := body.Blocks[2]; got.Tone != "added" || len(got.Text) != 1 || got.Text[0] != "+world" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 1 || got.NewLineNumbers[0] != 2 {
+		t.Fatalf("blocks[2] = %#v, want added line new=2", got)
 	}
 }
 
@@ -2852,7 +2866,12 @@ func TestThreadGitDiffFileReturnsContentsForUntrackedTextFile(t *testing.T) {
 		Available bool   `json:"available"`
 		Supported bool   `json:"supported"`
 		Kind      string `json:"kind"`
-		Content   string `json:"content"`
+		Blocks    []struct {
+			Tone           string   `json:"tone"`
+			Text           []string `json:"text"`
+			OldLineNumbers []int    `json:"oldLineNumbers"`
+			NewLineNumbers []int    `json:"newLineNumbers"`
+		} `json:"blocks"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
@@ -2863,8 +2882,11 @@ func TestThreadGitDiffFileReturnsContentsForUntrackedTextFile(t *testing.T) {
 	if got, want := body.Kind, "file"; got != want {
 		t.Fatalf("kind = %q, want %q", got, want)
 	}
-	if got, want := body.Content, "draft\nnext\n"; got != want {
-		t.Fatalf("content = %q, want %q", got, want)
+	if len(body.Blocks) != 1 {
+		t.Fatalf("len(blocks) = %d, want 1", len(body.Blocks))
+	}
+	if got := body.Blocks[0]; got.Tone != "plain" || len(got.Text) != 2 || got.Text[0] != "draft" || got.Text[1] != "next" || len(got.OldLineNumbers) != 0 || len(got.NewLineNumbers) != 2 || got.NewLineNumbers[0] != 1 || got.NewLineNumbers[1] != 2 {
+		t.Fatalf("blocks[0] = %#v, want grouped file lines", got)
 	}
 }
 

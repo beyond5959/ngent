@@ -7,6 +7,7 @@ import type {
   SessionInfo,
   ThreadGitDiffInfo,
   ThreadGitDiffFileDetail,
+  ThreadGitDiffRenderedBlock,
   SessionUsage,
   SessionTranscriptMessage,
   SlashCommand,
@@ -99,7 +100,7 @@ interface ThreadGitDiffFileResponse {
   path?: string
   supported: boolean
   kind?: ThreadGitDiffFileDetail['kind']
-  content?: string
+  blocks?: ThreadGitDiffRenderedBlock[]
   reason?: ThreadGitDiffFileDetail['reason']
 }
 interface CancelTurnResponse    { turnId: string; threadId: string; status: string }
@@ -326,7 +327,16 @@ class ApiClient {
       path: data.path?.trim() || path.trim(),
       supported: !!data.supported,
       kind: data.kind,
-      content: typeof data.content === 'string' ? data.content : undefined,
+      blocks: (data.blocks ?? []).map(block => ({
+        tone: block.tone,
+        text: Array.isArray(block.text) ? block.text.map(line => typeof line === 'string' ? line : '') : [],
+        oldLineNumbers: Array.isArray(block.oldLineNumbers)
+          ? block.oldLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+          : undefined,
+        newLineNumbers: Array.isArray(block.newLineNumbers)
+          ? block.newLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+          : undefined,
+      })),
       reason: data.reason,
     }
   }

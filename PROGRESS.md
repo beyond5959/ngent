@@ -19,6 +19,13 @@ This file is the source of milestone progress, validation commands, and next act
   - keeping the drawer off the poll-driven re-render path prevents forced detail reloads, DOM replacement flicker, and scroll/content jumping while the same file preview is open.
   - follow-up fix: collapsing the git-diff chip no longer closes the right-side drawer; the drawer is now dismissed only by its own close button.
   - follow-up fix: clicking a file row now always refetches that file's detail from the backend instead of reusing the prior open's cached drawer payload.
+  - follow-up polish: the drawer content rows no longer render horizontal separators, and the diff/content typography now matches the composer footer's model-label styling.
+  - follow-up fix: the drawer's `<code>` content now explicitly inherits that model-label font family instead of falling back to the browser's default code font.
+  - follow-up polish: the drawer content rows now use tighter line-height and vertical padding so each row is shorter without reducing text size.
+  - follow-up fix: tracked diff previews now derive real old/new line numbers from each hunk header, show both line-number columns in the drawer, keep hunk headers visible without numbers, and hide raw diff header metadata such as `diff --git` / `index` / `---` / `+++`.
+  - follow-up API compaction: `/v1/threads/{threadId}/git-diff-file` now returns grouped rendered `blocks[]` instead of duplicating raw `content` plus per-line `lines[]`; adjacent same-tone rows are merged into one block carrying `text[]` and only the relevant `oldLineNumbers[]` / `newLineNumbers[]`.
+  - follow-up simplification: the Web UI now renders those server-produced blocks directly and infers whether old/new line-number columns should appear from the presence of the corresponding number arrays, so the old `showLineNumbers` flag is gone.
+  - performance note: the structured diff blocks are still produced server-side in one linear scan over the already loaded file/diff text, without introducing extra git subprocess calls per request.
   - session-scoped preview snapshots are preserved separately per selected session, so switching sessions hides unrelated previews and returning to the prior session restores that session's last opened drawer content.
   - validation:
     - pass: `cd internal/webui/web && npm run build`

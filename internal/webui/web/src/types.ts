@@ -110,8 +110,15 @@ export interface ThreadGitDiffFileDetail {
   path: string
   supported: boolean
   kind?: 'diff' | 'file'
-  content?: string
+  blocks?: ThreadGitDiffRenderedBlock[]
   reason?: 'binary' | 'non_text'
+}
+
+export interface ThreadGitDiffRenderedBlock {
+  tone: 'plain' | 'meta' | 'hunk' | 'added' | 'deleted'
+  text: string[]
+  oldLineNumbers?: number[]
+  newLineNumbers?: number[]
 }
 
 export interface SessionUsage {

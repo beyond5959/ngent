@@ -87,6 +87,14 @@
   - keep `/git-diff` polling responsible for the summary chip and expanded changed-file list only.
   - once a file drawer is opened, render it from a browser-local preview snapshot keyed by thread-session scope, and update that snapshot only when the user selects another file or that file-detail request itself changes state.
   - every explicit file-row selection must reissue the backend `git-diff-file` request for that path; reopening the same file later must not reuse a stale cached detail payload from a previous open.
+  - keep the drawer's line-content presentation visually lightweight: no horizontal row separators, and use the same mono typography treatment as the composer footer's model label.
+  - because the drawer content is rendered inside `<code>` nodes, explicitly force those nodes to inherit the parent font settings so the browser's default code font cannot override the intended model-label typography.
+  - keep drawer rows compact by reducing vertical padding/line-height rather than shrinking the text itself.
+  - for tracked unified diffs, derive visible line numbers from each hunk header and render both old/new line-number columns instead of a synthetic monotonically increasing row counter.
+  - keep hunk headers visible as structural markers, but do not assign them line numbers; hide raw diff header metadata lines (`diff --git`, `index`, `---`, `+++`, and similar pre-hunk patch headers) from the drawer content.
+  - serialize `/git-diff-file` as grouped rendered `blocks[]` rather than duplicating both raw `content` and per-line `lines[]`; adjacent rows with the same tone are compacted into one block containing `text[]` plus only the relevant old/new line-number arrays.
+  - drop the old `showLineNumbers` response field and let clients infer visible columns from the presence of `oldLineNumbers[]` / `newLineNumbers[]` for each rendered block.
+  - keep server-side parsing cheap under parallel requests by scanning the already produced diff/file text once per request in memory, and perform block compaction within that same pass without adding any extra git subprocesses beyond the existing file-detail fetch.
   - keep the preview snapshot browser-local and session-scoped; do not persist it to backend thread/session metadata.
 - Consequences:
   - users can inspect a file diff while clicking elsewhere in the workspace without losing the drawer.
@@ -94,6 +102,7 @@
   - periodic summary refreshes no longer rebuild the open drawer DOM or force a loading-state flash for the currently viewed file.
   - reselecting a file may briefly show the loading state again, but the drawer content now always reflects a fresh backend read instead of a reused earlier response.
   - switching sessions within the same thread no longer leaks one session's open drawer into another session's chat pane; each session restores only its own last local preview snapshot.
+  - `/git-diff-file` responses are materially smaller because they no longer carry duplicate raw text plus one JSON object per rendered row.
 - Alternatives considered:
   - keep outside-click dismissal and try to special-case a few targets (rejected: brittle and still wrong for a reading surface meant to stay open).
   - continue rendering the drawer directly from the live polled diff state (rejected: keeps poll cadence coupled to preview stability and scroll position).

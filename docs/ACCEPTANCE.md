@@ -48,6 +48,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - leave the same drawer open through at least one subsequent `/git-diff` summary refresh and verify the visible drawer content does not flash/reload or jump scroll position just because the summary chip refreshed.
   - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch.
   - include at least one non-text/binary untracked file and verify its row stays disabled and does not open the drawer.
+  - inspect one `/git-diff-file` network response and verify it returns grouped rendered `blocks[]` rather than duplicated raw `content` plus fully expanded per-line rows.
   - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
 - Expected:
   - polling only happens when the active thread has a selected concrete session id.
@@ -61,6 +62,14 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - outside clicks in the rest of the workspace do not dismiss the open drawer.
   - collapsing the git-diff chip hides only the changed-file list; it does not dismiss the already open right-side drawer.
   - `/git-diff` polling continues to refresh the chip/list, but an already open drawer keeps the same visible content and scroll position until the user explicitly changes or closes that preview.
+  - drawer content rows render without horizontal separator rules between every line.
+  - drawer content typography matches the composer footer's model-label styling.
+  - the actual rendered code/content nodes inherit that typography as well, rather than falling back to the browser's default `code` font family.
+  - drawer rows use tighter vertical spacing than before, without shrinking the visible text size.
+  - tracked diff previews show real old/new line numbers derived from hunk headers, with separate old/new columns rather than one synthetic row counter.
+  - hunk headers remain visible but do not show line numbers.
+  - raw diff header metadata such as `diff --git`, `index`, `---`, and `+++` is hidden from the drawer content.
+  - `/git-diff-file` responses compact adjacent same-tone rows into `blocks[]` carrying `text[]` plus only the relevant `oldLineNumbers[]` / `newLineNumbers[]`, and the response no longer duplicates the same preview as raw `content`.
   - tracked text rows show patch output, while untracked text rows show direct file contents.
   - binary/non-text rows remain visibly non-clickable and do not open an unsupported preview surface.
   - non-git/unavailable-git environments return no visible diff surface.

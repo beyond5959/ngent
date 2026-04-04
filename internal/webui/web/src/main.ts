@@ -29,6 +29,7 @@ import type {
   MessageAttachment,
   ThreadGitDiffInfo,
   ThreadGitDiffFileDetail,
+  ThreadGitDiffRenderedBlock,
   ThreadGitInfo,
 } from './types.ts'
 import type {
@@ -266,7 +267,7 @@ interface ThreadGitDiffFileDetailState {
   path: string
   supported: boolean | null
   kind: ThreadGitDiffFileDetail['kind']
-  content: string
+  blocks: ThreadGitDiffRenderedBlock[]
   reason: ThreadGitDiffFileDetail['reason']
   loading: boolean
   error: string
@@ -429,7 +430,7 @@ function emptyThreadGitDiffFileDetailState(path = ''): ThreadGitDiffFileDetailSt
     path,
     supported: null,
     kind: undefined,
-    content: '',
+    blocks: [],
     reason: undefined,
     loading: false,
     error: '',
@@ -445,7 +446,16 @@ function cloneThreadGitDiffFileDetailState(
     ...emptyThreadGitDiffFileDetailState(normalizedPath),
     ...detail,
     path: normalizedPath,
-    content: typeof detail?.content === 'string' ? detail.content : '',
+    blocks: Array.isArray(detail?.blocks) ? detail.blocks.map(block => ({
+      tone: block.tone,
+      text: Array.isArray(block.text) ? block.text.map(line => typeof line === 'string' ? line : '') : [],
+      oldLineNumbers: Array.isArray(block.oldLineNumbers)
+        ? block.oldLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+        : undefined,
+      newLineNumbers: Array.isArray(block.newLineNumbers)
+        ? block.newLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+        : undefined,
+    })) : [],
     error: typeof detail?.error === 'string' ? detail.error : '',
   }
 }
@@ -529,7 +539,9 @@ function setThreadGitDiffFileDetailState(
     ...threadGitDiffFileDetailState(scopeKey, normalizedPath),
     ...patch,
     path: normalizedPath,
-    content: typeof patch.content === 'string' ? patch.content : nextDetailByPath[normalizedPath]?.content ?? threadGitDiffFileDetailState(scopeKey, normalizedPath).content,
+    blocks: Array.isArray(patch.blocks)
+      ? cloneThreadGitDiffFileDetailState({ blocks: patch.blocks }, normalizedPath).blocks
+      : nextDetailByPath[normalizedPath]?.blocks ?? threadGitDiffFileDetailState(scopeKey, normalizedPath).blocks,
     error: typeof patch.error === 'string' ? patch.error : nextDetailByPath[normalizedPath]?.error ?? threadGitDiffFileDetailState(scopeKey, normalizedPath).error,
   }
   return setThreadGitDiffState(scopeKey, { detailByPath: nextDetailByPath })
@@ -1540,7 +1552,7 @@ function buildThreadGitDiffPreviewState(
   const state = threadGitDiffState(normalizedScopeKey)
   const file = state.files.find(item => item.path === normalizedPath)
   const stateDetail = threadGitDiffFileDetailState(normalizedScopeKey, normalizedPath)
-  const hasStateDetail = stateDetail.loading || stateDetail.supported !== null || !!stateDetail.content || !!stateDetail.error
+  const hasStateDetail = stateDetail.loading || stateDetail.supported !== null || !!stateDetail.blocks.length || !!stateDetail.error
   const detail = options.detail
     ? cloneThreadGitDiffFileDetailState(options.detail, normalizedPath)
     : hasStateDetail
@@ -6024,7 +6036,7 @@ async function loadThreadGitDiffFileDetail(
     setThreadGitDiffFileDetailState(scopeKey, normalizedPath, {
       supported: false,
       kind: undefined,
-      content: '',
+      blocks: [],
       reason: file?.binary ? 'binary' : 'non_text',
       loading: false,
       error: '',
@@ -6036,7 +6048,7 @@ async function loadThreadGitDiffFileDetail(
             path: normalizedPath,
             supported: false,
             kind: undefined,
-            content: '',
+            blocks: [],
             reason: file?.binary ? 'binary' : 'non_text',
             loading: false,
             error: '',
@@ -6085,7 +6097,7 @@ async function loadThreadGitDiffFileDetail(
       path: normalizedPath,
       supported: detail.available ? detail.supported : false,
       kind: detail.kind,
-      content: detail.content ?? '',
+      blocks: detail.blocks ?? [],
       reason: detail.reason,
       loading: false,
       error: detail.available ? '' : t('gitDiffPreviewUnavailable'),
@@ -6735,7 +6747,7 @@ function renderThreadGitDiffDrawerContent(
   if (detail.error) {
     return `<div class="git-diff-drawer__empty git-diff-drawer__empty--error">${escHtml(detail.error)}</div>`
   }
-  if (detail.supported === null && !detail.content) {
+  if (detail.supported === null && !detail.blocks.length) {
     return `
       <div class="git-diff-drawer__empty git-diff-drawer__empty--loading">
         <div class="loading-spinner" aria-hidden="true"></div>
@@ -6747,41 +6759,33 @@ function renderThreadGitDiffDrawerContent(
     return `<div class="git-diff-drawer__empty">${escHtml(message)}</div>`
   }
 
-  const kind = detail.kind ?? fallbackKind ?? 'diff'
-  const normalized = (detail.content || '').replace(/\r\n/g, '\n')
-  const rawLines = normalized.split('\n')
-  const lines = rawLines.length > 1 && rawLines[rawLines.length - 1] === ''
-    ? rawLines.slice(0, -1)
-    : rawLines
-  const renderLines = (lines.length ? lines : ['']).map((line, index) => {
-    let tone = 'plain'
-    if (kind === 'diff') {
-      if (line.startsWith('@@')) {
-        tone = 'hunk'
-      } else if (line.startsWith('+') && !line.startsWith('+++')) {
-        tone = 'added'
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        tone = 'deleted'
-      } else if (
-        line.startsWith('diff --git')
-        || line.startsWith('index ')
-        || line.startsWith('--- ')
-        || line.startsWith('+++ ')
-      ) {
-        tone = 'meta'
+  const renderLines = detail.blocks.flatMap(block => {
+    const textLines = Array.isArray(block.text) && block.text.length ? block.text : ['']
+    return textLines.map((lineText, index) => {
+      const oldLineNumber = Array.isArray(block.oldLineNumbers) ? block.oldLineNumbers[index] : undefined
+      const newLineNumber = Array.isArray(block.newLineNumbers) ? block.newLineNumbers[index] : undefined
+      const showLineNumbers = block.tone !== 'hunk' && block.tone !== 'meta' && (
+        typeof oldLineNumber === 'number' || typeof newLineNumber === 'number'
+      )
+      if (!showLineNumbers) {
+        return `
+          <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone} git-diff-drawer__line--no-numbers">
+            <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
+          </div>`
       }
-    }
 
-    return `
-      <div class="git-diff-drawer__line git-diff-drawer__line--${tone}">
-        <span class="git-diff-drawer__line-no" aria-hidden="true">${index + 1}</span>
-        <code class="git-diff-drawer__line-text">${line ? escHtml(line) : '&nbsp;'}</code>
-      </div>`
+      return `
+        <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone}">
+          <span class="git-diff-drawer__line-no git-diff-drawer__line-no--old" aria-hidden="true">${typeof oldLineNumber === 'number' ? String(oldLineNumber) : '&nbsp;'}</span>
+          <span class="git-diff-drawer__line-no git-diff-drawer__line-no--new" aria-hidden="true">${typeof newLineNumber === 'number' ? String(newLineNumber) : '&nbsp;'}</span>
+          <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
+        </div>`
+    })
   }).join('')
 
   return `
     <div class="git-diff-drawer__body">
-      <div class="git-diff-drawer__code" data-kind="${escHtml(kind)}">${renderLines}</div>
+      <div class="git-diff-drawer__code" data-kind="${escHtml(detail.kind ?? fallbackKind ?? 'diff')}">${renderLines}</div>
     </div>`
 }
 

@@ -296,6 +296,7 @@ const threadGitStateByThread = new Map<string, ThreadGitState>()
 const threadGitDiffStateByScope = new Map<string, ThreadGitDiffState>()
 const expandedThreadGitDiffScopes = new Set<string>()
 const pendingThreadGitDiffToggleScopes = new Set<string>()
+const suppressGitDiffFocusoutScopes = new Set<string>()
 const sessionUsageByScope = new Map<string, SessionUsage>()
 const threadGitRequestSeqByThread = new Map<string, number>()
 const threadGitDiffRequestSeqByScope = new Map<string, number>()
@@ -486,7 +487,7 @@ function setThreadGitDiffState(scopeKey: string, patch: Partial<ThreadGitDiffSta
     }
   }
   const selectedFile = next.files.find(file => file.path === next.selectedFilePath)
-  if (!selectedFile || !isThreadGitDiffFileViewable(selectedFile)) {
+  if (next.selectedFilePath && (!selectedFile || !isThreadGitDiffFileViewable(selectedFile))) {
     next.selectedFilePath = ''
     next.drawerOpen = false
   }
@@ -543,6 +544,9 @@ function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: Threa
     }
   }
   const selectedFile = nextFiles.find(file => file.path === current.selectedFilePath)
+  const keepSelectedFile = current.selectedFilePath
+    ? isThreadGitDiffFileViewable(selectedFile)
+    : true
   return setThreadGitDiffState(scopeKey, {
     available: info.available,
     sessionId: sessionID.trim(),
@@ -555,8 +559,8 @@ function applyThreadGitDiffInfo(scopeKey: string, sessionID: string, info: Threa
     files: nextFiles,
     loading: false,
     error: '',
-    drawerOpen: current.drawerOpen && isThreadGitDiffFileViewable(selectedFile),
-    selectedFilePath: isThreadGitDiffFileViewable(selectedFile) ? current.selectedFilePath : '',
+    drawerOpen: current.drawerOpen && keepSelectedFile,
+    selectedFilePath: current.selectedFilePath && isThreadGitDiffFileViewable(selectedFile) ? current.selectedFilePath : '',
     detailByPath: nextDetailByPath,
   })
 }
@@ -5692,19 +5696,6 @@ function setThreadGitDiffExpanded(scopeKey: string, expanded: boolean): void {
   expandedThreadGitDiffScopes.delete(scopeKey)
 }
 
-function setThreadGitDiffTogglePending(scopeKey: string, pending: boolean): void {
-  if (!scopeKey) return
-  if (pending) {
-    pendingThreadGitDiffToggleScopes.add(scopeKey)
-    return
-  }
-  pendingThreadGitDiffToggleScopes.delete(scopeKey)
-}
-
-function isThreadGitDiffTogglePending(scopeKey: string): boolean {
-  return pendingThreadGitDiffToggleScopes.has(scopeKey)
-}
-
 function openThreadGitDiffDrawer(scopeKey: string, filePath: string): void {
   const threadId = threadIDFromScopeKey(scopeKey)
   const selectedFile = threadGitDiffState(scopeKey).files.find(file => file.path === filePath)
@@ -5721,6 +5712,13 @@ function openThreadGitDiffDrawer(scopeKey: string, filePath: string): void {
     selectedFilePath: filePath,
   })
   setThreadGitDiffPreview(threadId, scopeKey, filePath)
+
+  if (store.get().activeThreadId === threadId) {
+    syncThreadGitDiffDrawer(threadId)
+  }
+
+  const sessionID = selectedThreadSessionID(store.get().threads.find(t => t.threadId === threadId)!)
+  void loadThreadGitDiffFileDetail(threadId, sessionID, filePath)
 }
 
 function closeThreadGitDiffPanel(threadId = store.get().activeThreadId ?? ''): void {
@@ -5762,7 +5760,13 @@ function closeThreadGitDiffDrawer(threadId = store.get().activeThreadId ?? ''): 
     selectedFilePath: '',
   })
   if (store.get().activeThreadId === threadId) {
-    syncThreadGitDiffControl(threadId)
+    // Clear active row locally without replacing widget innerHTML,
+    // which would destroy focused elements and trigger spurious focusout.
+    const widgetEl = document.getElementById('thread-git-diff')
+    widgetEl?.querySelectorAll<HTMLButtonElement>('.git-diff-file-row--active').forEach(row => {
+      row.classList.remove('git-diff-file-row--active')
+      row.setAttribute('aria-pressed', 'false')
+    })
     syncThreadGitDiffDrawer(threadId)
   }
 }
@@ -6216,19 +6220,10 @@ function bindThreadGitDiffControl(thread: Thread): void {
   const scopeKey = widgetEl.dataset.scopeKey?.trim() ?? ''
   if (!scopeKey) return
 
-  triggerEl.addEventListener('click', () => {
-    const state = threadGitDiffState(scopeKey)
-    if (!hasThreadGitDiffChanges(state)) return
-    setThreadGitDiffTogglePending(scopeKey, true)
-  }, true)
-
   triggerEl.addEventListener('click', event => {
     event.preventDefault()
     const state = threadGitDiffState(scopeKey)
-    if (!hasThreadGitDiffChanges(state)) {
-      setThreadGitDiffTogglePending(scopeKey, false)
-      return
-    }
+    if (!hasThreadGitDiffChanges(state)) return
     const nextExpanded = !isThreadGitDiffExpanded(scopeKey)
     setThreadGitDiffExpanded(scopeKey, nextExpanded)
     if (!nextExpanded) {
@@ -6236,12 +6231,11 @@ function bindThreadGitDiffControl(thread: Thread): void {
         drawerOpen: false,
         selectedFilePath: '',
       })
+      syncThreadGitDiffDrawer(thread.threadId)
     }
+    suppressGitDiffFocusoutScopes.add(scopeKey)
     syncThreadGitDiffControl(thread.threadId)
-    syncThreadGitDiffDrawer(thread.threadId)
-    window.setTimeout(() => {
-      setThreadGitDiffTogglePending(scopeKey, false)
-    }, 0)
+    suppressGitDiffFocusoutScopes.delete(scopeKey)
   })
 
   widgetEl.addEventListener('click', event => {
@@ -6253,15 +6247,21 @@ function bindThreadGitDiffControl(thread: Thread): void {
     const path = fileButton.dataset.gitDiffFilePath?.trim() ?? ''
     if (!path) return
 
-    const sessionID = selectionSessionID(sessionSelectionFromScopeKey(scopeKey))
     openThreadGitDiffDrawer(scopeKey, path)
-    refreshThreadGitDiffPreview(thread.threadId)
-    syncThreadGitDiffControl(thread.threadId)
-    void loadThreadGitDiffFileDetail(thread.threadId, sessionID || selectedThreadSessionID(thread), path)
+
+    // Update active state locally without replacing innerHTML,
+    // which would destroy the focused element and trigger focusout.
+    widgetEl.querySelectorAll<HTMLButtonElement>('.git-diff-file-row[data-git-diff-file-path]').forEach(row => {
+      row.classList.remove('git-diff-file-row--active')
+      row.setAttribute('aria-pressed', 'false')
+    })
+    fileButton.classList.add('git-diff-file-row--active')
+    fileButton.setAttribute('aria-pressed', 'true')
   })
 
   widgetEl.addEventListener('focusout', event => {
-    if (isThreadGitDiffTogglePending(scopeKey)) return
+    if (!widgetEl.isConnected) return
+    if (suppressGitDiffFocusoutScopes.has(scopeKey)) return
     const related = event.relatedTarget as Node | null
     const drawerEl = document.getElementById('thread-git-diff-drawer')
     if (!related || (!widgetEl.contains(related) && !drawerEl?.contains(related))) {

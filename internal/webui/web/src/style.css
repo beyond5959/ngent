@@ -732,6 +732,10 @@ body {
   animation: panel-slide-in var(--t-base) ease;
 }
 
+.git-diff-preview-shell[hidden] {
+  display: none !important;
+}
+
 .git-diff-preview-shell::before {
   content: '';
   position: absolute;

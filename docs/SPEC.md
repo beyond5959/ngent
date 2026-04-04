@@ -19,9 +19,9 @@ Modules:
 - `internal/runtime`: thread controller, turn state machine, cancellation coordination.
 - `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
   - the shared agent callback surface also carries ACP session-usage snapshots so HTTP/storage/Web UI code can persist and render them without provider-specific UI wiring.
-  - per-turn provider resolution selects implementation by thread metadata (agent id + cwd).
+  - turn/session-scope provider resolution selects implementation by thread metadata (`agent`, `cwd`, selected `sessionId`, and fresh-session marker).
   - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, and `cursor`; provider-specific hooks own command startup, request parameter shaping, permission mapping, auth/model quirks, and cancel behavior.
-- `internal/context`: prompt injection strategy assembled in HTTP/runtime path from summary + recent turns + current input.
+- prompt/context-window composition lives in `internal/httpapi/turn_handlers.go`, where ngent builds injected prompts from `threads.summary`, recent non-internal turns, and the current input.
 - `internal/sse`: event formatting and SSE writer helpers shared by both the initial turn stream and per-turn replay/tail streams.
 - `internal/storage`: SQLite repository and migration management.
 - `internal/gitutil`: host-side git capability checks, repository inspection, working-tree diff/untracked parsing, and local-branch checkout helpers for one validated thread `cwd`.
@@ -75,8 +75,8 @@ Modules:
 ## 4. Lazy Agent Startup
 
 - On server boot: no agent process is started.
-- On first thread usage: runtime requests provider instance for that thread.
-- On first turn execution for embedded-provider thread (currently `codex`): server creates the in-process runtime and initializes ACP session lazily.
+- On first scope usage: runtime resolves or creates a provider instance for that `(thread, session/fresh-session)` scope.
+- On first turn execution for an embedded-provider scope (currently `codex` and `claude`): server creates the in-process runtime and initializes ACP session lazily.
 - Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, `cursor`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
 - Embedded runtime `session/new` is created with `cwd=thread.cwd` (validated as absolute path at thread creation).
 - If `thread.agent_options_json` contains `modelId` / `configOverrides`, those values are the persisted desired session config for the thread.
@@ -119,6 +119,9 @@ SQLite stores:
 - threads
 - turns
 - events (append-only stream records)
+- turn attachments served back through the stable `/attachments/{attachmentId}` route
+- agent config catalogs keyed by `(agent_id, model_id)`
+- agent slash-command snapshots keyed by `agent_id`
 - per-session caches keyed by `(agent_id, cwd, session_id)` for:
   - transcript replay snapshots
   - ACP config-option snapshots
@@ -148,14 +151,21 @@ On restart:
 ## 8. API Overview
 
 - health and server metadata
+- agent catalog + stored model catalog (`GET /v1/agents`, `GET /v1/agents/{agentId}/models`)
+- path search + recent-directory suggestions (`GET /v1/path-search`, `GET /v1/recent-directories`)
 - thread CRUD (create/list/get/update/delete)
   - thread list/get responses include `hasActiveSession` so new browsers can spot live threads immediately.
 - thread session catalog (`GET /v1/threads/{threadId}/sessions`)
   - each returned session row may include `isActive=true` when that concrete `(thread, session)` scope currently owns a live turn.
   - ngent still prepends the thread's currently bound `sessionId` ahead of provider-listed sessions before returning the catalog, so a stale upstream session list does not hide the active session row.
+- thread session transcript replay (`GET /v1/threads/{threadId}/session-history?sessionId=...`)
+- thread config metadata + live config updates (`GET/POST /v1/threads/{threadId}/config-options`)
+- thread slash-command snapshot lookup (`GET /v1/threads/{threadId}/slash-commands`)
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
+- thread git diff summary + file preview (`GET /v1/threads/{threadId}/git-diff`, `GET /v1/threads/{threadId}/git-diff-file?path=...`)
 - thread session-usage snapshot lookup (`GET /v1/threads/{threadId}/session-usage?sessionId=...`)
-- turn create (`POST /v1/threads/{threadId}/turns`)
+- turn create (`POST /v1/threads/{threadId}/turns`, JSON or multipart for attachment-backed prompts)
+- attachment readback (`GET /attachments/{attachmentId}`)
 - per-turn SSE replay/tail for resumed or additional viewers (`GET /v1/turns/{turnId}/events?after=...`)
 - turn cancel (`POST /v1/turns/{turnId}/cancel`)
 - thread compact (`POST /v1/threads/{threadId}/compact`)
@@ -169,10 +179,11 @@ See `docs/API.md` for endpoint and schema contracts.
 
 - default bind: `127.0.0.1:8686` (local-only).
 - public bind allowed when `--allow-public=true`.
-- startup preflight determines the runtime agent allowlist; agents that fail preflight are omitted from `/v1/agents`, rejected by create-thread validation, and skipped by startup catalog refresh.
+- startup preflight determines the runtime agent allowlist; agents that fail preflight are omitted from `/v1/agents` and rejected by create-thread validation.
 - strict input validation:
   - agent must be allowlisted.
   - cwd must be absolute.
+  - cwd must stay inside configured allowed roots.
 - thread option updates that change shared thread state are rejected while any session on that thread is active; session-only selection updates are allowed while a different session is running.
 - logs are human-readable on stderr and redact sensitive data.
 - `--debug=true` raises log verbosity to debug level and emits sanitized ACP JSON-RPC request/response traces on stderr.
@@ -211,7 +222,13 @@ All API errors follow a common envelope with:
 
 See `docs/API.md` for concrete schema and codes.
 
-## 11. Planned Qwen ACP Integration (2026-03-03)
+## Appendix A. Historical Rollout Notes
+
+These dated notes are retained as implementation history. They are not the
+normative current-state spec; when they conflict with Sections 1-10 or the
+current code, Sections 1-10 and the code win.
+
+### A1. Qwen ACP Integration Notes (2026-03-03)
 
 ### 11.1 Objective and Scope
 
@@ -298,7 +315,7 @@ and upstream ACP schema:
   - Deliverable: clean baseline for merge.
   - DoD: `npm run build` and `go test ./...` pass.
 
-## 12. Thread Model Selection and Switching (2026-03-05)
+### A2. Thread Model Selection and Switching Notes (2026-03-05)
 
 ### 12.1 Scope
 
@@ -313,7 +330,7 @@ and upstream ACP schema:
 
 ### 12.2 API and Runtime Behavior
 
-## 13. Kimi CLI ACP Integration (2026-03-09)
+### A3. Kimi CLI ACP Integration Notes (2026-03-09)
 
 ### 13.1 Objective and Scope
 
@@ -374,7 +391,7 @@ and upstream ACP schema:
   - apply calls `PATCH /v1/threads/{threadId}`.
   - controls are disabled while model list is loading or while a turn is streaming.
 
-## 14. BLACKBOX AI ACP Integration (2026-03-22)
+### A4. BLACKBOX AI ACP Integration Notes (2026-03-22)
 
 ### 14.1 Objective and Scope
 
@@ -417,7 +434,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - shared model-discovery/config-catalog plumbing.
 - keep session browsing/replay unsupported until upstream BLACKBOX ACP exposes `session/list` / `session/load`.
 
-## 13. Thread Session Config Options and Immediate Model Switch (2026-03-05)
+### A5. Thread Session Config Options And Immediate Model Switch Notes (2026-03-05)
 
 ### 13.1 Scope
 
@@ -497,7 +514,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - refresh is best-effort and non-blocking for HTTP startup.
   - if some model refreshes fail, successful rows are upserted while older rows for failed models are preserved.
 
-## 14. Embedded Tool-Interaction Server Request Compatibility (2026-03-06)
+### A6. Embedded Tool-Interaction Server Request Compatibility Notes (2026-03-06)
 
 - Problem:
   - codex app-server can issue server requests `item/tool/requestUserInput` and `item/tool/call` during MCP/tool flows.
@@ -509,7 +526,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - this is a compatibility fallback, not full interactive tool-user-input UX.
   - multi-question/multi-select semantics and arbitrary free-text answers are not yet exposed through hub APIs/UI.
 
-## 15. ACP Session Sidebar and Resume (2026-03-11)
+### A7. ACP Session Sidebar And Resume Notes (2026-03-11)
 
 ### 15.1 Thread Metadata
 
@@ -589,7 +606,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - skips server history hydration for that temporary fresh-session scope until a real ACP session id is bound back into the thread.
   - filters empty cancelled placeholders from empty-session history replay so page reload does not resurrect abandoned pre-bind attempts.
 
-## 16. ACP Slash Commands Cache and Composer Picker (2026-03-13)
+### A8. ACP Slash Commands Cache And Composer Picker Notes (2026-03-13)
 
 ### 16.1 Backend Parsing and Persistence
 
@@ -651,7 +668,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - `Escape` closes the picker.
   - clicking a command inserts `/<name>` and appends a trailing space when the command advertises an input hint.
 
-## 17. Rich ACP Permission Requests and Streaming Placeholder (2026-03-14)
+### A9. Rich ACP Permission Requests And Streaming Placeholder Notes (2026-03-14)
 
 ### 17.1 Provider Permission Bridging
 
@@ -681,7 +698,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 - The first real delta populates the existing bubble without changing any other streaming semantics.
 - Hidden `agent_thought_chunk` content still remains non-user-visible while the assistant is waiting on a visible delta.
 
-## 18. ACP Tool Calls in Streaming and History (2026-03-16)
+### A10. ACP Tool Calls In Streaming And History Notes (2026-03-16)
 
 ### 18.1 Backend Event Model
 

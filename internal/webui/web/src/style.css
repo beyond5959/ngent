@@ -5388,11 +5388,18 @@ button:active:not(:disabled),
   width: 100%;
   padding: 11px 14px;
   border: 0;
+  border-radius: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: transparent;
   color: inherit;
   text-align: left;
+  appearance: none;
   transition: background var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
+}
+
+.git-diff-file-row:first-child {
+  border-top-left-radius: 17px;
+  border-top-right-radius: 17px;
 }
 
 .git-diff-file-row:last-child {

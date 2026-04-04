@@ -724,16 +724,16 @@ This checklist defines executable acceptance checks for requirements 1-16.
 ## Requirement 31: Session Switching Stays Responsive On Old Delta-Heavy History
 
 - Operation:
-  - reuse a thread whose persisted history was created before write-side delta merging existed.
+  - reuse a thread whose persisted history contains many append-only `message_delta` / `reasoning_delta` rows.
   - switch from a light historical session (for example `hello`) back to a heavy session that contains many persisted `message_delta` / `reasoning_delta` rows.
   - inspect the returned `/history?includeEvents=1&sessionId=...` payload and observe the browser during the switch.
 - Expected:
-  - `/history` compacts adjacent same-turn `message_delta`, `reasoning_delta`, and `thought_delta` runs in the response even when the SQLite rows are still stored unmerged.
+  - `/history` compacts adjacent same-turn `message_delta`, `reasoning_delta`, and `thought_delta` runs in the response even though SQLite keeps the underlying turn events append-only on write.
   - the Web UI history replay yields while reconstructing messages and while rebuilding a heavy message list.
   - the switch does not produce a visible long main-thread stall from history replay alone.
 - Verification commands (executed 2026-03-26):
   - `go test ./internal/httpapi -run TestThreadHistoryCompactsConsecutiveDeltaEvents -count=1`
-  - `go test ./internal/storage -run TestAppendEventMergesConsecutiveDeltaRuns -count=1`
+  - `go test ./internal/storage -run TestAppendEventKeepsConsecutiveDeltaRunsAppendOnly -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
   - real repro on the provided Codex thread:

@@ -5768,8 +5768,10 @@ function setThreadGitDiffExpanded(scopeKey: string, expanded: boolean): void {
 
 function openThreadGitDiffDrawer(scopeKey: string, filePath: string): void {
   const threadId = threadIDFromScopeKey(scopeKey)
-  const selectedFile = threadGitDiffState(scopeKey).files.find(file => file.path === filePath)
+  const state = threadGitDiffState(scopeKey)
+  const selectedFile = state.files.find(file => file.path === filePath)
   if (!isThreadGitDiffFileViewable(selectedFile)) return
+  if (state.drawerOpen && state.selectedFilePath === filePath) return
   setThreadGitDiffState(scopeKey, {
     drawerOpen: true,
     selectedFilePath: filePath,

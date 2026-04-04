@@ -2,6 +2,19 @@
 
 ## ADR Index
 
+- ADR-091: Persist learned config snapshots per provider session. (Accepted)
+- ADR-090: Learn model/reasoning metadata only from real session lifecycle events. (Accepted)
+- ADR-089: Share repeated ACP discovery and session-param helpers across built-in providers. (Accepted)
+- ADR-088: Derive the runtime agent list from startup preflight results. (Accepted)
+- ADR-087: Render assistant turns as ordered UI segments instead of one aggregated bubble. (Accepted)
+- ADR-086: Preserve ACP tool-call updates as first-class turn events. (Accepted)
+- ADR-085: Normalize rich ACP permission requests before bridging them into ngent. (Accepted)
+- ADR-084: Persist ACP slash commands as agent-level SQLite snapshots. (Accepted)
+- ADR-083: Allow concurrent turns across different sessions on the same thread. (Accepted)
+- ADR-082: Scope Web UI chat playback to the selected ACP session. (Accepted)
+- ADR-081: Persist thread-level ACP session selection and resume through provider sessions. (Accepted)
+- ADR-080: Persist agent config catalogs in SQLite and refresh them asynchronously on startup. (Accepted)
+- ADR-079: Thread-level model switching via ACP session config options. (Accepted)
 - ADR-078: Keep the Web UI git-diff drawer explicitly dismissed and stable across summary polling. (Accepted)
 - ADR-077: Preview git-diff file details in a right-side drawer, with text-only support for new files. (Accepted)
 - ADR-076: Make grouped thread session lists collapsible from the leading agent glyph. (Accepted)
@@ -17,14 +30,21 @@
 - ADR-066: Surface thread-scoped git branch state in the Web UI composer. (Accepted)
 - ADR-065: Recast the embedded Web UI as a restrained desktop workbench. (Accepted)
 - ADR-064: Share threads and sessions across browser-scoped client IDs on the same ngent instance. (Accepted)
+- ADR-062: Decouple viewed Web UI session from backend thread session during active turns. (Accepted)
+- ADR-061: Compact historical delta runs on read and render large chats incrementally. (Accepted)
+- ADR-060: Make thread history session-scoped for Web UI session switches. (Accepted)
+- ADR-059: Store uploaded attachments under the configurable data directory and serve them back through a stable attachment route. (Accepted)
 - ADR-058: Render bracketed inline base64 user-image placeholders as safe Web UI previews. (Accepted)
+- ADR-057: Persist Web UI uploads as local temp files and forward them as ACP resource links. (Accepted)
+- ADR-056: Preserve exact provider permission options through the hub permission flow. (Accepted)
+- ADR-055: Preserve non-text assistant ACP content as first-class turn events. (Accepted)
 - ADR-054: Refresh the embedded Web UI as a premium workbench without changing behavior. (Superseded)
 - ADR-053: Replace `slog` JSON output with a human-readable stderr logger and colored access logs. (Accepted)
 - ADR-001: HTTP/JSON API with SSE streaming transport. (Accepted)
-- ADR-002: Client identity via `X-Client-ID` header. (Accepted)
+- ADR-002: Client identity via `X-Client-ID` header. (Superseded)
 - ADR-003: SQLite append-only events table as interaction source of truth. (Accepted)
 - ADR-004: Permission handling defaults to fail-closed. (Accepted)
-- ADR-005: Default bind is localhost only. (Superseded)
+- ADR-005: Default bind is localhost only. (Accepted)
 - ADR-006: M1 API baseline for health/auth/agents. (Accepted)
 - ADR-007: M3 thread API tenancy and path policy. (Accepted)
 - ADR-008: M4 turn streaming over SSE with persisted event log. (Accepted)
@@ -39,7 +59,6 @@
 - ADR-018: Embedded Web UI via Go embed. (Accepted)
 - ADR-019: OpenCode ACP stdio provider. (Accepted)
 - ADR-020: Gemini CLI ACP stdio provider. (Accepted)
-- ADR-021: Public-by-default bind with local-only opt-out. (Accepted)
 - ADR-022: Qwen Code ACP stdio provider integration. (Accepted)
 - ADR-023: Shared ACP stdio transport for OpenCode and Qwen providers. (Accepted)
 - ADR-024: Claude Code embedded provider via claudeacp runtime. (Accepted)
@@ -1057,7 +1076,7 @@ Use this template for new decisions.
 
 ## ADR-002: Client Identity via `X-Client-ID`
 
-- Status: Accepted
+- Status: Superseded by ADR-064
 - Date: 2026-02-28
 - Context: server must isolate resources across multiple clients.
 - Decision: require `X-Client-ID` on authenticated endpoints and scope data by that identity.
@@ -1087,7 +1106,7 @@ Use this template for new decisions.
 
 ## ADR-005: Localhost-by-Default Network Policy
 
-- Status: Superseded by ADR-021
+- Status: Accepted
 - Date: 2026-02-28
 - Context: server may expose local filesystem and command capabilities.
 - Decision: default bind `127.0.0.1:8686`; require explicit `--allow-public=true` for public interfaces.
@@ -1390,7 +1409,7 @@ Use this template for new decisions.
 - Follow-up actions:
   - add permission round-trip E2E test for Claude (approved/declined/cancelled paths).
 
-## ADR-025: Thread-level model switching via ACP session config options
+## ADR-079: Thread-level model switching via ACP session config options
 
 - Status: Accepted
 - Date: 2026-03-05
@@ -1417,7 +1436,7 @@ Use this template for new decisions.
 - Follow-up actions:
   - optionally add richer Web UI rendering for non-model config categories (e.g. reasoning level) using the same API.
 
-## ADR-026: Persist agent config catalogs in SQLite and refresh them asynchronously on startup
+## ADR-080: Persist agent config catalogs in SQLite and refresh them asynchronously on startup
 
 - Status: Accepted
 - Date: 2026-03-06
@@ -1582,7 +1601,7 @@ Use this template for new decisions.
   - add per-provider bespoke debug flags (rejected: fragmented UX and duplicated plumbing).
   - expose raw unredacted ACP dumps (rejected: conflicts with repository logging/redaction requirements).
 
-## ADR-036: Persist thread-level ACP session selection and resume through provider sessions
+## ADR-081: Persist thread-level ACP session selection and resume through provider sessions
 
 - Status: Accepted
 - Date: 2026-03-11
@@ -1609,7 +1628,7 @@ Use this template for new decisions.
   - keep relying on hub prompt injection even after binding to an ACP session (rejected: duplicates already-restored conversation context).
   - add a dedicated sessions table instead of reusing `agentOptions` JSON (rejected: unnecessary schema churn for a single thread-scoped selection value).
 
-## ADR-037: Scope Web UI chat playback to the selected ACP session
+## ADR-082: Scope Web UI chat playback to the selected ACP session
 
 - Status: Accepted
 - Date: 2026-03-11
@@ -1631,7 +1650,7 @@ Use this template for new decisions.
   - add a session-scoped history endpoint immediately (rejected: larger server contract change while turn events already contain the session discriminator).
   - keep all thread turns visible regardless of selected session (rejected: does not meet the expected session playback behavior).
 
-## ADR-038: Allow concurrent turns across different sessions on the same thread
+## ADR-083: Allow concurrent turns across different sessions on the same thread
 
 - Status: Accepted
 - Date: 2026-03-13
@@ -1653,7 +1672,7 @@ Use this template for new decisions.
   - keep thread-wide turn serialization and force users to create separate threads per ACP session (rejected: poor UX and redundant thread duplication).
   - remove the conflict check without changing provider cache scope (rejected: would mix session-bound provider state and route turns to the wrong ACP session).
 
-## ADR-039: Persist ACP slash commands as agent-level SQLite snapshots
+## ADR-084: Persist ACP slash commands as agent-level SQLite snapshots
 
 - Status: Accepted
 - Date: 2026-03-13
@@ -1687,7 +1706,7 @@ Use this template for new decisions.
   - persist slash commands per thread (rejected: duplicates identical agent data and prevents reuse across threads).
   - append slash-command updates into `turns/events` only (rejected: complicates retrieval for the composer and mixes capability cache with transcript history).
 
-## ADR-040: Normalize rich ACP permission requests before bridging them into ngent
+## ADR-085: Normalize rich ACP permission requests before bridging them into ngent
 
 - Status: Accepted
 - Date: 2026-03-14
@@ -1729,7 +1748,7 @@ Use this template for new decisions.
   - keep using the single empty-session scope `${threadId}::` for all fresh-session attempts (rejected: this is the bug).
   - persist a backend-generated fresh-session nonce in thread metadata (rejected for now: more invasive than needed for the Web UI reset bug).
 
-## ADR-049: Preserve ACP tool-call updates as first-class turn events
+## ADR-086: Preserve ACP tool-call updates as first-class turn events
 
 - Status: Accepted
 - Date: 2026-03-16
@@ -1751,7 +1770,7 @@ Use this template for new decisions.
   - flatten tool-call payloads into `message_delta` text (rejected: destroys structure and makes incremental updates ambiguous).
   - keep tool-call state only in browser memory (rejected: reload/history would still lose it).
 
-## ADR-050: Render assistant turns as ordered UI segments instead of one aggregated bubble
+## ADR-087: Render assistant turns as ordered UI segments instead of one aggregated bubble
 
 - Status: Accepted
 - Date: 2026-03-19
@@ -1791,7 +1810,7 @@ Use this template for new decisions.
   - flatten tool/thought events into one markdown transcript string (rejected: harder to update incrementally and loses structured tool metadata).
   - move `plan_update` into the same segment list immediately (deferred: it is replace-style state and needs separate UX rules).
 
-## ADR-051: Derive the runtime agent list from startup preflight results
+## ADR-088: Derive the runtime agent list from startup preflight results
 
 - Status: Accepted
 - Date: 2026-03-20
@@ -1811,7 +1830,7 @@ Use this template for new decisions.
   - keep returning unavailable agents and suppress only refresh warnings (rejected: frontend/runtime behavior would still disagree about what is usable).
   - make refresh failures silent while leaving the static allowlist intact (rejected: still permits users to create threads for agents that cannot start).
 
-## ADR-052: Share repeated ACP discovery and session-param helpers across built-in providers
+## ADR-089: Share repeated ACP discovery and session-param helpers across built-in providers
 
 - Status: Accepted
 - Date: 2026-03-21
@@ -1835,7 +1854,7 @@ Use this template for new decisions.
   - leave the param builders local because they are short (rejected: they were identical across four providers and changed together conceptually).
   - move the local-config branch into `acpcli` as well (rejected: that behavior is provider-specific and should stay in `kimi`).
 
-## ADR-053: Learn model/reasoning metadata only from real session lifecycle events
+## ADR-090: Learn model/reasoning metadata only from real session lifecycle events
 
 - Status: Accepted
 - Date: 2026-03-22
@@ -1864,12 +1883,12 @@ Use this template for new decisions.
   - keep using one shared default catalog row for threads without explicit `modelId` (rejected: stale or unrelated session config can leak between threads).
   - update only the agent catalog and leave thread rows untouched (rejected: thread-level model/reasoning state would stay ambiguous when multiple sessions of the same agent differ).
 
-## ADR-054: Persist learned config snapshots per provider session
+## ADR-091: Persist learned config snapshots per provider session
 
 - Status: Accepted
 - Date: 2026-03-22
 - Context:
-  - ADR-053 removed probe sessions and made real `session/new` / `session/load` the only source of config metadata.
+  - ADR-090 removed probe sessions and made real `session/new` / `session/load` the only source of config metadata.
   - ngent persisted those learned snapshots into the thread row and `agent_config_catalogs`, but a later switch to another existing session intentionally clears stale thread-local `modelId` / `configOverrides`.
   - when the user switched back to the original session before sending another turn, ngent only had the `sessionId`; the learned model/reasoning snapshot was no longer addressable, so the Web UI hid the controls again.
 - Decision:

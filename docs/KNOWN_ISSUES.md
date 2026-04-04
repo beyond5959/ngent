@@ -13,7 +13,10 @@
 - Follow-up plan:
 ```
 
-## Open Issues
+## Issue Registry
+
+Status is authoritative for each entry; this registry keeps open, mitigated, and
+recently closed items together in reverse-chronological order.
 
 - ID: KI-058
 - Title: `/git-diff-file` duplicated raw text and per-line JSON, inflating preview payload size
@@ -146,7 +149,7 @@
 - Follow-up plan:
   - evaluate whether the grouped left rail eventually needs a compact cross-thread live-plan indicator for background sessions.
 
-- ID: KI-049
+- ID: KI-059
 - Title: Git-diff drawer preview is intentionally limited to tracked patches and new text files
 - Status: Open
 - Severity: Low
@@ -589,13 +592,13 @@
 - Affects: threads that switch to a model whose sqlite config catalog has not been refreshed yet
 - Symptom:
   - `POST /v1/threads/{threadId}/config-options` now persists the selected model immediately without mutating the live provider.
-  - if sqlite does not yet have a catalog snapshot for the newly selected model, the immediate response can only fall back to the current in-memory option set, so the Web UI may temporarily show the previous reasoning list until the next turn or a later catalog refresh fills in the new model snapshot.
+  - if sqlite does not yet have a catalog snapshot for the newly selected model, the immediate response can only fall back to the current in-memory option set, so the Web UI may temporarily show the previous reasoning list until a later real session lifecycle teaches ngent the new model snapshot.
 - Workaround:
-  - send the next turn, or wait for background catalog refresh / a later config fetch to repopulate the target model's reasoning choices.
+  - send the next turn on that model, or switch back after a real `session/new` / `session/load` has populated sqlite for the target model.
 - Follow-up plan:
-  - add an explicit background fetch path for missing target-model catalogs so the picker can self-heal without waiting for the next turn.
+  - add an explicit on-demand fetch path for missing target-model catalogs so the picker can self-heal without waiting for the next turn.
 
-- ID: KI-034
+- ID: KI-060
 - Title: Some ACP tool-call payload shapes render as generic JSON
 - Status: Open
 - Severity: Low
@@ -608,7 +611,7 @@
 - Follow-up plan:
   - add richer renderers for additional ACP content block variants once real provider payloads stabilize.
 
-- ID: KI-035
+- ID: KI-061
 - Title: Full-suite `go test ./...` can flake when ACP-heavy agent packages run in parallel
 - Status: Open
 - Severity: Low

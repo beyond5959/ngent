@@ -3,7 +3,7 @@
 ## Project Overview
 
 Ngent Server is a Go service that exposes HTTP/JSON APIs and SSE streaming for multi-client, multi-thread agent turns.
-The system targets ACP-compatible agent providers, lazily starts per-thread agents, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
+The system targets ACP-compatible agent providers, lazily resolves per-thread/session-scope providers, persists interaction history in SQLite, and bridges runtime permission requests back to clients.
 Current built-in providers are `codex`, `claude`, `cursor`, `opencode`, `gemini`, `kimi`, `qwen`, and `blackbox`.
 This file is the source of milestone progress, validation commands, and next actions.
 
@@ -12,6 +12,18 @@ This file is the source of milestone progress, validation commands, and next act
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
 ## Latest Update (2026-04-04)
+
+- `Post-M8` memory-file consistency audit completed:
+  - updated `docs/SPEC.md` current-state sections to match the real code paths, storage model, and HTTP surface, and moved older rollout notes into an appendix instead of leaving them as conflicting numbered spec sections.
+  - corrected `docs/DECISIONS.md` ADR drift by removing the dangling ADR-021 index entry, marking superseded/current client-id and bind decisions accurately, and reassigning duplicated later rollout ADR ids to unique canonical ids.
+  - cleaned `docs/KNOWN_ISSUES.md` bookkeeping by making per-entry status authoritative, fixing duplicated issue ids, and updating KI-032 to reflect the current no-background-refresh model-catalog behavior.
+  - refreshed `docs/ACCEPTANCE.md` requirement 31 to match append-only event storage plus read-time history compaction, including the current storage-test name.
+  - deduplicated repeated `2026-03-26` progress notes and corrected the project overview to describe per-thread/session-scope provider caching.
+  - validation:
+    - pass: `git diff --check`
+    - pass: doc consistency audits for ADR ids, KI ids, and acceptance-referenced test names against the current repository tree
+
+## Previous Update (2026-04-04)
 
 - `Post-M8` Web UI git-diff drawer stability fix completed:
   - opening a changed file in the git-diff chip no longer installs outside-click or focus-leave auto-dismiss behavior, so the right-side drawer stays open during normal workspace interaction instead of collapsing on the next arbitrary click.
@@ -188,13 +200,6 @@ This file is the source of milestone progress, validation commands, and next act
   - removed the Web UI's visible Client ID settings entirely; the browser now sends one fixed compatibility `X-Client-ID` header internally instead of exposing per-browser identity controls.
 
 ## Previous Update (2026-03-26)
-
-- `Post-M8` Web UI fresh-session binding/render preservation fix completed:
-  - when a fresh session receives `session_bound`, the left session panel now upserts that bound `sessionId` immediately and forces a panel refresh instead of waiting for the first turn to finish and refresh session history.
-  - session-panel dedupe now preserves richer later metadata (`title`, `cwd`, `updatedAt`) for duplicate session ids, so temporary placeholders do not block later server-provided session details.
-  - history reload now recognizes fresh-session scope promotion into a bound session and reuses the in-memory message cache for that first replay pass, preventing immediate transcript/history refresh from stripping streamed `thinking` / `tool_call` sections off the just-finished first reply.
-  - full-page refresh is also preserved now: when transcript replay overlaps with persisted turn history, the Web UI rehydrates the replayed messages from the richer event-backed local turn reconstruction so `reasoning` / `tool_call` sections survive reload.
-  - backend `GET /v1/threads/{threadId}/sessions` now also prepends the thread's currently bound `sessionId`, so the active session remains visible even when the upstream provider `session/list` result is stale or has not surfaced that new session yet.
 
 - `Post-M8` Web UI fresh-session binding/render preservation fix completed:
   - when a fresh session receives `session_bound`, the left session panel now upserts that bound `sessionId` immediately and forces a panel refresh instead of waiting for the first turn to finish and refresh session history.

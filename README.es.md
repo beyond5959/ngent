@@ -36,7 +36,8 @@ Ngent actúa como puente entre **agentes compatibles con ACP** (como Codex, Kimi
 - 🔒 **Control de permisos**: sistema de aprobación granular para operaciones de archivos y sistema
 - 💾 **Estado persistente**: historial de conversaciones respaldado por SQLite entre sesiones
 - 📱 **Compatible con móvil**: código QR para acceder fácilmente desde dispositivos de la misma red
-- 🌿 **Integración Git**: ver información de ramas, cambiar de rama y mostrar diferencias del directorio de trabajo por hilo
+- 🌿 **Control de ramas Git**: consulta la información de ramas por hilo y cambia ramas locales directamente desde la interfaz web integrada
+- 🧾 **Inspección de diffs Git**: muestra resúmenes de cambios del árbol de trabajo por sesión, lista archivos tracked y untracked y abre vistas previas por archivo
 
 ## Agentes soportados
 

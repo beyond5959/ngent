@@ -35,7 +35,8 @@ Ngent acts as a bridge between **ACP-compatible agents** (like Codex, Kimi CLI, 
 - 🔒 **Permission Control**: Fine-grained approval system for agent file/system operations
 - 💾 **Persistent State**: SQLite-backed conversation history across sessions
 - 📱 **Mobile Friendly**: QR code for easy access from mobile devices on the same network
-- 🌿 **Git Integration**: View branch info, switch branches, and display working directory diffs per thread
+- 🌿 **Git Branch Controls**: View per-thread branch information and switch local branches directly from the built-in Web UI
+- 🧾 **Git Diff Inspector**: Show session-scoped working tree diff summaries, list tracked and untracked files, and open per-file previews
 
 
 ## Supported Agents

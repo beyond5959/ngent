@@ -13,102 +13,10 @@
 - Follow-up plan:
 ```
 
-## Issue Registry
+## Active Issues
 
-Status is authoritative for each entry; this registry keeps open, mitigated, and
-recently closed items together in reverse-chronological order.
-
-- ID: KI-058
-- Title: `/git-diff-file` duplicated raw text and per-line JSON, inflating preview payload size
-- Status: Closed
-- Severity: Low
-- Affects: thread-scoped git-diff file preview responses consumed by the embedded Web UI and any future mobile client
-- Symptom:
-  - the endpoint previously returned both the full raw `content` string and a fully expanded `lines[]` array for the same preview.
-  - large patches therefore paid for the same payload twice and also repeated `showLineNumbers` on every rendered row even though tone/line-number presence already implied that presentation.
-- Workaround:
-  - none required after the 2026-04-04 response compaction.
-- Follow-up plan:
-  - keep future clients on the compact grouped `blocks[]` response shape unless a separate raw-patch export use case appears that genuinely needs the unrendered text.
-
-- ID: KI-057
-- Title: Git-diff drawer used a synthetic single line counter instead of real old/new diff line numbers
-- Status: Closed
-- Severity: Medium
-- Affects: embedded Web UI users reading tracked git patches in the right-side drawer
-- Symptom:
-  - the drawer previously rendered one monotonically increasing counter for every visible row, regardless of whether the row came from the old file, the new file, or a hunk header.
-  - raw diff header metadata such as `diff --git`, `index`, `---`, and `+++` also remained visible even though they were not part of the requested code-reading surface.
-- Workaround:
-  - none required after the 2026-04-04 unified-diff line-number rendering fix.
-- Follow-up plan:
-  - none.
-
-- ID: KI-056
-- Title: Git-diff drawer rows used excessive vertical spacing
-- Status: Closed
-- Severity: Low
-- Affects: embedded Web UI users reading multi-line diff/file content in the right-side drawer
-- Symptom:
-  - each rendered drawer row used relatively tall line-height and vertical padding, so long diffs consumed too much vertical space.
-  - the requested fix was to make rows denser without reducing the visible text size.
-- Workaround:
-  - none required after the 2026-04-04 row-density polish.
-- Follow-up plan:
-  - none.
-
-- ID: KI-055
-- Title: Git-diff drawer code nodes still fell back to the browser default code font
-- Status: Closed
-- Severity: Low
-- Affects: embedded Web UI users comparing the drawer content typography to the composer footer's model-label typography
-- Symptom:
-  - even after the drawer row container switched to the model-label typography, the actual rendered content still sat inside `<code>` nodes.
-  - browser default `code` styling could therefore keep showing a different font family until the drawer content explicitly inherited the parent font settings.
-- Workaround:
-  - none required after the 2026-04-04 explicit font-inheritance fix.
-- Follow-up plan:
-  - none.
-
-- ID: KI-054
-- Title: Git-diff drawer content used heavy row separators and mismatched typography
-- Status: Closed
-- Severity: Low
-- Affects: embedded Web UI users reading the right-side git-diff file preview drawer
-- Symptom:
-  - the drawer content used horizontal separators between every rendered line, which made the preview feel visually noisy.
-  - the drawer text styling also differed from the composer footer's model-label typography requested for this surface.
-- Workaround:
-  - none required after the 2026-04-04 drawer typography polish.
-- Follow-up plan:
-  - none.
-
-- ID: KI-053
-- Title: Git-diff drawer reused the previous file-detail payload when reopening the same file
-- Status: Closed
-- Severity: Low
-- Affects: embedded Web UI users who open file A, switch to another file, and then return to file A in the git-diff drawer
-- Symptom:
-  - reopening the same file could reuse the last fetched drawer detail from browser memory instead of issuing a fresh `/git-diff-file` request.
-  - this made the drawer look stale when the user expected a new backend fetch on every file selection.
-- Workaround:
-  - none required after the 2026-04-04 follow-up fix.
-- Follow-up plan:
-  - none.
-
-- ID: KI-052
-- Title: Git-diff drawer used to auto-close on outside clicks and flicker under summary polling
-- Status: Closed
-- Severity: Medium
-- Affects: embedded Web UI users reading a per-file git-diff preview in the right-side drawer
-- Symptom:
-  - after opening a changed file from the git-diff chip, clicking elsewhere in the workspace could close the drawer even though the user had not clicked its close affordance.
-  - collapsing the git-diff chip itself could also dismiss the right-side drawer even though the user only intended to hide the changed-file list.
-  - while the drawer remained open, periodic `/git-diff` summary refreshes could rebuild the drawer and force a detail refresh, causing visible loading flashes and scroll/content jumping.
-- Workaround:
-  - none required after the 2026-04-04 Web UI stability fix.
-- Follow-up plan:
-  - none.
+Status is authoritative for each entry. This section keeps only open and
+mitigated items so active work does not share space with already closed issues.
 
 - ID: KI-051
 - Title: Grouped thread session-collapse state resets after a full page reload
@@ -293,15 +201,6 @@ recently closed items together in reverse-chronological order.
 - Symptom: transient `database is locked` errors
 - Workaround: enable WAL, busy timeout, and retry with jitter
 - Follow-up plan: benchmark and tune connection settings in M2 and M8
-
-- ID: KI-004
-- Title: `cwd` validation false positives
-- Status: Closed
-- Severity: Low
-- Affects: legacy deployments that used restrictive allow-root policies
-- Symptom: historical issue where valid paths could be rejected as outside allowed roots
-- Workaround: N/A after ADR-016 default absolute-cwd policy
-- Follow-up plan: none
 
 - ID: KI-005
 - Title: External agent process crash
@@ -688,7 +587,102 @@ recently closed items together in reverse-chronological order.
 - Follow-up plan:
   - add an age-based or thread-reference-aware attachment janitor once real usage clarifies safe retention expectations for provider retries and history-driven debugging.
 
-## Recently Closed
+## Closed Issues
+
+Closed issues are kept in one place to avoid split bookkeeping across the file.
+Newer closures should appear first when practical.
+
+- ID: KI-058
+- Title: `/git-diff-file` duplicated raw text and per-line JSON, inflating preview payload size
+- Status: Closed
+- Severity: Low
+- Affects: thread-scoped git-diff file preview responses consumed by the embedded Web UI and any future mobile client
+- Symptom:
+  - the endpoint previously returned both the full raw `content` string and a fully expanded `lines[]` array for the same preview.
+  - large patches therefore paid for the same payload twice and also repeated `showLineNumbers` on every rendered row even though tone/line-number presence already implied that presentation.
+- Workaround:
+  - none required after the 2026-04-04 response compaction.
+- Follow-up plan:
+  - keep future clients on the compact grouped `blocks[]` response shape unless a separate raw-patch export use case appears that genuinely needs the unrendered text.
+
+- ID: KI-057
+- Title: Git-diff drawer used a synthetic single line counter instead of real old/new diff line numbers
+- Status: Closed
+- Severity: Medium
+- Affects: embedded Web UI users reading tracked git patches in the right-side drawer
+- Symptom:
+  - the drawer previously rendered one monotonically increasing counter for every visible row, regardless of whether the row came from the old file, the new file, or a hunk header.
+  - raw diff header metadata such as `diff --git`, `index`, `---`, and `+++` also remained visible even though they were not part of the requested code-reading surface.
+- Workaround:
+  - none required after the 2026-04-04 unified-diff line-number rendering fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-056
+- Title: Git-diff drawer rows used excessive vertical spacing
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users reading multi-line diff/file content in the right-side drawer
+- Symptom:
+  - each rendered drawer row used relatively tall line-height and vertical padding, so long diffs consumed too much vertical space.
+  - the requested fix was to make rows denser without reducing the visible text size.
+- Workaround:
+  - none required after the 2026-04-04 row-density polish.
+- Follow-up plan:
+  - none.
+
+- ID: KI-055
+- Title: Git-diff drawer code nodes still fell back to the browser default code font
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users comparing the drawer content typography to the composer footer's model-label typography
+- Symptom:
+  - even after the drawer row container switched to the model-label typography, the actual rendered content still sat inside `<code>` nodes.
+  - browser default `code` styling could therefore keep showing a different font family until the drawer content explicitly inherited the parent font settings.
+- Workaround:
+  - none required after the 2026-04-04 explicit font-inheritance fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-054
+- Title: Git-diff drawer content used heavy row separators and mismatched typography
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users reading the right-side git-diff file preview drawer
+- Symptom:
+  - the drawer content used horizontal separators between every rendered line, which made the preview feel visually noisy.
+  - the drawer text styling also differed from the composer footer's model-label typography requested for this surface.
+- Workaround:
+  - none required after the 2026-04-04 drawer typography polish.
+- Follow-up plan:
+  - none.
+
+- ID: KI-053
+- Title: Git-diff drawer reused the previous file-detail payload when reopening the same file
+- Status: Closed
+- Severity: Low
+- Affects: embedded Web UI users who open file A, switch to another file, and then return to file A in the git-diff drawer
+- Symptom:
+  - reopening the same file could reuse the last fetched drawer detail from browser memory instead of issuing a fresh `/git-diff-file` request.
+  - this made the drawer look stale when the user expected a new backend fetch on every file selection.
+- Workaround:
+  - none required after the 2026-04-04 follow-up fix.
+- Follow-up plan:
+  - none.
+
+- ID: KI-052
+- Title: Git-diff drawer used to auto-close on outside clicks and flicker under summary polling
+- Status: Closed
+- Severity: Medium
+- Affects: embedded Web UI users reading a per-file git-diff preview in the right-side drawer
+- Symptom:
+  - after opening a changed file from the git-diff chip, clicking elsewhere in the workspace could close the drawer even though the user had not clicked its close affordance.
+  - collapsing the git-diff chip itself could also dismiss the right-side drawer even though the user only intended to hide the changed-file list.
+  - while the drawer remained open, periodic `/git-diff` summary refreshes could rebuild the drawer and force a detail refresh, causing visible loading flashes and scroll/content jumping.
+- Workaround:
+  - none required after the 2026-04-04 Web UI stability fix.
+- Follow-up plan:
+  - none.
 
 - ID: KI-042
 - Title: Web UI session browsing raised 409 conflicts while another session was still streaming
@@ -740,3 +734,12 @@ recently closed items together in reverse-chronological order.
   - none; fixed on 2026-03-16.
 - Follow-up plan:
   - monitor whether explicit fresh-session scope state ever needs backend persistence beyond the current Web UI behavior.
+
+- ID: KI-004
+- Title: `cwd` validation false positives
+- Status: Closed
+- Severity: Low
+- Affects: legacy deployments that used restrictive allow-root policies
+- Symptom: historical issue where valid paths could be rejected as outside allowed roots
+- Workaround: N/A after ADR-016 default absolute-cwd policy
+- Follow-up plan: none

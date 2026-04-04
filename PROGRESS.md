@@ -13,17 +13,15 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-04-04)
 
-- `Post-M8` memory-file consistency audit completed:
-  - updated `docs/SPEC.md` current-state sections to match the real code paths, storage model, and HTTP surface, and moved older rollout notes into an appendix instead of leaving them as conflicting numbered spec sections.
-  - corrected `docs/DECISIONS.md` ADR drift by removing the dangling ADR-021 index entry, marking superseded/current client-id and bind decisions accurately, and reassigning duplicated later rollout ADR ids to unique canonical ids.
-  - cleaned `docs/KNOWN_ISSUES.md` bookkeeping by making per-entry status authoritative, fixing duplicated issue ids, and updating KI-032 to reflect the current no-background-refresh model-catalog behavior.
-  - refreshed `docs/ACCEPTANCE.md` requirement 31 to match append-only event storage plus read-time history compaction, including the current storage-test name.
-  - deduplicated repeated `2026-03-26` progress notes and corrected the project overview to describe per-thread/session-scope provider caching.
+- `Post-M8` memory-file redundancy cleanup completed:
+  - kept `docs/SPEC.md` focused on current-state behavior while retaining older rollout notes in the appendix instead of duplicating them in the normative sections.
+  - kept `docs/DECISIONS.md` aligned with the canonical ADR set so superseded/current entries and later ADR numbering stay unambiguous.
+  - split `docs/KNOWN_ISSUES.md` maintenance into active and closed sections so closed entries no longer live partly in the active registry and partly in a tail section.
+  - kept `docs/ACCEPTANCE.md` requirement 31 aligned with the current append-only event storage plus read-time history compaction behavior.
+  - consolidated repeated same-day `PROGRESS.md` headings while preserving the underlying change notes.
   - validation:
     - pass: `git diff --check`
-    - pass: doc consistency audits for ADR ids, KI ids, and acceptance-referenced test names against the current repository tree
-
-## Previous Update (2026-04-04)
+    - pass: memory-file structure review across `PROGRESS.md`, `docs/KNOWN_ISSUES.md`, `docs/SPEC.md`, `docs/DECISIONS.md`, and `docs/ACCEPTANCE.md`
 
 - `Post-M8` Web UI git-diff drawer stability fix completed:
   - opening a changed file in the git-diff chip no longer installs outside-click or focus-leave auto-dismiss behavior, so the right-side drawer stays open during normal workspace interaction instead of collapsing on the next arbitrary click.
@@ -54,8 +52,6 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
 
-## Previous Update (2026-04-03)
-
 - `Post-M8` grouped thread-session collapse affordance completed:
   - the embedded Web UI grouped left rail now lets each thread collapse or expand its own inline session list without affecting other threads.
   - the leading agent glyph now doubles as the collapse toggle:
@@ -66,8 +62,6 @@ This file is the source of milestone progress, validation commands, and next act
   - validation:
     - pass: `cd internal/webui/web && npm run build`
 
-## Previous Update (2026-04-03)
-
 - `Post-M8` cross-client active session spinner visibility completed:
   - `GET /v1/threads/{threadId}/sessions` now decorates each returned session row with `isActive` when that concrete `(thread, session)` scope currently owns a live turn.
   - the response still prepends the thread's currently bound `sessionId`, so even if the upstream provider session catalog is stale, a newly opened browser can still see the active session row and its loading spinner.
@@ -76,8 +70,6 @@ This file is the source of milestone progress, validation commands, and next act
   - validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
-
-## Previous Update (2026-04-03)
 
 - `Post-M8` Web UI merged thread/session left rail completed:
   - removed the dedicated middle session drawer and its chat-edge collapse toggle; the workspace now uses one left navigation column plus the main chat area.
@@ -93,8 +85,6 @@ This file is the source of milestone progress, validation commands, and next act
   - follow-up polish: the old chat-edge collapse handle pattern that previously controlled the session drawer now controls the merged threads rail, so the left thread/session panel can collapse and expand with the same hover-reveal affordance.
   - validation:
     - pass: `cd internal/webui/web && npm run build`
-
-## Previous Update (2026-04-03)
 
 - `Post-M8` Web UI live-plan bottom overlay completed:
   - ACP `sessionUpdate:"plan"` updates no longer render inside the assistant transcript bubble or finalized history message.
@@ -130,8 +120,6 @@ This file is the source of milestone progress, validation commands, and next act
   - localized the client-owned SPA chrome and relative-time labels for Spanish and French, and added Settings language switches for all four supported UI languages.
   - added root `README.es.md` and `README.fr.md`, and cross-linked all root README variants so the repository landing docs are available in four languages.
 
-## Previous Update (2026-04-01)
-
 - `Post-M8` active-turn viewer disconnect decoupling and resumable shared live SSE completed:
   - server-side turn execution is no longer tied to the lifetime of the original `POST /v1/threads/{threadId}/turns` response, so browser refreshes and other viewer disconnects no longer cancel a healthy in-flight turn unless the user explicitly requests cancel.
   - added `GET /v1/turns/{turnId}/events?after=<seq>` so a refreshed browser or a second browser can replay persisted turn events and then tail the same live turn stream from the last seen per-turn sequence.
@@ -139,8 +127,6 @@ This file is the source of milestone progress, validation commands, and next act
   - restored turn-event persistence to true append-only-on-write semantics, which keeps per-turn `seq` ordering stable for safe live resume while leaving any delta coalescing to read-time history serialization only.
   - thread list/get responses now expose `hasActiveSession`, so a newly opened browser can immediately see which agent/thread currently owns a live session before opening that conversation.
   - the embedded Web UI now rehydrates running turns from persisted events on history load, restores the active session/live bubble/pending permissions after refresh, consumes `permission_resolved`, fixes streaming-bubble dedupe during running-turn hydration, and reconnects transport-level viewer drops without converting them into user-visible turn cancellation.
-
-## Previous Update (2026-04-01)
 
 - `Post-M8` Web UI Simplified Chinese localization and Settings language switch completed:
   - added a browser-local persisted `language` preference to the embedded Vite + TypeScript SPA, alongside the existing theme/auth/server settings.
@@ -161,16 +147,12 @@ This file is the source of milestone progress, validation commands, and next act
     - if a provider never returns usage, the Web UI shows nothing.
     - if a provider returns token totals but no context-window `used/size`, the data is still cached in sqlite but the Web UI stays hidden because no safe percentage can be computed.
 
-## Previous Update (2026-03-30)
-
 - `Post-M8` Web UI git-branch footer and checkout switcher completed:
   - added thread-scoped git inspection/switch support through new `GET/POST /v1/threads/{threadId}/git` endpoints backed by `internal/gitutil`.
   - the backend now treats branch checkout as a thread-wide shared-state mutation: if any session on the thread is actively streaming, branch switching returns `409 CONFLICT`.
   - missing `git` binaries and non-repository working directories are handled as optional capability absence, so the API returns `available=false` and the frontend hides the control instead of surfacing a hard error.
   - the embedded Web UI composer now shows a Codex-style branch pill at the bottom-right only when the active thread's `cwd` is inside a local git repository; expanding it reveals local branches and clicking a branch checks it out immediately.
   - after each turn settles, the Web UI refreshes git state so agent-driven branch changes are reflected without requiring a full page reload.
-
-## Earlier Update (2026-03-30)
 
 - `Post-M8` restrained desktop-workbench Web UI redesign completed:
   - Phase 0 baseline completed:

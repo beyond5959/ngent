@@ -3247,7 +3247,7 @@ function renderSessionPanelBody(data: SessionPanelRenderData): string {
       : ''}`
 }
 
-function sessionPanelBodyRenderKey(data: SessionPanelRenderData): string {
+function sessionPanelBodyStructureRenderKey(data: SessionPanelRenderData): string {
   const sessionsKey = data.sessions.map(item => [
     item.sessionId,
     item.title?.trim() || '',
@@ -3258,15 +3258,34 @@ function sessionPanelBodyRenderKey(data: SessionPanelRenderData): string {
   return JSON.stringify({
     supported: data.state.supported,
     loading: data.state.loading,
-    loadingMore: data.state.loadingMore,
     error: data.state.error,
     nextCursor: data.state.nextCursor,
-    selectedSessionID: data.selectedSessionID,
-    disabled: data.disabled,
     showMoreMode: data.showMoreMode,
     sessionsKey,
     loadingKey,
   })
+}
+
+function syncSessionPanelDynamicState(bodyEl: HTMLElement, data: SessionPanelRenderData): void {
+  bodyEl.querySelectorAll<HTMLButtonElement>('.session-item[data-session-id]').forEach(btn => {
+    const sessionID = btn.dataset.sessionId?.trim() ?? ''
+    const active = !!sessionID && sessionID === data.selectedSessionID
+    btn.classList.toggle('session-item--active', active)
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false')
+    if (active) {
+      btn.setAttribute('aria-current', 'true')
+      clearSessionItemHoverPreview(btn)
+      return
+    }
+    btn.removeAttribute('aria-current')
+  })
+
+  const showMoreBtn = bodyEl.querySelector<HTMLButtonElement>('.session-show-more-btn')
+  if (showMoreBtn) {
+    showMoreBtn.dataset.showMoreMode = data.showMoreMode
+    showMoreBtn.disabled = data.state.loadingMore || data.disabled
+    showMoreBtn.textContent = data.state.loadingMore ? t('loadingEllipsis') : t('showMore')
+  }
 }
 
 function clearSessionItemHoverPreviewTimer(): void {
@@ -3875,6 +3894,15 @@ function renderSessionStatusIndicator(loading: boolean): string {
       </span>`
 }
 
+function threadGroupChromeRenderKey(thread: Thread, activityIndicator: ThreadActivityIndicator): string {
+  return JSON.stringify({
+    title: thread.title?.trim() ?? '',
+    cwd: thread.cwd,
+    agent: thread.agent ?? '',
+    activityIndicator,
+  })
+}
+
 function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndicator): string {
   const isMenuOpen = openThreadActionMenuId === thread.threadId
   const collapsed = isThreadSessionsCollapsed(thread.threadId)
@@ -3882,12 +3910,16 @@ function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndic
   const displayTitle = threadTitle(thread)
   const displayAgent = agentDisplayName(thread.agent ?? '')
   const agentAvatar = renderAgentAvatar(thread.agent ?? '', 'thread')
-  const bodyKey = sessionPanelBodyRenderKey(data)
+  const chromeKey = threadGroupChromeRenderKey(thread, activityIndicator)
+  const bodyKey = sessionPanelBodyStructureRenderKey(data)
   const sessionPanelId = `thread-sessions-${thread.threadId}`
   const toggleLabel = collapsed ? t('expandSessionHistory') : t('collapseSessionHistory')
 
   return `
-    <section class="thread-group ${collapsed ? 'thread-group--collapsed' : ''}" data-thread-id="${escHtml(thread.threadId)}">
+    <section
+      class="thread-group ${collapsed ? 'thread-group--collapsed' : ''}"
+      data-thread-id="${escHtml(thread.threadId)}"
+      data-chrome-key="${escHtml(chromeKey)}">
       <div class="thread-item ${isMenuOpen ? 'thread-item--menu-open' : ''}" data-thread-id="${escHtml(thread.threadId)}">
         <button
           class="thread-item-main"
@@ -3944,6 +3976,13 @@ function renderThreadItem(thread: Thread, activityIndicator: ThreadActivityIndic
     </section>`
 }
 
+function createThreadGroupNode(thread: Thread, activityIndicator: ThreadActivityIndicator): HTMLElement | null {
+  const template = document.createElement('template')
+  template.innerHTML = renderThreadItem(thread, activityIndicator).trim()
+  const node = template.content.firstElementChild
+  return node instanceof HTMLElement ? node : null
+}
+
 function syncThreadGroupCollapsedUI(groupEl: HTMLElement, collapsed: boolean): void {
   groupEl.classList.toggle('thread-group--collapsed', collapsed)
 
@@ -3976,6 +4015,96 @@ function renderThreadListEmptyState(): string {
     </div>`
 }
 
+function bindThreadGroupControls(groupEl: HTMLElement, thread: Thread): void {
+  const menuBtn = groupEl.querySelector<HTMLButtonElement>('.thread-item-menu-trigger')
+  if (menuBtn) {
+    menuBtn.onclick = e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = menuBtn.dataset.threadId ?? ''
+      if (!id) return
+      toggleThreadActionMenu(id)
+    }
+    menuBtn.onkeydown = e => e.stopPropagation()
+  }
+
+  const mainBtn = groupEl.querySelector<HTMLButtonElement>('.thread-item-main[data-thread-id]')
+  if (mainBtn) {
+    mainBtn.onclick = event => {
+      event.preventDefault()
+      event.stopPropagation()
+      clearSessionItemHoverPreview()
+      const id = mainBtn.dataset.threadId ?? ''
+      if (!id) return
+      const nextCollapsed = toggleThreadSessionsCollapsed(id)
+      syncThreadGroupCollapsedUI(groupEl, nextCollapsed)
+    }
+  }
+
+  bindSessionPanelControls(groupEl, thread)
+}
+
+function syncThreadGroupNode(
+  groupEl: HTMLElement,
+  thread: Thread,
+  activityIndicator: ThreadActivityIndicator,
+): HTMLElement {
+  const nextChromeKey = threadGroupChromeRenderKey(thread, activityIndicator)
+  let currentGroupEl = groupEl
+
+  if ((currentGroupEl.dataset.chromeKey ?? '') !== nextChromeKey) {
+    if (
+      (activeSessionItemHoverPreviewBtn && currentGroupEl.contains(activeSessionItemHoverPreviewBtn))
+      || (pendingSessionItemHoverPreviewBtn && currentGroupEl.contains(pendingSessionItemHoverPreviewBtn))
+    ) {
+      clearSessionItemHoverPreview()
+    }
+    const nextGroupEl = createThreadGroupNode(thread, activityIndicator)
+    if (nextGroupEl) {
+      currentGroupEl.replaceWith(nextGroupEl)
+      currentGroupEl = nextGroupEl
+    }
+  }
+
+  const collapsed = isThreadSessionsCollapsed(thread.threadId)
+  const data = resolveSessionPanelRenderData(thread)
+  syncThreadGroupCollapsedUI(currentGroupEl, collapsed)
+
+  const threadItemEl = currentGroupEl.querySelector<HTMLElement>('.thread-item')
+  const isMenuOpen = openThreadActionMenuId === thread.threadId
+  threadItemEl?.classList.toggle('thread-item--menu-open', isMenuOpen)
+
+  const menuBtn = currentGroupEl.querySelector<HTMLButtonElement>('.thread-item-menu-trigger')
+  if (menuBtn) {
+    menuBtn.setAttribute('aria-expanded', isMenuOpen ? 'true' : 'false')
+  }
+
+  const newSessionBtn = currentGroupEl.querySelector<HTMLButtonElement>('.session-new-btn')
+  if (newSessionBtn) {
+    newSessionBtn.disabled = data.disabled
+  }
+
+  const sessionsEl = currentGroupEl.querySelector<HTMLElement>('.thread-group-sessions')
+  const bodyEl = currentGroupEl.querySelector<HTMLElement>('.thread-group-sessions-body')
+  const nextBodyKey = sessionPanelBodyStructureRenderKey(data)
+  if (sessionsEl && bodyEl && (sessionsEl.dataset.renderKey ?? '') !== nextBodyKey) {
+    if (
+      (activeSessionItemHoverPreviewBtn && currentGroupEl.contains(activeSessionItemHoverPreviewBtn))
+      || (pendingSessionItemHoverPreviewBtn && currentGroupEl.contains(pendingSessionItemHoverPreviewBtn))
+    ) {
+      clearSessionItemHoverPreview()
+    }
+    bodyEl.innerHTML = renderSessionPanelBody(data)
+    sessionsEl.dataset.renderKey = nextBodyKey
+  }
+  if (bodyEl) {
+    syncSessionPanelDynamicState(bodyEl, data)
+  }
+
+  bindThreadGroupControls(currentGroupEl, thread)
+  return currentGroupEl
+}
+
 function updateThreadList(): void {
   const el = document.getElementById('thread-list')
   if (!el) return
@@ -3997,50 +4126,35 @@ function updateThreadList(): void {
     return
   }
 
-  el.innerHTML = filtered
-    .map(t => {
-      const isActive = t.threadId === activeThreadId
-      const activityIndicator: ThreadActivityIndicator = !isActive && threadCompletionBadges[t.threadId]
-        ? 'done'
-        : null
-      return renderThreadItem(t, activityIndicator)
-    })
-    .join('')
-
-  el.querySelectorAll<HTMLButtonElement>('.thread-item-menu-trigger').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.preventDefault()
-      e.stopPropagation()
-      const id = btn.dataset.threadId ?? ''
-      if (!id) return
-      toggleThreadActionMenu(id)
-    })
-    btn.addEventListener('keydown', e => e.stopPropagation())
-  })
-
-  el.querySelectorAll<HTMLButtonElement>('.thread-item-main[data-thread-id]').forEach(btn => {
-    btn.addEventListener('click', event => {
-      event.preventDefault()
-      event.stopPropagation()
-      clearSessionItemHoverPreview()
-      const id = btn.dataset.threadId ?? ''
-      if (!id) return
-      const nextCollapsed = toggleThreadSessionsCollapsed(id)
-      const groupEl = btn.closest<HTMLElement>('.thread-group')
-      if (!groupEl) {
-        updateThreadList()
-        return
-      }
-      syncThreadGroupCollapsedUI(groupEl, nextCollapsed)
-    })
-  })
-
-  el.querySelectorAll<HTMLElement>('.thread-group[data-thread-id]').forEach(groupEl => {
+  const existingGroups = new Map<string, HTMLElement>()
+  Array.from(el.querySelectorAll<HTMLElement>('.thread-group[data-thread-id]')).forEach(groupEl => {
     const threadId = groupEl.dataset.threadId?.trim() ?? ''
-    const thread = filtered.find(item => item.threadId === threadId)
-    if (!thread) return
-    bindSessionPanelControls(groupEl, thread)
+    if (threadId) existingGroups.set(threadId, groupEl)
   })
+
+  Array.from(el.children).forEach(child => {
+    if (child instanceof HTMLElement && !child.matches('.thread-group[data-thread-id]')) {
+      child.remove()
+    }
+  })
+
+  filtered.forEach((thread, index) => {
+    const isActive = thread.threadId === activeThreadId
+    const activityIndicator: ThreadActivityIndicator = !isActive && threadCompletionBadges[thread.threadId]
+      ? 'done'
+      : null
+    let groupEl = existingGroups.get(thread.threadId) ?? createThreadGroupNode(thread, activityIndicator)
+    if (!groupEl) return
+    existingGroups.delete(thread.threadId)
+    groupEl = syncThreadGroupNode(groupEl, thread, activityIndicator)
+
+    const currentAtIndex = el.children[index] ?? null
+    if (currentAtIndex !== groupEl) {
+      el.insertBefore(groupEl, currentAtIndex)
+    }
+  })
+
+  existingGroups.forEach(groupEl => groupEl.remove())
 
   syncThreadTitleOverflow(el)
   renderThreadActionLayer()

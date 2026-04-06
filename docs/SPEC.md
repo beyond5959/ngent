@@ -158,7 +158,7 @@ On restart:
 - thread session catalog (`GET /v1/threads/{threadId}/sessions`)
   - each returned session row may include `isActive=true` when that concrete `(thread, session)` scope currently owns a live turn.
   - ngent still prepends the thread's currently bound `sessionId` ahead of provider-listed sessions before returning the catalog, so a stale upstream session list does not hide the active session row.
-- thread session transcript replay (`GET /v1/threads/{threadId}/session-history?sessionId=...`)
+- session-scoped thread history with optional embedded provider transcript replay (`GET /v1/threads/{threadId}/history?sessionId=...`)
 - thread config metadata + live config updates (`GET/POST /v1/threads/{threadId}/config-options`)
 - thread slash-command snapshot lookup (`GET /v1/threads/{threadId}/slash-commands`)
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
@@ -563,8 +563,8 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - if the thread is in explicit fresh-session mode, the first prompt sent into that new ACP session is the raw user input instead of a locally wrapped context prompt.
   - provider reports the effective session id back through a thread-scoped callback.
 - Session transcript replay:
-  - providers may optionally expose replayable transcript messages for one selected session through `GET /v1/threads/{threadId}/session-history`.
-  - `GET /v1/threads/{threadId}/session-history` first checks SQLite `session_transcript_cache` keyed by `(agent_id, cwd, session_id)`.
+  - providers may optionally expose replayable transcript messages for one selected session through the canonical session-scoped history path `GET /v1/threads/{threadId}/history?sessionId=...`, which may attach a `sessionTranscript` block in the response.
+  - session transcript replay first checks SQLite `session_transcript_cache` keyed by `(agent_id, cwd, session_id)`.
   - on cache miss, `codex`, `kimi`, `opencode`, and `qwen` implement replay by calling ACP `session/load` and collecting the replayed `session/update` stream (`user_message_chunk` / `agent_message_chunk`) into displayable transcript messages.
   - successful replay snapshots, including empty transcript results, are written back to `session_transcript_cache` for reuse across later clicks and server restarts.
   - replay collectors must ignore provider-specific non-message updates (for example Qwen `tool_call_update`) instead of treating them as fatal transport errors.
@@ -604,7 +604,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - refreshes after turns complete so newly created/bound sessions appear in the grouped rail.
   - applies live `session_info_update.title` notifications to the matching session row immediately and keeps that runtime title override until a later notification replaces it.
   - skips server history hydration for that temporary fresh-session scope until a real ACP session id is bound back into the thread.
-  - filters empty cancelled placeholders from empty-session history replay so page reload does not resurrect abandoned pre-bind attempts.
+- filters empty cancelled placeholders from empty-session replay reconstruction so page reload does not resurrect abandoned pre-bind attempts.
 
 ### A8. ACP Slash Commands Cache And Composer Picker Notes (2026-03-13)
 
@@ -778,7 +778,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 - Model/reasoning metadata now comes only from real user-triggered session lifecycle events:
   - stdio ACP providers extract `configOptions` from the actual `session/new` / `session/load` response used by `Stream()`.
   - embedded `codex` / `claude` do the same inside their runtime initialization path and emit the same shared callback.
-  - session-transcript replay paths (`GET /v1/threads/{threadId}/session-history?sessionId=...`) may also extract `configOptions` from their user-triggered `session/load` response when the provider returns them.
+  - session-scoped history replay paths (`GET /v1/threads/{threadId}/history?sessionId=...`) may also extract `configOptions` from their user-triggered `session/load` response when the provider returns them.
 - The HTTP turn handler treats that callback as authoritative and persists the snapshot immediately:
   - thread `agentOptions.modelId` / `agentOptions.configOverrides` are rewritten to match the session's actual current config.
   - the normalized snapshot is stored in `agent_config_catalogs` under the actual current model id.
@@ -789,7 +789,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - if the thread already has a concrete `modelId` and sqlite has a matching catalog row, return that row overlaid with the thread's current selections.
   - otherwise, if the thread points at a concrete `sessionId` and sqlite has a matching `session_config_cache` row, return that session snapshot directly.
   - otherwise return an empty `configOptions` list instead of probing upstream.
-- `GET /v1/threads/{threadId}/session-history` keeps using cached transcript replay when possible, except:
+- session transcript replay keeps using cached transcript replay when possible, except:
   - if transcript cache exists but `session_config_cache` is still missing for the requested session, ngent performs one live `session/load` so that the user-triggered session switch can learn config metadata.
 - `POST /v1/threads/{threadId}/config-options` now requires the thread to have already learned a concrete config snapshot; before that point it returns `409 CONFLICT` rather than opening a probe session.
 - `/v1/agents/{agentId}/models` now returns only models already learned into sqlite; it may be empty for a brand-new agent until at least one real turn reports config metadata.
@@ -797,7 +797,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - model/reasoning controls stay hidden until the thread has a real config snapshot.
   - after a turn completes (or fails/disconnects after session init), the UI reloads stored config options and reveals the controls if metadata is now known.
   - switching to a different session clears the thread-local config cache so stale controls do not linger before the destination session cache or next user-triggered `session/load` repopulates the controls.
-  - after session-history replay finishes for the selected session, the UI refreshes stored config options again so controls can appear immediately if that replay taught sqlite a new session snapshot.
+  - after session-scoped history returns embedded transcript replay for the selected session, the UI refreshes stored config options again so controls can appear immediately if that replay taught sqlite a new session snapshot.
 
 ### 18.5 Web UI Uploads and ACP `resource_link`
 
@@ -852,7 +852,9 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - if the thread has exactly one annotated session and it matches the requested `sessionId`, unannotated legacy turns are included with that session so old pre-annotation history remains visible.
   - otherwise only turns whose persisted `session_bound.sessionId` matches the requested session are returned.
   - cancelled turns with no visible `responseText` are still excluded from session-scoped replay.
-- The Web UI session switch path now calls `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSession>` before merging in provider `GET /session-history` transcript replay.
+- When `sessionId` is present, `/history` also tries to attach provider-owned replay as `sessionTranscript { supported, messages }`, loaded via sqlite first and provider `session/load` on cache miss.
+- If provider transcript replay fails, `/history` still returns the filtered persisted turns and simply omits `sessionTranscript` instead of failing the whole request.
+- The Web UI session switch path now calls only `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSession>` and merges `sessionTranscript.messages` on top of the persisted turn history when available.
 - The existing client-side `filterTurnsBySession()` logic remains as a compatibility fallback, but under normal same-version operation the browser now receives only the selected session's persisted turns rather than the entire thread history.
 
 ### 18.8 Delta-Run Compaction And Incremental History Rendering
@@ -878,7 +880,7 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - the frontend-only session currently selected in the sidebar/chat pane
 - When no turn is active, switching sessions still syncs the selected session back to `PATCH /v1/threads/{threadId}` so the next turn runs in the visible session.
 - When the thread already has an active turn:
-  - clicking another session changes only the local chat scope and history/session-history requests in the browser.
+  - clicking another session changes only the local chat scope and session-scoped history request in the browser.
   - ngent does not try to mutate backend thread state during that active turn.
   - switching back to the active session is therefore a local view change rather than a conflict-producing backend write.
 - Unsaved "New session" views are tracked as frontend-only `@fresh:<nonce>` selections so the UI can keep a stable empty-session scope before ACP emits a concrete `session_bound`.

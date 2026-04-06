@@ -73,7 +73,7 @@ Ngent 的 Web UI 是随 Go 二进制分发的内嵌 no-framework Vite + TypeScri
 | 更新线程标题 / agent options | `PATCH /v1/threads/{threadId}` |
 | 读取线程历史 | `GET /v1/threads/{threadId}/history?includeEvents=1` |
 | 读取 session 列表 | `GET /v1/threads/{threadId}/sessions` |
-| 读取 provider transcript replay | `GET /v1/threads/{threadId}/session-history?sessionId=...` |
+| 读取选中 session 的历史与 provider transcript replay | `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=...` |
 | 读取 slash commands | `GET /v1/threads/{threadId}/slash-commands` |
 | 读取/设置 config options | `GET/POST /v1/threads/{threadId}/config-options` |
 | 发起 turn | `POST /v1/threads/{threadId}/turns`（POST SSE） |

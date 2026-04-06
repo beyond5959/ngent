@@ -488,7 +488,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the backend proxies ACP `session/list` through `GET /v1/threads/{threadId}/sessions`.
   - response includes `supported`, `sessions`, and `nextCursor`.
-  - for providers that replay transcript over ACP `session/load`, the first `GET /v1/threads/{threadId}/session-history?sessionId=...` warms sqlite `session_transcript_cache`, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
+  - for providers that replay transcript over ACP `session/load`, the first session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` can warm sqlite `session_transcript_cache` through the embedded `sessionTranscript` response field, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
   - the Web UI renders one left grouped rail where each thread header shows its session rows directly underneath.
   - there is no dedicated session column and no chat-edge session-drawer collapse control.
   - each thread header uses the agent/provider icon as its leading visual and does not show a thread-level relative timestamp.
@@ -519,7 +519,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `E2E_QWEN=1 go test ./internal/agents/qwen -run 'TestQwenE2E(Smoke|SessionTranscriptReplay)$' -count=1 -v -timeout 180s`
   - real Qwen provider repro: confirm a locally created Qwen session reappears in `session/list` and `LoadSessionTranscript` replays the unique prompt marker through ACP `session/load`.
 - Additional verification commands (executed 2026-03-13):
-  - `go test ./internal/storage ./internal/httpapi -run 'Test(SessionTranscriptCacheCRUD|ThreadSessionHistoryEndpoint|ThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart)$' -count=1`
+  - `go test ./internal/storage ./internal/httpapi -run 'Test(SessionTranscriptCacheCRUD|ThreadHistoryEndpointIncludesSessionTranscriptForSelectedSession|ThreadHistoryEndpointUsesCachedSessionTranscriptAcrossRestart)$' -count=1`
   - `go test ./...`
 - Additional verification commands (executed 2026-03-16 after fresh-session scope reset fix):
   - `cd internal/webui/web && npm run build`
@@ -641,7 +641,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - the Web UI hides model/reasoning controls before metadata exists and reveals them only after a real session snapshot has been learned.
   - `/v1/agents/{agentId}/models` returns only sqlite-backed learned models and may legitimately be empty on a brand-new agent.
 - Verification commands (executed 2026-03-22):
-  - `go test ./internal/httpapi -run 'Test(V1AgentModels|V1AgentModelsUsesStoredCatalog|V1AgentModelsEmptyWhenNoStoredCatalog|ThreadConfigOptionsGetAndSetModel|ThreadConfigOptionsGetUsesStoredCatalog|ThreadConfigOptionsPersistConfigOverrides|ThreadConfigOptionsRestoreFromSessionCacheAfterSessionSwitch|ThreadSessionHistoryEndpointPersistsConfigOptionsForSelectedSession|ThreadSessionHistoryEndpointReloadsLiveWhenTranscriptCachedButConfigMissing|ThreadConfigOptionsUnsupportedManager)$' -count=1`
+  - `go test ./internal/httpapi -run 'Test(V1AgentModels|V1AgentModelsUsesStoredCatalog|V1AgentModelsEmptyWhenNoStoredCatalog|ThreadConfigOptionsGetAndSetModel|ThreadConfigOptionsGetUsesStoredCatalog|ThreadConfigOptionsPersistConfigOverrides|ThreadConfigOptionsRestoreFromSessionCacheAfterSessionSwitch|ThreadHistoryEndpointPersistsConfigOptionsForSelectedSession|ThreadHistoryEndpointReloadsLiveWhenTranscriptCachedButConfigMissing|ThreadConfigOptionsUnsupportedManager)$' -count=1`
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
   - real Codex Web UI validation:
@@ -714,7 +714,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the Web UI calls `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSessionId>` instead of fetching the whole thread and filtering only in browser memory.
   - the response includes only the selected session's persisted turns, subject to the legacy fallback rules for unannotated pre-`session_bound` turns.
-  - the UI still merges provider `GET /session-history` replay on top of that persisted turn history, so rich ngent-owned artifacts remain visible.
+  - when available, the same `/history` response also includes provider transcript replay under `sessionTranscript`, and the UI merges that replay on top of the persisted turn history so rich ngent-owned artifacts remain visible.
   - for large multi-session threads, browser-side history parse time is materially lower because the payload no longer includes unrelated sessions' events.
 - Verification commands (executed 2026-03-26):
   - `go test ./internal/httpapi -run TestThreadHistoryFiltersBySessionID -count=1`

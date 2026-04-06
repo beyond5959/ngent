@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beyond5959/ngent/internal/agents"
 	"github.com/beyond5959/ngent/internal/runtime"
 	"github.com/beyond5959/ngent/internal/storage"
 )
@@ -46,6 +47,11 @@ type eventHistoryResponse struct {
 	Type      string          `json:"type"`
 	Data      json.RawMessage `json:"data"`
 	CreatedAt string          `json:"createdAt"`
+}
+
+type historySessionTranscriptResponse struct {
+	Supported bool                              `json:"supported"`
+	Messages  []agents.SessionTranscriptMessage `json:"messages"`
 }
 
 type threadHistoryTurn struct {
@@ -356,7 +362,8 @@ func (s *Server) handleThreadHistory(w http.ResponseWriter, r *http.Request, cli
 		return
 	}
 
-	if _, ok := s.loadAccessibleThreadOrWriteNotFound(w, r.Context(), threadID); !ok {
+	thread, ok := s.loadAccessibleThreadOrWriteNotFound(w, r.Context(), threadID)
+	if !ok {
 		return
 	}
 
@@ -433,7 +440,25 @@ func (s *Server) handleThreadHistory(w http.ResponseWriter, r *http.Request, cli
 		respTurns = append(respTurns, respTurn)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"turns": respTurns})
+	resp := map[string]any{"turns": respTurns}
+	if sessionID != "" {
+		transcript, transcriptErr := s.loadThreadSessionTranscript(r.Context(), thread, sessionID)
+		if transcriptErr != nil {
+			s.logger.Warn("thread_history.session_transcript_load_failed",
+				"threadId", thread.ThreadID,
+				"agent", thread.AgentID,
+				"sessionId", sessionID,
+				"reason", transcriptErr.Error(),
+			)
+		} else {
+			resp["sessionTranscript"] = historySessionTranscriptResponse{
+				Supported: transcript.Supported,
+				Messages:  transcript.Messages,
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func filterThreadHistoryBySession(turns []threadHistoryTurn, sessionID string) []threadHistoryTurn {

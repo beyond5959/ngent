@@ -23,6 +23,11 @@ type sessionInfoResponse struct {
 	IsActive  bool           `json:"isActive,omitempty"`
 }
 
+type sessionTranscriptResponse struct {
+	Supported bool                              `json:"supported"`
+	Messages  []agents.SessionTranscriptMessage `json:"messages"`
+}
+
 func mergeSessionInfo(current, incoming agents.SessionInfo) agents.SessionInfo {
 	cloned := agents.CloneSessionInfo(current)
 	next := agents.CloneSessionInfo(incoming)
@@ -173,60 +178,26 @@ func (s *Server) handleThreadSessions(w http.ResponseWriter, r *http.Request, cl
 	})
 }
 
-func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Request, clientID, threadID string) {
-	if err := requireMethod(r, http.MethodGet); err != nil {
-		writeMethodNotAllowed(w, r)
-		return
-	}
-
-	thread, ok := s.loadAccessibleThreadOrWriteNotFound(w, r.Context(), threadID)
-	if !ok {
-		return
-	}
-
-	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionId"))
-	if sessionID == "" {
-		writeError(w, http.StatusBadRequest, codeInvalidArgument, "sessionId is required", map[string]any{
-			"field": "sessionId",
-		})
-		return
-	}
-
-	cachedResult, found, err := s.loadCachedSessionTranscript(r.Context(), thread, sessionID)
+func (s *Server) loadThreadSessionTranscript(
+	ctx context.Context,
+	thread storage.Thread,
+	sessionID string,
+) (sessionTranscriptResponse, error) {
+	cachedResult, found, err := s.loadCachedSessionTranscript(ctx, thread, sessionID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, codeInternal, "failed to load session transcript cache", map[string]any{
-			"threadId":  thread.ThreadID,
-			"sessionId": sessionID,
-			"reason":    err.Error(),
-		})
-		return
+		return sessionTranscriptResponse{}, fmt.Errorf("load session transcript cache: %w", err)
 	}
-	_, configFound, configErr := s.loadStoredSessionConfigOptions(r.Context(), thread, sessionID)
+	_, configFound, configErr := s.loadStoredSessionConfigOptions(ctx, thread, sessionID)
 	if configErr != nil {
-		writeError(w, http.StatusInternalServerError, codeInternal, "failed to load session config cache", map[string]any{
-			"threadId":  thread.ThreadID,
-			"sessionId": sessionID,
-			"reason":    configErr.Error(),
-		})
-		return
+		return sessionTranscriptResponse{}, fmt.Errorf("load session config cache: %w", configErr)
 	}
 	if found && configFound {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"threadId":  thread.ThreadID,
-			"sessionId": sessionID,
-			"supported": true,
-			"messages":  cachedResult.Messages,
-		})
-		return
+		return newSessionTranscriptResponse(true, cachedResult.Messages), nil
 	}
 
 	provider, err := s.turnAgentFactory(thread)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, codeUpstreamUnavailable, "failed to resolve agent provider", map[string]any{
-			"agent":  thread.AgentID,
-			"reason": err.Error(),
-		})
-		return
+		return sessionTranscriptResponse{}, fmt.Errorf("resolve agent provider: %w", err)
 	}
 	if closer, ok := provider.(io.Closer); ok {
 		defer closer.Close()
@@ -235,26 +206,14 @@ func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Reque
 	loader, ok := provider.(agents.SessionTranscriptLoader)
 	if !ok {
 		if found {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"threadId":  thread.ThreadID,
-				"sessionId": sessionID,
-				"supported": true,
-				"messages":  cachedResult.Messages,
-			})
-			return
+			return newSessionTranscriptResponse(true, cachedResult.Messages), nil
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"threadId":  thread.ThreadID,
-			"sessionId": sessionID,
-			"supported": false,
-			"messages":  []agents.SessionTranscriptMessage{},
-		})
-		return
+		return newSessionTranscriptResponse(false, nil), nil
 	}
 
-	loadCtx := agents.WithSessionUsageHandler(r.Context(), func(sessionUsageCtx context.Context, update agents.SessionUsageUpdate) error {
+	loadCtx := agents.WithSessionUsageHandler(ctx, func(sessionUsageCtx context.Context, update agents.SessionUsageUpdate) error {
 		_ = sessionUsageCtx
-		s.persistSessionUsageSnapshotBestEffort(r.Context(), thread, update)
+		s.persistSessionUsageSnapshotBestEffort(ctx, thread, update)
 		return nil
 	})
 
@@ -264,42 +223,17 @@ func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Reque
 	})
 	if err != nil {
 		if found {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"threadId":  thread.ThreadID,
-				"sessionId": sessionID,
-				"supported": true,
-				"messages":  cachedResult.Messages,
-			})
-			return
+			return newSessionTranscriptResponse(true, cachedResult.Messages), nil
 		}
 		if errors.Is(err, agents.ErrSessionLoadUnsupported) || errors.Is(err, agents.ErrSessionListUnsupported) {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"threadId":  thread.ThreadID,
-				"sessionId": sessionID,
-				"supported": false,
-				"messages":  []agents.SessionTranscriptMessage{},
-			})
-			return
+			return newSessionTranscriptResponse(false, nil), nil
 		}
-		if errors.Is(err, agents.ErrSessionNotFound) {
-			writeError(w, http.StatusNotFound, codeNotFound, "session not found", map[string]any{
-				"threadId":  thread.ThreadID,
-				"sessionId": sessionID,
-			})
-			return
-		}
-		writeError(w, http.StatusServiceUnavailable, codeUpstreamUnavailable, "failed to load session transcript", map[string]any{
-			"threadId":  thread.ThreadID,
-			"sessionId": sessionID,
-			"agent":     thread.AgentID,
-			"reason":    err.Error(),
-		})
-		return
+		return sessionTranscriptResponse{}, err
 	}
 
 	result = agents.CloneSessionTranscriptResult(result)
-	s.persistSessionLoadConfigSnapshotBestEffort(r.Context(), &thread, sessionID, result.ConfigOptions)
-	if err := s.persistSessionTranscriptCache(r.Context(), thread, sessionID, result); err != nil {
+	s.persistSessionLoadConfigSnapshotBestEffort(ctx, &thread, sessionID, result.ConfigOptions)
+	if err := s.persistSessionTranscriptCache(ctx, thread, sessionID, result); err != nil {
 		s.logger.Warn("session_history.cache_persist_failed",
 			"threadId", thread.ThreadID,
 			"agent", thread.AgentID,
@@ -308,12 +242,18 @@ func (s *Server) handleThreadSessionHistory(w http.ResponseWriter, r *http.Reque
 		)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"threadId":  thread.ThreadID,
-		"sessionId": sessionID,
-		"supported": true,
-		"messages":  result.Messages,
-	})
+	return newSessionTranscriptResponse(true, result.Messages), nil
+}
+
+func newSessionTranscriptResponse(supported bool, messages []agents.SessionTranscriptMessage) sessionTranscriptResponse {
+	cloned := agents.CloneSessionTranscriptResult(agents.SessionTranscriptResult{Messages: messages})
+	if len(cloned.Messages) == 0 {
+		cloned.Messages = []agents.SessionTranscriptMessage{}
+	}
+	return sessionTranscriptResponse{
+		Supported: supported,
+		Messages:  cloned.Messages,
+	}
 }
 
 func (s *Server) handleThreadSessionUsage(w http.ResponseWriter, r *http.Request, clientID, threadID string) {

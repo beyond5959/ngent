@@ -145,8 +145,6 @@ func (s *Server) handleThreadResource(w http.ResponseWriter, r *http.Request, cl
 		s.handleThreadHistory(w, r, clientID, threadID)
 	case "sessions":
 		s.handleThreadSessions(w, r, clientID, threadID)
-	case "session-history":
-		s.handleThreadSessionHistory(w, r, clientID, threadID)
 	case "session-usage":
 		s.handleThreadSessionUsage(w, r, clientID, threadID)
 	case "config-options":

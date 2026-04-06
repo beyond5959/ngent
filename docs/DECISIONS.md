@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-092: Fold provider session replay into session-scoped `/history` responses. (Accepted)
 - ADR-091: Persist learned config snapshots per provider session. (Accepted)
 - ADR-090: Learn model/reasoning metadata only from real session lifecycle events. (Accepted)
 - ADR-089: Share repeated ACP discovery and session-param helpers across built-in providers. (Accepted)
@@ -74,10 +75,10 @@
 - ADR-033: Surface ACP plan updates as first-class SSE and Web UI state. (Accepted)
 - ADR-035: Add opt-in ACP debug tracing behind `--debug`. (Accepted)
 - ADR-036: Persist stable Codex session ids and normalize Codex transcript replay. (Superseded)
-- ADR-037: Replay Kimi session history from local Kimi session files. (Superseded)
-- ADR-038: Replay OpenCode session history from local OpenCode SQLite storage. (Superseded)
-- ADR-039: Standardize session-history on ACP `session/load` replay. (Accepted)
-- ADR-040: Cache session-history replay snapshots in SQLite. (Accepted)
+- ADR-037: Replay Kimi session transcript from local Kimi session files. (Superseded)
+- ADR-038: Replay OpenCode session transcript from local OpenCode SQLite storage. (Superseded)
+- ADR-039: Standardize session transcript replay on ACP `session/load`. (Accepted)
+- ADR-040: Cache session transcript replay snapshots in SQLite. (Accepted)
 - ADR-041: Treat Web UI "New session" as provider-cache reset for the empty session scope. (Accepted)
 - ADR-042: Treat explicit Web UI "New session" as a fresh turn with no injected thread context. (Accepted)
 - ADR-043: Share one ACP CLI driver across Kimi/Qwen/OpenCode/Gemini. (Accepted)
@@ -89,6 +90,29 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-092: Remove the standalone provider transcript replay endpoint and fold replay into session-scoped `/history`
+
+- Status: Accepted
+- Date: 2026-04-06
+- Context:
+  - the Web UI session picker reconstructed one selected session by issuing two backend requests: `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=...` for ngent-owned turns plus a second dedicated provider transcript replay request.
+  - that split forced the frontend to own duplicate cache/provider fallback behavior, extra error handling, and a second round-trip even though both payloads belong to the same visible selected-session replay view.
+  - the existing transcript loader already had the desired backend behavior: sqlite `session_transcript_cache` first, provider/ACP `session/load` only on cache miss, and one extra live load when config metadata still needed to be learned.
+- Decision:
+  - keep `GET /v1/threads/{threadId}/history` as the canonical selected-session replay endpoint.
+  - when `sessionId` is present, `/history` still returns filtered persisted `turns`, and may also attach `sessionTranscript { supported, messages }` populated through the shared sqlite-first/provider-fallback transcript loader.
+  - factor the replay loader into one shared backend helper owned by `/history`.
+  - if transcript replay fails for reasons such as upstream unavailability or a stale session id, keep returning the persisted `turns` and omit `sessionTranscript` instead of failing the whole `/history` request.
+  - remove the standalone provider transcript replay endpoint entirely now that the embedded Web UI and tests no longer depend on it.
+- Consequences:
+  - the Web UI session-switch flow now needs only one history request.
+  - persisted ngent turn/event history remains the source of truth for rich artifacts such as reasoning, tool calls, and structured content; provider replay is still kept separate and is not imported into `turns/events`.
+  - there is now only one selected-session replay entrypoint to maintain, document, and test.
+- Alternatives considered:
+  - keep a long-lived dedicated transcript replay alias (rejected: preserves avoidable surface area and duplicated documentation/testing burden).
+  - fully merge provider replay into persisted `turns/events` (rejected: still blurs provider-owned transcript data with hub-owned history and risks duplication).
+  - keep two frontend requests and only document the split more clearly (rejected: complexity remains in the least reusable layer).
 
 ## ADR-078: Keep The Web UI Git-Diff Drawer Explicitly Dismissed And Stable Across Summary Polling
 
@@ -600,7 +624,7 @@
 - Consequences:
   - ngent can now run BLACKBOX turns through the same direct ACP path as Qwen/OpenCode/Gemini/Kimi without introducing another custom lifecycle stack.
   - BLACKBOX threads remain usable for normal multi-turn conversation through ngent's own persisted history/context injection even though provider-owned `session/load` is not available.
-  - the Web UI/API will not show resumable BLACKBOX session history or model catalogs until upstream ACP surfaces them.
+  - the Web UI/API will not show resumable BLACKBOX session replay or model catalogs until upstream ACP surfaces them.
 - Alternatives considered:
   - delay BLACKBOX support until `session/load` and model discovery are fully available upstream.
   - build a provider-local non-ACP integration path just for BLACKBOX.
@@ -717,7 +741,7 @@
 - Consequences:
   - users can see reasoning for ngent-created turns both live and from history reloads.
   - `responseText` remains the visible assistant answer only, so existing prompt-compaction/history semantics stay stable.
-  - provider-owned transcript replay returned by `/session-history` still contains only visible user/assistant messages; hidden reasoning for historical external sessions is not backfilled there.
+  - provider-owned transcript replay returned in session-scoped history still contains only visible user/assistant messages; hidden reasoning for historical external sessions is not backfilled there.
 - Alternatives considered:
   - append reasoning directly into `responseText` (rejected: mixes two different product surfaces and would break existing history assumptions).
   - keep reasoning UI-only without persisting it in turn events (rejected: reload/history would lose the data).
@@ -820,19 +844,19 @@
   - close every cached provider on any session selection update.
   - add a dedicated `session/new` API endpoint instead of continuing to encode "new session" as `sessionId=""`.
 
-## ADR-040: Cache Session-History Replay Snapshots in SQLite
+## ADR-040: Cache Session Transcript Replay Snapshots in SQLite
 
 - Status: Accepted
 - Date: 2026-03-13
 - Context:
-  - the Web UI requests `GET /v1/threads/{threadId}/session-history` whenever the user selects a historical ACP session in the right sidebar.
+  - the Web UI requests provider transcript replay whenever the user selects a historical ACP session in the right sidebar.
   - after ADR-039, every selection hit the provider again through ACP `session/load`, even if ngent had already replayed that exact provider session earlier.
   - repeated `session/load` calls add avoidable latency, reopen provider processes/runtimes, and make session browsing depend on live provider availability even for transcript content already observed locally.
   - the product still does not want to import provider-owned replay into hub `turns/events`, because that would blur the boundary between provider-owned history and ngent-created turns.
 - Decision:
   - add SQLite table `session_transcript_cache(agent_id, cwd, session_id, messages_json, updated_at)`.
   - key cached transcript snapshots by provider session identity `(agent_id, cwd, session_id)` so the same session replay can be reused across threads and across server restarts.
-  - make `GET /v1/threads/{threadId}/session-history` read sqlite first; only call provider `LoadSessionTranscript` on cache miss.
+  - make provider transcript replay read sqlite first; only call provider `LoadSessionTranscript` on cache miss.
   - write successful replay results, including empty transcript snapshots, back into sqlite after the provider call completes.
   - keep cache write failures non-fatal to the API response; the replay request itself should still succeed when the provider load succeeded.
 - Consequences:
@@ -848,12 +872,12 @@
   - persist `session/list.updatedAt` metadata and refresh cached snapshots when the provider session advances.
   - evaluate whether a merged history view should combine cached provider replay with hub-local turns without duplicating context.
 
-## ADR-039: Standardize Session-History on ACP `session/load` Replay
+## ADR-039: Standardize Session Transcript Replay on ACP `session/load`
 
 - Status: Accepted
 - Date: 2026-03-12
 - Context:
-  - the Web UI already uses one generic `GET /v1/threads/{threadId}/session-history` flow after session sidebar selection.
+  - the Web UI already uses one generic provider transcript replay flow after session sidebar selection.
   - ACP `session/load` standard behavior replays prior conversation through `session/update` notifications before the RPC returns.
   - earlier ngent implementations reconstructed replay from provider-local files or databases, which diverged from ACP and created provider-specific behavior that the product no longer wants.
   - real-provider validation showed important runtime nuances:
@@ -872,7 +896,7 @@
   - for Codex, resolve and load the session within the same embedded runtime so runtime-scoped raw session ids remain valid.
   - do not add provider-local transcript fallbacks behind the standard ACP path.
 - Consequences:
-  - `session-history` behavior now follows ACP semantics instead of provider-local storage formats.
+  - provider transcript replay now follows ACP semantics instead of provider-local storage formats.
   - OpenCode, Codex, and Qwen replay their provider-owned transcript through standard ACP `session/load`.
   - providers may interleave replayable text chunks with tool or metadata updates; ngent now ignores those non-message updates during transcript reconstruction instead of treating them as transport errors.
   - Kimi currently remains limited by upstream behavior: historical `session/load` succeeds but yields no replay transcript messages on CLI 1.20.0.
@@ -885,13 +909,13 @@
   - keep validating newer Kimi CLI releases for proper historical replay over standard ACP `session/load`.
   - decide later whether Codex replay text should be normalized again despite the ACP-first policy.
 
-## ADR-038: Replay OpenCode Session History from Local OpenCode SQLite Storage
+## ADR-038: Replay OpenCode Session Transcript from Local OpenCode SQLite Storage
 
 - Status: Accepted
 - Date: 2026-03-12
 - Context:
-  - the Web UI uses the same generic `GET /v1/threads/{threadId}/session-history` flow after session sidebar selection for all ACP agents.
-  - real OpenCode validation showed `session/list` and `session/load` both worked, but `opencode` exposed no `SessionTranscriptLoader`, so `/session-history` always returned `supported=false`.
+  - the Web UI uses the same generic provider transcript replay flow after session sidebar selection for all ACP agents.
+  - real OpenCode validation showed `session/list` and `session/load` both worked, but `opencode` exposed no `SessionTranscriptLoader`, so transcript replay always returned `supported=false`.
   - OpenCode stores replayable session content locally in `XDG_DATA_HOME/opencode/opencode.db`, with session metadata in `session` and visible text split across `message` + `part` rows.
 - Decision:
   - implement `agents.SessionTranscriptLoader` for `internal/agents/opencode`.
@@ -912,13 +936,13 @@
 - Follow-up actions:
   - monitor future OpenCode schema changes and add a CLI-export fallback if the local DB layout becomes incompatible.
 
-## ADR-037: Replay Kimi Session History from Local Kimi Session Files
+## ADR-037: Replay Kimi Session Transcript from Local Kimi Session Files
 
 - Status: Accepted
 - Date: 2026-03-12
 - Context:
-  - the Web UI already requests `GET /v1/threads/{threadId}/session-history` after the user selects a provider-owned session from the right sidebar.
-  - real Kimi debugging showed the backend successfully persisted and resumed `sessionId` through ACP `session/load`, but `kimi` exposed no `SessionTranscriptLoader`, so `/session-history` always returned `supported=false`.
+  - the Web UI already requests provider transcript replay after the user selects a provider-owned session from the right sidebar.
+  - real Kimi debugging showed the backend successfully persisted and resumed `sessionId` through ACP `session/load`, but `kimi` exposed no `SessionTranscriptLoader`, so transcript replay always returned `supported=false`.
   - Kimi stores replayable chat history locally in `KIMI_HOME/sessions/*/<sessionId>/context.jsonl` for listable historical sessions, with assistant `think` blocks interleaved alongside visible text.
 - Decision:
   - implement `agents.SessionTranscriptLoader` for `internal/agents/kimi`.
@@ -1739,7 +1763,7 @@ Use this template for new decisions.
   - treat explicit `New session` in the Web UI as a client-side fresh-session scope with a temporary key `${threadId}::@fresh:<uuid>` until a real ACP session binds.
   - allow `New session` even when the active thread already has no persisted `sessionId`; in that case, rotate to a new fresh-session scope locally instead of treating the action as a no-op.
   - seed that fresh-session scope with an empty message cache and skip server history replay for it until the first turn binds to a real ACP session id.
-  - filter cancelled turns with no `session_bound` and no visible response text out of empty-session history replay so page reload does not resurrect those transient placeholders.
+  - filter cancelled turns with no `session_bound` and no visible response text out of empty-session replay reconstruction so page reload does not resurrect those transient placeholders.
 - Consequences:
   - `send -> cancel -> New session` now returns to a blank composer even when the cancelled turn never acquired a session id.
   - late completion/cancel callbacks for the abandoned scope still land in their original scope and no longer leak into the newly opened fresh session.
@@ -1804,7 +1828,7 @@ Use this template for new decisions.
   - permission prompts continue to render outside those collapsible tool panels, so approval state is not hidden behind a disclosure control.
   - copying a multi-answer turn no longer merges unrelated answer fragments together; users can copy only the specific answer block they intend.
   - each finalized answer block now owns its own compact `time + copy` meta row, so copy stays visually attached to that block without adding another stacked control line.
-  - provider-owned `/session-history` replay still falls back to transcript-only bubbles when no turn-event history exists.
+  - provider-owned transcript replay still falls back to transcript-only bubbles when no turn-event history exists.
 - Alternatives considered:
   - keep the old single-bubble layout and only restyle the tool/reasoning sections (rejected: still loses chronological structure).
   - flatten tool/thought events into one markdown transcript string (rejected: harder to update incrementally and loses structured tool metadata).
@@ -1895,7 +1919,7 @@ Use this template for new decisions.
   - add sqlite table `session_config_cache(agent_id, cwd, session_id, config_options_json, updated_at)`.
   - whenever a user-triggered turn/session load reports config for a bound session, persist the normalized snapshot under that `agent + cwd + sessionId` key in addition to the thread row and `agent_config_catalogs`.
   - if a fresh session reports config before `session_bound`, replay the already persisted thread/model snapshot into `session_config_cache` as soon as the session id becomes known.
-  - when `/v1/threads/{threadId}/session-history?sessionId=...` is served from cached transcript data but the destination session still has no cached config snapshot, bypass the transcript-only short circuit and perform one live `session/load` so that user-triggered session switching can still teach sqlite that session's config.
+  - when session-scoped history is served from cached transcript data but the destination session still has no cached config snapshot, bypass the transcript-only short circuit and perform one live `session/load` so that user-triggered session switching can still teach sqlite that session's config.
   - change `GET /v1/threads/{threadId}/config-options` to restore from session cache when the thread currently points at a known session but has no thread-local `modelId`.
 - Consequences:
   - switching away from a learned session and then back to it restores model/reasoning controls immediately without requiring another turn.
@@ -1923,7 +1947,7 @@ Use this template for new decisions.
 - Consequences:
   - hub-created turns no longer lose assistant images or embedded resources during live streaming or history reload.
   - downstream clients can evolve richer renderers without changing the transport contract again because the raw ACP `content` JSON is preserved.
-  - provider-owned `/session-history` replay remains text-only for now because its transcript schema has not yet grown structured content support.
+  - provider-owned transcript replay remains text-only for now because its transcript schema has not yet grown structured content support.
 - Alternatives considered:
   - ignore non-text assistant blocks outside tool calls (rejected: visibly loses model output).
   - stringify image/resource payloads into `message_delta` (rejected: destroys structure and produces poor UI).
@@ -2022,7 +2046,7 @@ Use this template for new decisions.
 - Status: Accepted
 - Date: 2026-03-26
 - Context:
-  - the Web UI session picker reconstructs the selected chat by combining provider-owned `GET /session-history` transcript replay with ngent-owned persisted turn history.
+  - the Web UI session picker reconstructs the selected chat by combining provider-owned transcript replay with ngent-owned persisted turn history.
   - before this change, every session switch still fetched `GET /v1/threads/{threadId}/history?includeEvents=1` for the entire thread and only then filtered the turns client-side by `session_bound`.
   - on real Codex threads this became expensive enough to stall the UI: one thread with 21 turns produced roughly 19 MB of history JSON and about 42k persisted events, even though the target session needed only a single turn.
 - Decision:
@@ -2039,7 +2063,7 @@ Use this template for new decisions.
   - the base `/history` endpoint remains unchanged for callers that still need whole-thread history.
 - Alternatives considered:
   - keep whole-thread history and add more frontend caching only (rejected: first-open session switches from `New session` would still pay the full parse/render cost).
-  - rely only on provider `session-history` for session views (rejected: loses ngent-owned rich turn artifacts such as persisted reasoning, tool-call, and other turn events).
+  - rely only on provider transcript replay for session views (rejected: loses ngent-owned rich turn artifacts such as persisted reasoning, tool-call, and other turn events).
   - add a brand-new endpoint just for session-filtered history (rejected: the existing `/history` contract already fit the need with one optional query parameter).
 
 ## ADR-061: Compact historical delta runs on read and render large chats incrementally

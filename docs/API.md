@@ -355,10 +355,26 @@ All errors use:
 - Query:
   - `includeEvents=true|1` (optional, default false)
   - `includeInternal=true|1` (optional, default false)
+  - `sessionId=<id>` (optional)
 - Response `200`:
 
 ```json
 {
+  "sessionTranscript": {
+    "supported": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello",
+        "timestamp": "2026-02-28T00:00:00Z"
+      },
+      {
+        "role": "assistant",
+        "content": "world",
+        "timestamp": "2026-02-28T00:00:01Z"
+      }
+    ]
+  },
   "turns": [
     {
       "turnId": "tu_...",
@@ -384,6 +400,12 @@ All errors use:
   ]
 }
 ```
+
+- Behavior:
+  - without `sessionId`, returns the thread's persisted ngent turns and optional events as before.
+  - with `sessionId`, filters persisted turns server-side by `session_bound` and also attempts to attach provider-owned transcript replay under `sessionTranscript`.
+  - `sessionTranscript` is populated from sqlite `session_transcript_cache` first and falls back to provider/ACP `session/load` replay on cache miss.
+  - if provider transcript replay fails, the request still returns the persisted `turns`; `sessionTranscript` may be omitted.
 
 9. `POST /v1/permissions/{permissionId}`
 - Headers: `X-Client-ID` (required), optional bearer auth if enabled.

@@ -4415,7 +4415,7 @@ async function loadHistory(threadId: string): Promise<void> {
   historyLoadRequestSeqByScope.set(requestedScopeKey, requestSeq)
   historyLoadErrorByScope.delete(requestedScopeKey)
   try {
-    const turns = await api.getHistory(threadId, requestedSessionID)
+    const history = await api.getHistory(threadId, requestedSessionID)
     if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
     const state = store.get()
     if (state.activeThreadId !== threadId) return
@@ -4423,6 +4423,7 @@ async function loadHistory(threadId: string): Promise<void> {
     if (!activeThread || threadChatScopeKey(activeThread) !== requestedScopeKey) return
     if (getScopeStreamState(requestedScopeKey)) return
 
+    const turns = history.turns
     const filteredTurns = filterTurnsBySession(turns, requestedSessionID)
     const runningTurn = [...filteredTurns].reverse().find(turn => turn.status === 'running') ?? null
     const localMessages = await turnsToMessagesAsync(filteredTurns)
@@ -4438,34 +4439,22 @@ async function loadHistory(threadId: string): Promise<void> {
         nextMessages = mergeSessionReplayMessages(cachedMessages, localMessages)
         reboundFreshSessionScopeKeys.delete(requestedScopeKey)
       } else {
-        try {
-          const replay = await api.getThreadSessionHistory(threadId, requestedSessionID)
-          if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
-          const transcriptState = store.get()
-          if (transcriptState.activeThreadId !== threadId) return
-          const transcriptThread = transcriptState.threads.find(item => item.threadId === threadId)
-          if (!transcriptThread || threadChatScopeKey(transcriptThread) !== requestedScopeKey) return
-          if (getScopeStreamState(requestedScopeKey)) return
+        const replay = history.sessionTranscript
+        if (replay?.supported && replay.messages.length) {
+          const replayMessages = sessionTranscriptToMessages(replay.messages, requestedSessionID)
+          nextMessages = mergeSessionReplayMessages(replayMessages, localMessages)
+        }
 
-          if (replay.supported && replay.messages.length) {
-            const replayMessages = sessionTranscriptToMessages(replay.messages, requestedSessionID)
-            nextMessages = mergeSessionReplayMessages(replayMessages, localMessages)
-          }
-
-          if (replay.supported) {
-            void refreshThreadConfigState(threadId).then(() => {
-              const refreshedState = store.get()
-              if (refreshedState.activeThreadId !== threadId) return
-              const refreshedThread = refreshedState.threads.find(item => item.threadId === threadId)
-              if (!refreshedThread || threadChatScopeKey(refreshedThread) !== requestedScopeKey) return
-              if (activeStreamMsgId) return
-              bindThreadConfigSwitches(refreshedThread)
-              updateInputState()
-            }).catch(() => {})
-          }
-        } catch {
-          if (historyLoadRequestSeqByScope.get(requestedScopeKey) !== requestSeq) return
-          nextMessages = localMessages
+        if (replay?.supported) {
+          void refreshThreadConfigState(threadId).then(() => {
+            const refreshedState = store.get()
+            if (refreshedState.activeThreadId !== threadId) return
+            const refreshedThread = refreshedState.threads.find(item => item.threadId === threadId)
+            if (!refreshedThread || threadChatScopeKey(refreshedThread) !== requestedScopeKey) return
+            if (activeStreamMsgId) return
+            bindThreadConfigSwitches(refreshedThread)
+            updateInputState()
+          }).catch(() => {})
         }
       }
     }

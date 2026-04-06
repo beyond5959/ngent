@@ -347,7 +347,7 @@ mitigated items so active work does not share space with already closed issues.
 - Status: Open
 - Severity: Medium
 - Affects: threads that select an existing ACP `sessionId` from the Web UI/API
-- Symptom: ngent now caches prior provider transcript snapshots in SQLite for `GET /v1/threads/{threadId}/session-history`, but that replay is still not imported into SQLite `turns/events`; history APIs remain source-of-truth only for hub-created turns.
+- Symptom: ngent now caches prior provider transcript snapshots in SQLite for session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` replies, but that replay is still not imported into SQLite `turns/events`; history APIs remain source-of-truth only for hub-created turns.
 - Workaround: use the grouped session-list replay for provider-owned historical context, but rely on persisted hub `/history` for turns created through ngent itself.
 - Follow-up plan: evaluate importing selected provider transcript into local persisted history, or exposing an explicit merged-history view, without duplicating future hub-originated turns.
 
@@ -379,7 +379,7 @@ mitigated items so active work does not share space with already closed issues.
 - Title: Kimi CLI 1.20.0 does not replay transcript messages during historical session/load
 - Status: Open
 - Severity: Medium
-- Affects: Kimi historical session replay through `GET /v1/threads/{threadId}/session-history`
+- Affects: Kimi historical session replay through session-scoped `GET /v1/threads/{threadId}/history?sessionId=...`
 - Symptom:
   - Kimi `session/list` returns historical sessions and ACP `session/load` succeeds for those session ids.
   - Kimi CLI 1.20.0 currently emits no replay `session/update` notifications for those historical loads, so ngent returns `supported=true` with an empty transcript under the ACP-only implementation.
@@ -390,16 +390,16 @@ mitigated items so active work does not share space with already closed issues.
   - keep validating newer Kimi CLI releases and switch to transcript replay immediately if Kimi starts emitting standard `session/update` history during `session/load`.
 
 - ID: KI-025
-- Title: Session-history cache does not auto-refresh from provider metadata
+- Title: Session transcript replay cache does not auto-refresh from provider metadata
 - Status: Open
 - Severity: Medium
-- Affects: repeated `GET /v1/threads/{threadId}/session-history` requests for the same `(agent, cwd, sessionId)`
+- Affects: repeated session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` requests for the same `(agent, cwd, sessionId)`
 - Symptom:
   - after the first successful replay, ngent serves the cached SQLite snapshot on later requests and server restarts.
   - if the provider session later gains more messages outside that cached snapshot, ngent does not yet compare provider `updatedAt` metadata before returning the cached transcript.
 - Workaround:
   - continue the conversation through the current ngent thread so new hub-local turns remain visible in `/history`.
-  - if a full provider replay refresh is required immediately, clear the cached row from sqlite and request `/session-history` again.
+  - if a full provider replay refresh is required immediately, clear the cached row from sqlite and request session-scoped `/history` again.
 - Follow-up plan:
   - persist `session/list.updatedAt` metadata and invalidate or refresh `session_transcript_cache` when that metadata advances.
 
@@ -465,10 +465,10 @@ mitigated items so active work does not share space with already closed issues.
 - Title: Provider-owned historical session replay still omits hidden reasoning, tool timeline, and rich content blocks
 - Status: Open
 - Severity: Low
-- Affects: `GET /v1/threads/{threadId}/session-history` and Web UI session-sidebar replay for pre-existing provider sessions
+- Affects: session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` and Web UI session-sidebar replay for pre-existing provider sessions
 - Symptom:
   - ngent now surfaces hidden reasoning and ordered tool/content/thought segments for hub-created turns by persisting turn events in normal history.
-  - provider-owned historical replay returned by `/session-history` still exposes only visible `user` / `assistant` transcript messages, so switching to an older external session in the Web UI does not reconstruct past hidden reasoning blocks, the tool-call timeline, or non-text assistant content such as images/embedded resources.
+  - provider-owned historical replay returned in `/history.sessionTranscript` still exposes only visible `user` / `assistant` transcript messages, so switching to an older external session in the Web UI does not reconstruct past hidden reasoning blocks, the tool-call timeline, or non-text assistant content such as images/embedded resources.
 - Workaround:
   - use regular ngent turn history for turns created through ngent itself; those now preserve reasoning and the ordered assistant segment timeline after reload.
   - treat provider-owned session replay as visible transcript-only until the replay contract is extended.
@@ -545,7 +545,7 @@ mitigated items so active work does not share space with already closed issues.
 - Title: BLACKBOX ACP currently lacks session resume and catalog discovery surfaces
 - Status: Open
 - Severity: Medium
-- Affects: `blackbox` threads, `/session-history`, grouped-rail session browsing, and model picker/catalog endpoints for BLACKBOX
+- Affects: `blackbox` threads, session-scoped `/history`, grouped-rail session browsing, and model picker/catalog endpoints for BLACKBOX
 - Symptom:
   - local probing on 2026-03-22 against `blackbox 1.2.47` showed `initialize` advertising `agentCapabilities.loadSession=false`.
   - real `session/load` currently returns `-32601 method not found`.
@@ -708,7 +708,7 @@ Newer closures should appear first when practical.
 - Workaround:
   - none; fixed on 2026-03-26 by adding `sessionId` filtering to `/history`, compacting historical delta runs on read, and yielding during heavy message-list replay in the Web UI.
 - Follow-up plan:
-  - monitor whether any remaining session-switch lag is dominated by `tool_call_update` volume or provider `session-history` load time rather than persisted thread history size.
+  - monitor whether any remaining session-switch lag is dominated by `tool_call_update` volume or provider transcript replay load time rather than persisted thread history size.
 
 - ID: KI-040
 - Title: Inline base64 image placeholders in user messages rendered as raw text

@@ -184,7 +184,7 @@ This file is the source of milestone progress, validation commands, and next act
 ## Previous Update (2026-03-26)
 
 - `Post-M8` Web UI fresh-session binding/render preservation fix completed:
-  - when a fresh session receives `session_bound`, the left session panel now upserts that bound `sessionId` immediately and forces a panel refresh instead of waiting for the first turn to finish and refresh session history.
+  - when a fresh session receives `session_bound`, the left session panel now upserts that bound `sessionId` immediately and forces a panel refresh instead of waiting for the first turn to finish and refresh the selected-session replay view.
   - session-panel dedupe now preserves richer later metadata (`title`, `cwd`, `updatedAt`) for duplicate session ids, so temporary placeholders do not block later server-provided session details.
   - history reload now recognizes fresh-session scope promotion into a bound session and reuses the in-memory message cache for that first replay pass, preventing immediate transcript/history refresh from stripping streamed `thinking` / `tool_call` sections off the just-finished first reply.
   - full-page refresh is also preserved now: when transcript replay overlaps with persisted turn history, the Web UI rehydrates the replayed messages from the richer event-backed local turn reconstruction so `reasoning` / `tool_call` sections survive reload.
@@ -282,7 +282,7 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` Web UI fresh-session reset fix completed:
   - explicit `New session` now allocates a client-side fresh-session scope even when the active thread already has no persisted `sessionId`, so repeated `New session` clicks no longer reuse the same anonymous chat buffer.
-  - empty-session history replay now drops cancelled turns that never emitted `session_bound` and never produced visible response text, preventing stale cancelled placeholders from reappearing after reload.
+  - empty-session replay reconstruction now drops cancelled turns that never emitted `session_bound` and never produced visible response text, preventing stale cancelled placeholders from reappearing after reload.
 
 - `Post-M8` deferred thread config apply completed:
   - changed `POST /v1/threads/{threadId}/config-options` to validate against available config options and persist thread `agentOptions.modelId` / `agentOptions.configOverrides` without mutating the live provider.
@@ -342,35 +342,35 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
 
-- `Post-M8` session-history sqlite cache completed:
+- `Post-M8` session transcript replay sqlite cache completed:
   - added SQLite table `session_transcript_cache` keyed by `(agent_id, cwd, session_id)` to persist provider-owned session replay snapshots separately from hub `turns/events`.
-  - `GET /v1/threads/{threadId}/session-history` now reads sqlite first; on cache miss it still calls provider `LoadSessionTranscript`, then persists the normalized replay snapshot for later reuse.
-  - cached session-history snapshots survive server restart, so revisiting the same historical session no longer requires a fresh provider `session/load` every time.
+  - session transcript replay now reads sqlite first; on cache miss it still calls provider `LoadSessionTranscript`, then persists the normalized replay snapshot for later reuse.
+  - cached session transcript snapshots survive server restart, so revisiting the same historical session no longer requires a fresh provider `session/load` every time.
   - known tradeoff: cache freshness is not yet invalidated by provider `updatedAt` metadata; stale replay risk is tracked in `docs/KNOWN_ISSUES.md`.
   - validation:
-    - pass: `go test ./internal/storage ./internal/httpapi -run 'Test(SessionTranscriptCacheCRUD|ThreadSessionHistoryEndpoint|ThreadSessionHistoryEndpointUsesSQLiteCacheAcrossRestart)$' -count=1`
+    - pass: `go test ./internal/storage ./internal/httpapi -run 'Test(SessionTranscriptCacheCRUD|ThreadHistoryEndpointIncludesSessionTranscriptForSelectedSession|ThreadHistoryEndpointUsesCachedSessionTranscriptAcrossRestart)$' -count=1`
     - pass: `go test ./...`
 
 - `Post-M8` ACP `session/load` transcript replay standardization completed:
-  - removed provider-specific transcript reconstruction for `kimi`, `opencode`, `codex`, and `qwen`; `GET /v1/threads/{threadId}/session-history` now uses the same ACP path for all four providers:
+  - removed provider-specific transcript reconstruction for `kimi`, `opencode`, `codex`, and `qwen`; provider transcript replay now uses the same ACP path for all four providers:
     - resolve the selected session from ACP `session/list`
     - call ACP `session/load`
     - collect replayed `session/update` notifications into `user` / `assistant` messages
   - extended shared ACP update parsing to support standard `user_message_chunk` and `agent_message_chunk` replay events, and added a shared transcript collector for `session/load` history replay.
   - fixed Codex session replay to list and load within the same embedded runtime because Codex raw ACP `sessionId` values are runtime-scoped; cross-runtime reuse of `session-1`-style ids returns `unknown session`.
   - real regression on rebuilt ngent:
-    - `kimi`: ACP `session/load` succeeds for historical sessions but Kimi CLI 1.20.0 emits no replay `session/update` notifications, so `/session-history` currently returns `supported=true` with an empty message list under the standard ACP-only implementation.
+    - `kimi`: ACP `session/load` succeeds for historical sessions but Kimi CLI 1.20.0 emits no replay `session/update` notifications, so transcript replay currently returns `supported=true` with an empty message list under the standard ACP-only implementation.
     - `qwen`: a real locally-created Qwen session now replays transcript messages through the same ACP `session/list` + `session/load` path; env-gated provider E2E confirms the replay contains the unique prompt marker from the created session.
   - validation:
     - pass: `go test ./internal/agents/qwen -count=1`
     - pass: `E2E_QWEN=1 go test ./internal/agents/qwen -run 'TestQwenE2E(Smoke|SessionTranscriptReplay)$' -count=1 -v -timeout 180s`
     - pass: `cd internal/webui/web && npm run build`
-    - pass: real `opencode` `/session-history` regression on rebuilt ngent
-    - pass: real `codex` `/session-history` regression on rebuilt ngent
+    - pass: real `opencode` transcript replay regression on rebuilt ngent
+    - pass: real `codex` transcript replay regression on rebuilt ngent
     - observed: real `kimi` `session/load` returns no replay updates on Kimi CLI 1.20.0
-- `Post-M8` Qwen session-history replay fix completed:
+- `Post-M8` Qwen session transcript replay fix completed:
     - direct ACP `session/load` for that session replayed `user_message_chunk` and `agent_message_chunk`, proving Qwen itself was returning transcript content.
-    - ngent `GET /v1/threads/{threadId}/session-history?sessionId=...` initially failed with `503 UPSTREAM_UNAVAILABLE` and `qwen: session/load: qwen: connection closed`.
+    - ngent transcript replay initially failed with `503 UPSTREAM_UNAVAILABLE` and `qwen: session/load: qwen: connection closed`.
   - root cause:
     - ngent transcript replay parsing treated Qwen `tool_call_update` notifications as fatal because their `content` payload is an array/object, not the `{type,text}` shape used by text chunks.
     - the ACP stdio transport closes the whole connection when a notification handler returns an error, so one unexpected Qwen update aborted the replay before the RPC response arrived.
@@ -897,7 +897,7 @@ This file is the source of milestone progress, validation commands, and next act
     - list sessions through ACP `session/list` when supported.
     - load persisted `agentOptions.sessionId` through ACP `session/load` before prompting.
     - report the effective session id back to HTTP turns so the server can persist it.
-  - added `GET /v1/threads/{threadId}/sessions` with cursor passthrough and graceful `supported=false` fallback for agents without ACP session-history support.
+  - added `GET /v1/threads/{threadId}/sessions` with cursor passthrough and graceful `supported=false` fallback for agents without ACP transcript replay support.
   - turn SSE now emits `session_bound`, and the server persists the thread session id without closing the active provider.
   - once a thread is bound to an ACP session, prompt building skips local recent-turn injection to avoid duplicating already-loaded ACP context.
   - Web UI now renders a right-side session sidebar with first-page load, `Show more`, active-session highlighting, and `New session` reset.
@@ -1099,7 +1099,7 @@ This file is the source of milestone progress, validation commands, and next act
 - 2026-03-22: switched model/reasoning discovery from probe sessions to real session snapshots.
   - root cause: startup refresh plus `GET /v1/threads/{threadId}/config-options` / `GET /v1/agents/{agentId}/models` live fallbacks were still opening probe-only `session/new` calls, which created provider-owned empty sessions and could leak stale default config between unrelated threads.
   - removed startup config-catalog refresh from `cmd/ngent`, and changed the HTTP config/model read paths to return stored-only sqlite data instead of probing upstream runtimes.
-  - added a shared config snapshot callback in `internal/agents`; user-initiated `session/new` / `session/load` responses from ACP stdio providers and embedded `codex` / `claude` now report their latest `configOptions` during `Stream()`, and session-history `session/load` can also feed the same persistence path.
+  - added a shared config snapshot callback in `internal/agents`; user-initiated `session/new` / `session/load` responses from ACP stdio providers and embedded `codex` / `claude` now report their latest `configOptions` during `Stream()`, and session-scoped history replay can also feed the same persistence path.
   - the HTTP turn handler now persists those real snapshots immediately into sqlite:
     - `threads.agent_options_json` is updated with the session's actual current `modelId` / `configOverrides`
     - `agent_config_catalogs` is updated under the actual current model id for later reuse
@@ -1121,10 +1121,10 @@ This file is the source of milestone progress, validation commands, and next act
     - session-scoped config cache keyed by `agent + cwd + sessionId`
   - when a fresh session reports config before `session_bound`, ngent now backfills the same snapshot into `session_config_cache` as soon as the session id is bound.
   - `GET /v1/threads/{threadId}/config-options` now restores from the current session cache when the thread points at a known `sessionId` but has no thread-local `modelId`.
-  - user-triggered session switching now also learns config from `GET /v1/threads/{threadId}/session-history`:
+  - user-triggered session switching now also learns config from session-scoped `GET /v1/threads/{threadId}/history?sessionId=...`:
     - if transcript cache exists but session config cache is still missing, ngent performs one live `session/load` instead of stopping at cached transcript data
     - if that `session/load` returns `configOptions`, ngent persists them into thread state (when the thread is currently bound to that session), `agent_config_catalogs`, and `session_config_cache`
-    - the Web UI refreshes config controls again after session-history replay finishes, so model/reasoning buttons can appear immediately after switching sessions without needing a new turn
+    - the Web UI refreshes config controls again after session-scoped history replay finishes, so model/reasoning buttons can appear immediately after switching sessions without needing a new turn
   - additionally verified the session-load-only path with a fresh Codex thread on a fresh sqlite database:
     - created the thread without sending any turn
     - switched directly to an existing Codex session
@@ -1151,7 +1151,7 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./... -count=1`
 
-- 2026-03-22: fixed the composer model/reasoning dropdowns so they remain clickable after session-history refresh updates them in place.
+- 2026-03-22: fixed the composer model/reasoning dropdowns so they remain clickable after session transcript replay refresh updates them in place.
   - root cause: `bindThreadConfigSwitches()` can run more than once on the same composer DOM after a session switch; repeated `addEventListener('click', ...)` bindings caused one listener to open the menu and the next listener to close it immediately in the same click.
   - made config-switch binding idempotent per `.thread-model-switch` node, while still allowing later refresh passes to update labels, menu contents, and hidden/disabled state.
   - executed validation:
@@ -1226,4 +1226,24 @@ This file is the source of milestone progress, validation commands, and next act
   - kept the existing fresh-session behavior by assigning stable local `@fresh:<nonce>` scopes, and cleaned those local overrides up when the thread is deleted.
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+- 2026-04-06: unified Web UI session replay behind the session-scoped `/history` endpoint.
+  - root cause: opening one selected session in the embedded Web UI still required two backend requests and two separate client-side code paths: `/history?includeEvents=1&sessionId=...` for ngent-owned turns plus a second dedicated provider transcript replay request.
+  - extracted the backend session-transcript loader into one shared helper, and taught `GET /v1/threads/{threadId}/history?sessionId=...` to optionally include `sessionTranscript { supported, messages }` alongside the existing filtered `turns`.
+  - changed the Web UI `loadHistory()` path to issue only `api.getHistory(threadId, requestedSessionID)` and merge any embedded `sessionTranscript` replay onto the persisted turn history, preserving the existing cache hydration and config-refresh behavior.
+  - if provider replay fails, `/history` now still returns the persisted turns and omits `sessionTranscript`, matching the Web UI's previous local-history fallback behavior instead of failing the whole session switch.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./internal/httpapi -run 'Test(ThreadHistoryEndpointIncludesSessionTranscriptForSelectedSession|ThreadHistoryEndpointPersistsConfigOptionsForSelectedSession|ThreadHistoryEndpointUsesCachedSessionTranscriptAcrossRestart|ThreadHistoryEndpointReloadsLiveWhenTranscriptCachedButConfigMissing|ThreadHistoryEndpointKeepsTurnsWhenSessionTranscriptLoadFails|ThreadHistoryFiltersBySessionID)$' -count=1`
+    - pass: `go test ./...`
+
+- 2026-04-06: removed the standalone provider transcript replay endpoint after migrating all callers to session-scoped `/history`.
+  - deleted the dedicated provider transcript replay router entry and its handler; session transcript replay is now reachable only through `GET /v1/threads/{threadId}/history?sessionId=...`.
+  - removed the unused dedicated Web UI transcript replay client method and the old endpoint-specific HTTP tests.
+  - rewrote the remaining transcript/cache/config regression coverage to target `/history?sessionId=...` directly, including unsupported-provider and cache-miss-with-config-refresh scenarios.
+  - updated API/spec/acceptance/known-issues/decision docs so the current contract no longer documents a standalone transcript replay endpoint.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./internal/httpapi -run 'Test(ThreadHistoryEndpointIncludesSessionTranscriptForSelectedSession|ThreadHistoryEndpointPersistsConfigOptionsForSelectedSession|ThreadHistoryEndpointUsesCachedSessionTranscriptAcrossRestart|ThreadHistoryEndpointReloadsLiveWhenTranscriptCachedButConfigMissing|ThreadHistoryEndpointSessionTranscriptUnsupported|ThreadHistoryEndpointKeepsTurnsWhenSessionTranscriptLoadFails|ThreadHistoryFiltersBySessionID)$' -count=1`
     - pass: `go test ./...`

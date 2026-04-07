@@ -767,3 +767,17 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Verification commands (executed 2026-03-26):
   - `cd internal/webui/web && npm run build`
   - `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./... -count=1`
+
+## Requirement 34: Embedded Pi Agent Wiring
+
+- Operation:
+  - start ngent on a host where the `pi` binary is available.
+  - query `/v1/agents`, create a thread with `agent=pi`, and open the embedded Web UI's thread list and `New Agent` modal.
+- Expected:
+  - startup preflight treats Pi as an embedded provider and includes `{"id":"pi","name":"Pi Agent","status":"available"}` in `GET /v1/agents` when the `pi` binary is present.
+  - thread creation accepts `agent=pi`, and model/session/config discovery flows through the embedded `pkg/piacp` runtime instead of a standalone adapter subprocess.
+  - the Web UI renders the Pi logo in both the thread list and the `New Agent` modal, with a dark backing only in light theme so the white SVG remains legible.
+- Verification commands (executed 2026-04-07):
+  - `go test ./internal/agents/pi -count=1`
+  - `cd internal/webui/web && npm run build`
+  - `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./...`

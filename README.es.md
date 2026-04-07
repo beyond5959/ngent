@@ -50,6 +50,7 @@ Ngent actúa como puente entre **agentes compatibles con ACP** (como Codex, Kimi
 | Kimi CLI | ✅ |
 | Qwen Code | ✅ |
 | OpenCode | ✅ |
+| Pi | ✅ |
 | BLACKBOX AI | ✅ |
 
 ## Instalación

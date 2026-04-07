@@ -7,7 +7,7 @@ Build a local-first Ngent Server that:
 - serves HTTP/JSON APIs.
 - streams turn events via SSE (`text/event-stream`).
 - supports multi-client and multi-thread execution.
-- is designed to support ACP-compatible agents (for example Claude Code, Cursor CLI, Gemini, Kimi, OpenCode, Qwen, BLACKBOX AI, Codex).
+- is designed to support ACP-compatible agents (for example Codex, Pi Agent, Claude Code, Cursor CLI, Gemini, Kimi, OpenCode, Qwen, BLACKBOX AI).
 - persists interaction state/events in SQLite.
 - forwards runtime permissions to connected clients with fail-closed behavior.
 
@@ -20,6 +20,7 @@ Modules:
 - `internal/agents`: agent providers (fake + ACP-compatible implementations), plus context-bound permission/reasoning/session/plan callback bridges.
   - the shared agent callback surface also carries ACP session-usage snapshots so HTTP/storage/Web UI code can persist and render them without provider-specific UI wiring.
   - turn/session-scope provider resolution selects implementation by thread metadata (`agent`, `cwd`, selected `sessionId`, and fresh-session marker).
+  - embedded ACP runtimes are hosted directly for `codex`, `claude`, and `pi`, so ngent can reuse `acp-adapter/pkg/*acp` without spawning a standalone adapter subprocess.
   - `internal/agents/acpcli` is the shared ACP CLI driver used by `qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, and `cursor`; provider-specific hooks own command startup, request parameter shaping, permission mapping, auth/model quirks, and cancel behavior.
 - prompt/context-window composition lives in `internal/httpapi/turn_handlers.go`, where ngent builds injected prompts from `threads.summary`, recent non-internal turns, and the current input.
 - `internal/sse`: event formatting and SSE writer helpers shared by both the initial turn stream and per-turn replay/tail streams.
@@ -76,7 +77,7 @@ Modules:
 
 - On server boot: no agent process is started.
 - On first scope usage: runtime resolves or creates a provider instance for that `(thread, session/fresh-session)` scope.
-- On first turn execution for an embedded-provider scope (currently `codex` and `claude`): server creates the in-process runtime and initializes ACP session lazily.
+- On first turn execution for an embedded-provider scope (currently `codex`, `claude`, and `pi`): server creates the in-process runtime and initializes ACP session lazily.
 - Process-per-operation ACP CLI providers (`qwen`, `opencode`, `gemini`, `kimi`, `blackbox`, `cursor`) reuse the shared `acpcli` driver; each provider opens a fresh ACP stdio process per stream/config/list/discovery/transcript operation while keeping provider-specific startup hooks.
 - Embedded runtime `session/new` is created with `cwd=thread.cwd` (validated as absolute path at thread creation).
 - If `thread.agent_options_json` contains `modelId` / `configOverrides`, those values are the persisted desired session config for the thread.

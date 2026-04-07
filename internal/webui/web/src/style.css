@@ -93,6 +93,7 @@
   /* Scrollbar */
   --scrollbar-thumb: rgba(83, 96, 88, 0.32);
   --codex-icon-image: url('/codex-icon.png');
+  --pi-icon-image: url('/pi.svg');
   --gemini-icon-image: url('/gemini-icon.png');
   --claude-icon-image: url('/claude-icon.png');
   --qwen-icon-image: url('/qwen-icon.png');
@@ -100,6 +101,7 @@
   --cursor-icon-image: url('/cursor-icon-light.png');
   --kimi-icon-image: url('/kimi-icon.png');
   --opencode-icon-image: url('/opencode-icon.png');
+  --pi-icon-shell-bg: #101315;
 
   /* Dimensions */
   --sidebar-w:      248px;
@@ -169,6 +171,7 @@
   --permission-border: #d97706;
   --scrollbar-thumb: rgba(169, 184, 174, 0.26);
   --codex-icon-image: url('/codex-icon.png');
+  --pi-icon-image: url('/pi.svg');
   --gemini-icon-image: url('/gemini-icon.png');
   --claude-icon-image: url('/claude-icon.png');
   --qwen-icon-image: url('/qwen-icon.png');
@@ -179,6 +182,7 @@
   --cursor-icon-image: url('/cursor-icon-dark.png');
   --kimi-icon-image: url('/kimi-text.png');
   --opencode-icon-image: url('/opencode-logo-dark.svg');
+  --pi-icon-shell-bg: transparent;
 }
 
 /* ===== Base ===== */
@@ -437,6 +441,14 @@ body {
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
+}
+
+.thread-item-avatar-icon--pi {
+  background-color: var(--pi-icon-shell-bg);
+  background-image: var(--pi-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 72%;
 }
 
 .thread-item-avatar-icon--gemini {
@@ -3553,6 +3565,18 @@ button:active:not(:disabled),
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
+}
+
+.agent-card-pi-icon {
+  width: 32px;
+  height: 32px;
+  display: block;
+  border-radius: 8px;
+  background-color: var(--pi-icon-shell-bg);
+  background-image: var(--pi-icon-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 72%;
 }
 
 .agent-card-cursor-icon {

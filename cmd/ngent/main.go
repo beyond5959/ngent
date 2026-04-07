@@ -26,6 +26,7 @@ import (
 	geminiagent "github.com/beyond5959/ngent/internal/agents/gemini"
 	kimiagent "github.com/beyond5959/ngent/internal/agents/kimi"
 	opencodeagent "github.com/beyond5959/ngent/internal/agents/opencode"
+	piagent "github.com/beyond5959/ngent/internal/agents/pi"
 	qwenagent "github.com/beyond5959/ngent/internal/agents/qwen"
 	"github.com/beyond5959/ngent/internal/httpapi"
 	"github.com/beyond5959/ngent/internal/observability"
@@ -73,7 +74,9 @@ func main() {
 	observability.ConfigureACPDebug(logger, *debugFlag)
 
 	codexRuntimeConfig := codexagent.DefaultRuntimeConfig()
+	piRuntimeConfig := piagent.DefaultRuntimeConfig()
 	codexPreflightErr := codexagent.Preflight(codexRuntimeConfig)
+	piPreflightErr := piagent.Preflight(piRuntimeConfig)
 	opencodePreflightErr := opencodeagent.Preflight()
 	geminiPreflightErr := geminiagent.Preflight()
 	kimiPreflightErr := kimiagent.Preflight()
@@ -104,6 +107,7 @@ func main() {
 	}
 
 	codexAvailable := codexPreflightErr == nil
+	piAvailable := piPreflightErr == nil
 	opencodeAvailable := opencodePreflightErr == nil
 	geminiAvailable := geminiPreflightErr == nil
 	kimiAvailable := kimiPreflightErr == nil
@@ -112,6 +116,7 @@ func main() {
 	claudeAvailable := claudePreflightErr == nil
 	cursorAvailable := cursorPreflightErr == nil
 	logStartupPreflight(logger, "startup.codex_embedded_unavailable", codexPreflightErr)
+	logStartupPreflight(logger, "startup.pi_embedded_unavailable", piPreflightErr)
 	logStartupPreflight(logger, "startup.opencode_unavailable", opencodePreflightErr)
 	logStartupPreflight(logger, "startup.gemini_unavailable", geminiPreflightErr)
 	logStartupPreflight(logger, "startup.kimi_unavailable", kimiPreflightErr)
@@ -124,6 +129,7 @@ func main() {
 	}
 	agents := supportedAgents(
 		codexAvailable,
+		piAvailable,
 		opencodeAvailable,
 		geminiAvailable,
 		kimiAvailable,
@@ -185,6 +191,15 @@ func main() {
 					ConfigOverrides: configOverrides,
 					Name:            "codex-embedded",
 					RuntimeConfig:   codexRuntimeConfig,
+				})
+			case agentimpl.AgentIDPi:
+				return piagent.New(piagent.Config{
+					Dir:             thread.CWD,
+					ModelID:         modelID,
+					SessionID:       sessionID,
+					ConfigOverrides: configOverrides,
+					Name:            "pi-embedded",
+					RuntimeConfig:   piRuntimeConfig,
 				})
 			case agentimpl.AgentIDOpencode:
 				return opencodeagent.New(opencodeagent.Config{
@@ -250,6 +265,15 @@ func main() {
 					Dir:           modelDiscoveryDir,
 					Name:          "codex-embedded",
 					RuntimeConfig: codexRuntimeConfig,
+				})
+			case agentimpl.AgentIDPi:
+				if piPreflightErr != nil {
+					return nil, piPreflightErr
+				}
+				return piagent.DiscoverModels(ctx, piagent.Config{
+					Dir:           modelDiscoveryDir,
+					Name:          "pi-embedded",
+					RuntimeConfig: piRuntimeConfig,
 				})
 			case agentimpl.AgentIDClaude:
 				if claudePreflightErr != nil {
@@ -399,6 +423,7 @@ func extractConfigOverrides(agentOptionsJSON string) map[string]string {
 
 func supportedAgents(
 	codexAvailable,
+	piAvailable,
 	opencodeAvailable,
 	geminiAvailable,
 	kimiAvailable,
@@ -420,6 +445,7 @@ func supportedAgents(
 	}
 
 	appendIfAvailable(codexAvailable, agentimpl.AgentIDCodex, "Codex")
+	appendIfAvailable(piAvailable, agentimpl.AgentIDPi, "Pi")
 	appendIfAvailable(claudeAvailable, agentimpl.AgentIDClaude, "Claude Code")
 	appendIfAvailable(geminiAvailable, agentimpl.AgentIDGemini, "Gemini CLI")
 	appendIfAvailable(kimiAvailable, agentimpl.AgentIDKimi, "Kimi CLI")

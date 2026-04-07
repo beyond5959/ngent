@@ -3806,6 +3806,9 @@ function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): stri
   if (normalized === 'codex') {
     return `<span class="${iconCls} ${cls}--codex" role="img" aria-label="Codex"></span>`
   }
+  if (normalized === 'pi') {
+    return `<span class="${iconCls} ${cls}--pi" role="img" aria-label="Pi Agent"></span>`
+  }
   if (normalized === 'gemini') {
     return `<span class="${iconCls} ${cls}--gemini" role="img" aria-label="Gemini CLI"></span>`
   }

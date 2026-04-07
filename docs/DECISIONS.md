@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-093: Integrate Pi Agent through the embedded `pkg/piacp` runtime. (Accepted)
 - ADR-092: Fold provider session replay into session-scoped `/history` responses. (Accepted)
 - ADR-091: Persist learned config snapshots per provider session. (Accepted)
 - ADR-090: Learn model/reasoning metadata only from real session lifecycle events. (Accepted)
@@ -90,6 +91,27 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-093: Integrate Pi Agent Through The Embedded `pkg/piacp` Runtime
+
+- Status: Accepted
+- Date: 2026-04-07
+- Context:
+  - `acp-adapter` now exposes Pi through `pkg/piacp`, which matches ngent's existing embedded-provider pattern much more closely than the direct ACP CLI providers.
+  - spawning `acp-adapter --adapter pi` as a second subprocess inside ngent would duplicate the adapter boundary even though ngent already embeds Codex and Claude directly.
+  - the embedded Web UI also needs first-class Pi branding so users can recognize Pi-backed threads and distinguish the pure-white `pi.svg` in light theme.
+- Decision:
+  - add `internal/agents/pi` as a new embedded provider built on `github.com/beyond5959/acp-adapter/pkg/piacp`.
+  - wire Pi through startup preflight, `/v1/agents`, per-thread lazy runtime resolution, model/config discovery, session list/load replay, slash-command caching, and the existing fail-closed permission bridge.
+  - derive Pi runtime defaults from the same host environment knobs used by the standalone adapter (`PI_BIN`, `PI_PROVIDER`, `PI_MODEL`, `PI_SESSION_DIR`, `PI_DISABLE_GATE`) instead of inventing separate ngent-only flags.
+  - render the provided `pi.svg` in the embedded Web UI and add a dark icon backing only in light theme so the white mark stays legible without changing the source asset.
+- Consequences:
+  - Pi now participates in the same in-process provider lifecycle as Codex and Claude, including idle-scope caching and lazy ACP session initialization.
+  - thread/session replay, config pickers, slash commands, and permission cards work through the existing shared HTTP/UI surfaces with no Pi-specific API additions.
+  - Pi threads still inherit the current upstream Pi limitations from `acp-adapter` such as missing MCP routing and plan snapshots; ngent documents those as a known limitation instead of simulating incomplete support.
+- Alternatives considered:
+  - wrap `acp-adapter --adapter pi` as a child process from ngent (rejected: unnecessary extra boundary and more process management).
+  - treat Pi as a generic direct ACP CLI provider under `internal/agents/acpcli` (rejected: ngent does not own a raw Pi ACP stdio implementation; `pkg/piacp` is the supported embedding surface).
 
 ## ADR-092: Remove the standalone provider transcript replay endpoint and fold replay into session-scoped `/history`
 

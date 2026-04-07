@@ -18,6 +18,7 @@ const iconChevron = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"
 
 const agentIcons: Record<string, string> = {
   codex: `<img src="/codex-icon.png" width="32" height="32" alt="Codex" style="border-radius:8px;display:block;">`,
+  pi: `<span class="agent-card-pi-icon" role="img" aria-label="Pi Agent"></span>`,
   gemini: `<img src="/gemini-icon.png" width="32" height="32" alt="Gemini CLI" style="border-radius:8px;display:block;">`,
   claude: `<img src="/claude-icon.png" width="32" height="32" alt="Claude Code" style="border-radius:8px;display:block;">`,
   cursor: `<span class="agent-card-cursor-icon" role="img" aria-label="Cursor CLI"></span>`,

@@ -1247,3 +1247,13 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./internal/httpapi -run 'Test(ThreadHistoryEndpointIncludesSessionTranscriptForSelectedSession|ThreadHistoryEndpointPersistsConfigOptionsForSelectedSession|ThreadHistoryEndpointUsesCachedSessionTranscriptAcrossRestart|ThreadHistoryEndpointReloadsLiveWhenTranscriptCachedButConfigMissing|ThreadHistoryEndpointSessionTranscriptUnsupported|ThreadHistoryEndpointKeepsTurnsWhenSessionTranscriptLoadFails|ThreadHistoryFiltersBySessionID)$' -count=1`
     - pass: `go test ./...`
+
+- 2026-04-07: integrated Pi Agent as a new embedded provider.
+  - added `internal/agents/pi` on top of `acp-adapter/pkg/piacp`, covering embedded runtime startup, prompt streaming, config/model discovery, session list/load replay, slash-command caching, session-usage propagation, and fail-closed permission replies.
+  - wired Pi into `cmd/ngent/main.go` startup preflight, supported-agent registration, lazy per-thread provider resolution, and model discovery so `/v1/agents` can now surface `{"id":"pi","name":"Pi Agent"}` when the `pi` binary is available.
+  - updated the embedded Web UI to render the provided `public/pi.svg` in the thread rail and `New Agent` modal, adding a dark icon backing only in light theme because the source asset is pure white.
+  - updated README / SPEC / ACCEPTANCE / DECISIONS / KNOWN_ISSUES memory docs to record the embedded Pi design and its current upstream limitations.
+  - executed validation:
+    - pass: `go test ./internal/agents/pi -count=1`
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./...`

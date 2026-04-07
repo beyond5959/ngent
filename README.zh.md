@@ -49,6 +49,7 @@ Ngent 是 **ACP 兼容智能体**（如 Codex、Kimi CLI、OpenCode 等）与 **
 | Kimi CLI | ✅ |
 | Qwen Code | ✅ |
 | OpenCode | ✅ |
+| Pi | ✅ |
 | BLACKBOX AI | ✅ |
 
 ## 安装

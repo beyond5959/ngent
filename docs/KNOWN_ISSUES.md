@@ -110,6 +110,19 @@ mitigated items so active work does not share space with already closed issues.
   - keep watching provider ACP compatibility and add support automatically when a provider starts emitting usage.
   - evaluate optional provider-specific approximations only if product requirements later demand a universal badge.
 
+- ID: KI-062
+- Title: Embedded Pi provider currently inherits adapter-side MCP and plan gaps
+- Status: Open
+- Severity: Low
+- Affects: threads backed by `pi`
+- Symptom:
+  - the new embedded Pi integration supports session startup, prompt streaming, session list/load, config options, slash commands, and permission bridging through `pkg/piacp`.
+  - however, current Pi support in `acp-adapter` still does not expose ACP MCP routing or plan snapshots, so ngent cannot surface those features on Pi threads yet.
+- Workaround:
+  - use Codex or another provider when a workflow depends on MCP routing or live plan updates.
+- Follow-up plan:
+  - track future `acp-adapter` Pi capability expansion and wire those surfaces through ngent when the upstream runtime exposes them.
+
 - ID: KI-045
 - Title: Web UI git branch badge can lag behind out-of-band repository changes
 - Status: Open

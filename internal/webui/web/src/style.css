@@ -49,49 +49,8 @@
 
 /* ===== Design Tokens ===== */
 :root {
-  /* Colors — light */
-  --bg:             #eef0e9;
-  --bg-2:           #f7f8f4;
-  --bg-3:           #dde3da;
-  --bg-panel:       rgba(250, 251, 247, 0.78);
-  --bg-panel-strong: rgba(255, 255, 252, 0.9);
-  --bg-inset:       rgba(244, 246, 241, 0.84);
-  --sidebar-bg:     rgba(248, 249, 244, 0.82);
-  --border:         rgba(54, 68, 57, 0.12);
-  --border-strong:  rgba(54, 68, 57, 0.18);
-  --border-focus:   #0f766e;
-
-  --text-1:         #18201b;
-  --text-2:         #536058;
-  --text-3:         #849087;
-
-  --accent:         #0f766e;
-  --accent-hover:   #0b625b;
-  --accent-soft:    rgba(15, 118, 110, 0.12);
-  --accent-text:    #ffffff;
-
-  --user-bubble-bg:    linear-gradient(135deg, #147a72 0%, #0d625c 100%);
-  --user-bubble-text:  #ffffff;
-  --agent-bubble-bg:   rgba(255, 255, 252, 0.82);
-  --agent-bubble-text: #18201b;
-  --prompt-bg:         rgba(220, 240, 236, 0.72);
-  --prompt-border:     rgba(15, 118, 110, 0.16);
-  --reasoning-bg:      rgba(247, 249, 245, 0.74);
-  --reasoning-border:  rgba(15, 118, 110, 0.18);
-
-  --error:          #dc2626;
-  --error-bg:       rgba(254, 242, 242, 0.88);
-  --warning:        #b45309;
-  --warning-bg:     rgba(255, 247, 237, 0.92);
-  --success:        #15803d;
-  --success-bg:     rgba(240, 253, 244, 0.9);
   --danger:         var(--error);
   --ok:             var(--success);
-
-  --permission-border: #f59e0b;
-
-  /* Scrollbar */
-  --scrollbar-thumb: rgba(83, 96, 88, 0.32);
   --codex-icon-image: url('/codex-icon.png');
   --pi-icon-image: url('/pi.svg');
   --gemini-icon-image: url('/gemini-icon.png');
@@ -102,83 +61,12 @@
   --kimi-icon-image: url('/kimi-icon.png');
   --opencode-icon-image: url('/opencode-icon.png');
   --pi-icon-shell-bg: #101315;
-
-  /* Dimensions */
-  --sidebar-w:      248px;
-  --header-h:       74px;
-
-  /* Radii */
-  --r-sm:   5px;
-  --r-md:   10px;
-  --r-lg:   14px;
-  --r-xl:   20px;
   --r-full: 9999px;
-
-  /* Shadows */
-  --shadow-sm: 0 10px 24px rgba(21, 28, 23, 0.06);
-  --shadow-md: 0 24px 48px rgba(21, 28, 23, 0.12);
-  --shadow-lg: 0 30px 80px rgba(21, 28, 23, 0.12);
-
-  /* Transitions */
   --t-fast: 140ms ease;
   --t-base: 240ms cubic-bezier(.2, .8, .2, 1);
-
-  /* Font */
-  --font: 'Avenir Next', 'Segoe UI Variable Display', 'SF Pro Display', 'Helvetica Neue', 'Noto Sans', sans-serif;
-  --font-body: 'Inter Variable', -apple-system, 'system-ui', 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace;
-  --font-body-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  --font-size-xs:   11px;
-  --font-size-sm:   12px;
-  --font-size-md:   13px;
-  --font-size-base: 15px;
-  --font-size-lg:   17px;
 }
 
 [data-theme="dark"] {
-  --bg:             #0d1310;
-  --bg-2:           #131a16;
-  --bg-3:           #1a221d;
-  --bg-panel:       rgba(18, 25, 21, 0.8);
-  --bg-panel-strong: rgba(20, 28, 23, 0.92);
-  --bg-inset:       rgba(24, 33, 27, 0.86);
-  --sidebar-bg:     rgba(17, 23, 19, 0.84);
-  --border:         rgba(197, 214, 201, 0.1);
-  --border-strong:  rgba(197, 214, 201, 0.16);
-
-  --text-1:         #edf3ee;
-  --text-2:         #a9b8ae;
-  --text-3:         #6d7a72;
-
-  --accent:         #3ea896;
-  --accent-hover:   #56b8a8;
-  --accent-soft:    rgba(62, 168, 150, 0.18);
-  --accent-text:    #ffffff;
-
-  --user-bubble-bg:    linear-gradient(135deg, #238e80 0%, #176b61 100%);
-  --user-bubble-text:  #ffffff;
-  --agent-bubble-bg:   rgba(23, 31, 26, 0.82);
-  --agent-bubble-text: #edf3ee;
-  --prompt-bg:         rgba(24, 53, 47, 0.56);
-  --prompt-border:     rgba(62, 168, 150, 0.26);
-  --reasoning-bg:      rgba(20, 27, 23, 0.74);
-  --reasoning-border:  rgba(62, 168, 150, 0.22);
-
-  --error-bg:       rgba(61, 22, 22, 0.88);
-  --warning-bg:     rgba(57, 35, 15, 0.88);
-  --success-bg:     rgba(15, 44, 21, 0.88);
-
-  --permission-border: #d97706;
-  --scrollbar-thumb: rgba(169, 184, 174, 0.26);
-  --codex-icon-image: url('/codex-icon.png');
-  --pi-icon-image: url('/pi.svg');
-  --gemini-icon-image: url('/gemini-icon.png');
-  --claude-icon-image: url('/claude-icon.png');
-  --qwen-icon-image: url('/qwen-icon.png');
-  --blackbox-icon-image: url('/blackbox.png');
-  --shadow-sm: 0 12px 24px rgba(0, 0, 0, 0.24);
-  --shadow-md: 0 28px 56px rgba(0, 0, 0, 0.34);
-  --shadow-lg: 0 34px 90px rgba(0, 0, 0, 0.4);
   --cursor-icon-image: url('/cursor-icon-dark.png');
   --kimi-icon-image: url('/kimi-text.png');
   --opencode-icon-image: url('/opencode-logo-dark.svg');
@@ -193,11 +81,6 @@ html {
 body {
   font-family: var(--font);
   font-size: var(--font-size-base);
-  background:
-    radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 30%),
-    radial-gradient(circle at 85% 12%, rgba(180, 83, 9, 0.1), transparent 26%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 88%, white 12%) 0%, var(--bg) 100%);
-  color: var(--text-1);
   height: 100%;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -224,7 +107,6 @@ body {
 .layout-shell {
   position: relative;
   height: 100%;
-  padding: 12px;
 }
 
 .layout {
@@ -240,20 +122,6 @@ body {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(22px);
-}
-
-.sidebar::before,
-.chat::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: 120px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 100%);
-  pointer-events: none;
-  opacity: 0.8;
 }
 
 .sidebar > *,
@@ -895,11 +763,6 @@ body {
 .session-panel-inline-error {
   font-size: var(--font-size-xs);
   text-align: center;
-}
-
-@keyframes session-refresh-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 /* Chat header */
@@ -4121,16 +3984,6 @@ button:active:not(:disabled),
   border-bottom: none;
 }
 
-.path-search-item:hover,
-.path-search-item--selected {
-  background: var(--bg-inset);
-}
-
-.path-search-item--selected {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 90%, white 10%) 0%, color-mix(in srgb, var(--accent) 64%, black 36%) 100%);
-  color: var(--accent-text);
-}
-
 .path-search-header {
   padding: 10px 12px;
   font-size: 12px;
@@ -4154,21 +4007,6 @@ button:active:not(:disabled),
   text-align: center;
   box-shadow: var(--shadow-md);
   backdrop-filter: blur(14px);
-}
-
-[data-theme="dark"] .path-search-dropdown,
-[data-theme="dark"] .path-search-loading {
-  background: var(--bg-panel-strong);
-  border-color: var(--border);
-}
-
-[data-theme="dark"] .path-search-item:hover {
-  background: var(--bg-2);
-}
-
-[data-theme="dark"] .path-search-item--selected {
-  background: var(--accent);
-  color: var(--accent-text);
 }
 
 /* ===== 2026-03 Workbench Redesign Overrides ===== */

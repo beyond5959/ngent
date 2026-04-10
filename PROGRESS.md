@@ -25,6 +25,7 @@ This file is the source of milestone progress, validation commands, and next act
     - text files show at most the first 10000 lines with optional focused-line highlight.
     - image files show an inline preview surface.
     - opening a message-linked file explicitly dismisses any currently open git-diff file drawer first.
+    - shared drawer follow-up polish: file-content previews now use a single line-number column instead of the diff view's two-column old/new gutter; the full two-column gutter remains only for tracked patch views.
   - unsupported file types remain non-previewable from this surface and render as disabled inline links rather than broken browser navigations.
   - follow-up polish:
     - removed the message-link file icons so only the label and optional `L<number>` badge remain in transcript markdown.

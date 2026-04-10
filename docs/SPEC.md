@@ -40,7 +40,7 @@ Modules:
   - when the active thread also has a selected concrete session id, the composer can additionally poll `/v1/threads/{threadId}/git-diff` every 15 seconds and show a Kimi-style working-tree summary chip above the input; expanding it reveals parsed tracked `numstat` rows, untracked-file rows, and the repository root, while clean/non-git/unavailable-git cases render nothing.
   - expanded git-diff rows may expose browser-clickable file previews through `GET /v1/threads/{threadId}/git-diff-file?path=...`:
     - tracked text files render the `git --no-pager diff -- <path>` patch in a right-side drawer.
-    - untracked text files render current file contents directly in that same drawer.
+    - untracked text files render current file contents directly in that same drawer, using the compact file-content mode with a single line-number column.
     - binary/non-text rows stay visibly disabled and do not open a preview drawer.
   - `/git-diff-file` returns grouped rendered `blocks[]`, not duplicated raw preview text plus one JSON row per rendered line:
     - each block carries `tone`, `text[]`, and only the relevant `oldLineNumbers[]` / `newLineNumbers[]`.
@@ -53,6 +53,7 @@ Modules:
     - only text files and image files are previewable from this message-link surface; other file types stay disabled/unsupported.
     - optional markdown fragments such as `#L1430` request a highlight target, but the drawer only highlights it when the line falls inside the returned 10000-line prefix.
     - message-link entries keep an ordinary inline-link treatment in the transcript; curated file icons remain limited to the git-diff file list.
+    - file-content mode in the shared drawer uses a single line-number column; only unified patch mode keeps the old/new number columns.
     - opening a message-linked preview must dismiss any currently visible git-diff file drawer first, because both surfaces reuse the same right-side shell.
     - preview-path authorization is thread-scoped and read-only, but the requested absolute path must still resolve inside configured allowed roots after symlink resolution.
   - that chip's expanded/collapsed state is browser-local UI state and must not depend on polling cadence or incoming diff payload refreshes.

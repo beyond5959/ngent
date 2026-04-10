@@ -116,6 +116,7 @@
   - parse optional `#L<number>` markdown fragments on the client and pass the line number to the preview endpoint; the drawer highlights that focused line after render when it falls inside the returned 10000-line window.
   - render absolute local markdown links in finalized message markdown as ordinary inline links without pill chrome or extra file-type icons; unsupported extensions render as visibly disabled inline links.
   - reuse the existing right-side drawer shell for both git-diff previews and message-linked file previews, with message-linked opens explicitly dismissing any current git-diff file drawer first.
+  - when that shared drawer is rendering whole-file contents rather than a unified patch, collapse the line-number area to one column to avoid wasting horizontal space; the old/new columns remain reserved for real patch previews only.
 - Consequences:
   - clicking an absolute local file link in assistant output no longer navigates the browser away from the conversation.
   - large text files stay readable because the drawer loads only a bounded 10000-line prefix instead of trying to page through the entire file in the browser.

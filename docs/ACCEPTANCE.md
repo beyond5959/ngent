@@ -46,7 +46,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - with the drawer open, click elsewhere in the workspace and verify the drawer stays visible until an explicit close control is used.
   - with the drawer open, click the git-diff chip trigger to collapse the changed-file list and verify the drawer remains open with the same file content.
   - leave the same drawer open through at least one subsequent `/git-diff` summary refresh and verify the visible drawer content does not flash/reload or jump scroll position just because the summary chip refreshed.
-  - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch.
+  - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch, using only one line-number column instead of the diff view's two-column gutter.
   - include at least one non-text/binary untracked file and verify its row stays disabled and does not open the drawer.
   - inspect one `/git-diff-file` network response and verify it returns grouped rendered `blocks[]` rather than duplicated raw `content` plus fully expanded per-line rows.
   - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
@@ -62,6 +62,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - outside clicks in the rest of the workspace do not dismiss the open drawer.
   - collapsing the git-diff chip hides only the changed-file list; it does not dismiss the already open right-side drawer.
   - `/git-diff` polling continues to refresh the chip/list, but an already open drawer keeps the same visible content and scroll position until the user explicitly changes or closes that preview.
+  - file-content previews in the shared drawer use a single line-number column; tracked patch previews still show the full old/new columns.
   - drawer content rows render without horizontal separator rules between every line.
   - drawer content typography matches the composer footer's model-label styling.
   - the actual rendered code/content nodes inherit that typography as well, rather than falling back to the browser's default `code` font family.
@@ -98,6 +99,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - absolute local markdown links are rendered as readable inline links with no pill chrome or extra file-type icon chrome.
   - previewable text links open in the shared right-side drawer, keep the current chat visible, and render at most the first 10000 lines in one load.
   - `#L<number>` fragments highlight the requested line when it is inside the returned 10000-line window.
+  - message-linked file-content previews use the compact file view with a single line-number column instead of the diff view's two-column gutter.
   - image links open the same drawer shell and render the image inline rather than forcing a browser navigation.
   - opening a message-linked file replaces any existing git-diff file drawer content rather than stacking a second panel.
   - unsupported file types stay visibly disabled/non-previewable instead of navigating to an empty route.

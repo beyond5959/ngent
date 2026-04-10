@@ -5532,6 +5532,10 @@ button:active:not(:disabled),
   grid-template-columns: minmax(0, 1fr);
 }
 
+.git-diff-drawer__line--single-number {
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+
 .git-diff-drawer__line-no {
   padding: 6px 8px;
   border-right: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
@@ -5541,6 +5545,10 @@ button:active:not(:disabled),
 }
 
 .git-diff-drawer__line-no--old {
+  padding-left: 12px;
+}
+
+.git-diff-drawer__line-no--single {
   padding-left: 12px;
 }
 

@@ -7199,7 +7199,7 @@ function renderThreadGitDiffFileRow(
 function renderThreadGitDiffDrawerContent(
   detail: ThreadGitDiffFileDetailState,
   fallbackKind: ThreadGitDiffFileDetail['kind'],
-  options: { focusLine?: number; unsupportedMessage?: string } = {},
+  options: { focusLine?: number; unsupportedMessage?: string; lineNumberMode?: 'diff' | 'single' } = {},
 ): string {
   if (detail.loading) {
     return `
@@ -7235,7 +7235,15 @@ function renderThreadGitDiffDrawerContent(
       )
       if (!showLineNumbers) {
         return `
-          <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone} git-diff-drawer__line--no-numbers${highlighted ? ' git-diff-drawer__line--highlight' : ''}">
+          <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone} git-diff-drawer__line--no-numbers${highlighted ? ' git-diff-drawer__line--highlight' : ''}"${highlighted ? ` data-focus-line="${options.focusLine}"` : ''}>
+            <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
+          </div>`
+      }
+      if (options.lineNumberMode === 'single') {
+        const singleLineNumber = typeof newLineNumber === 'number' ? newLineNumber : oldLineNumber
+        return `
+          <div class="git-diff-drawer__line git-diff-drawer__line--single-number git-diff-drawer__line--${block.tone}${highlighted ? ' git-diff-drawer__line--highlight' : ''}"${highlighted ? ` data-focus-line="${options.focusLine}"` : ''}>
+            <span class="git-diff-drawer__line-no git-diff-drawer__line-no--single" aria-hidden="true">${typeof singleLineNumber === 'number' ? String(singleLineNumber) : '&nbsp;'}</span>
             <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
           </div>`
       }
@@ -7279,7 +7287,7 @@ function renderThreadGitDiffDrawer(preview: ThreadGitDiffPreviewState): string {
           ${iconClose}
         </button>
       </div>
-      ${renderThreadGitDiffDrawerContent(detail, detailKind)}
+      ${renderThreadGitDiffDrawerContent(detail, detailKind, { lineNumberMode: detailKind === 'file' ? 'single' : 'diff' })}
     </aside>`
 }
 
@@ -7334,6 +7342,7 @@ function renderMessageFilePreviewDrawer(preview: MessageFilePreviewState): strin
       </div>`
     : renderThreadGitDiffDrawerContent(detailState, 'file', {
       focusLine: preview.focusLine,
+      lineNumberMode: 'single',
       unsupportedMessage: t('filePreviewUnsupported'),
     })
 

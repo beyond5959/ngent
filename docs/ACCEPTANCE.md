@@ -80,6 +80,32 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `cd internal/webui/web && npm run build`
   - manual browser check against a repository-backed thread/session
 
+## Supplemental Web UI: Markdown Local File Preview
+
+- Operation:
+  - open a thread whose `cwd` is inside configured allowed roots and produce or replay an assistant message containing absolute-path markdown links such as:
+    - `[docs/ACCEPTANCE.md](/abs/path/to/docs/ACCEPTANCE.md)`
+    - `[storage.go](/abs/path/to/internal/storage/storage.go#L1430)`
+  - include at least one previewable image link and one unsupported non-text/non-image link (for example a PDF) in similar absolute-path markdown form.
+  - verify the message renders those file links as ordinary inline links instead of bordered pills or plain browser-navigation anchors.
+  - click the text-file link and verify the right-side drawer opens a text preview showing the file's leading lines without navigating away from the conversation.
+  - click the `#L1430` text-file link and verify the drawer still opens the same bounded preview and visually highlights line 1430 when it falls inside the returned range.
+  - use a file longer than 10000 lines and verify the drawer stops at line 10000 instead of exposing pagination or incremental loading controls.
+  - while a git-diff file drawer is open, click one of the message-linked file links and verify the git-diff drawer closes before the message-linked file preview appears in the same shell.
+  - click the image-file link and verify the drawer switches to an inline image preview.
+  - verify the unsupported file link remains non-previewable and does not open a broken viewer.
+- Expected:
+  - absolute local markdown links are rendered as readable inline links with no pill chrome or extra file-type icon chrome.
+  - previewable text links open in the shared right-side drawer, keep the current chat visible, and render at most the first 10000 lines in one load.
+  - `#L<number>` fragments highlight the requested line when it is inside the returned 10000-line window.
+  - image links open the same drawer shell and render the image inline rather than forcing a browser navigation.
+  - opening a message-linked file replaces any existing git-diff file drawer content rather than stacking a second panel.
+  - unsupported file types stay visibly disabled/non-previewable instead of navigating to an empty route.
+- Verification command:
+  - `go test ./internal/httpapi -run 'TestThreadFilePreviewReturnsFirst10000LinesWithFocusedLine|TestThreadFilePreviewMarksNonTextFilesUnsupported|TestThreadFilePreviewReturnsImageAndStreamsContent|TestThreadFilePreviewRejectsPathOutsideAllowedRoots' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - manual browser check against a thread whose transcript includes absolute-path markdown file links
+
 ## Supplemental Web UI: Language Selection
 
 - Operation:

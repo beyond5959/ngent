@@ -70,6 +70,21 @@ mitigated items so active work does not share space with already closed issues.
 - Follow-up plan:
   - evaluate whether the git-diff surface should eventually cover staged-only previews or a separate asset viewer without expanding the current local-only safety boundary.
 
+- ID: KI-063
+- Title: Message-linked file preview only activates for absolute allowed-root text/image paths
+- Status: Open
+- Severity: Low
+- Affects: embedded Web UI users clicking markdown file links inside assistant/session messages
+- Symptom:
+  - the new message-linked preview surface only intercepts markdown links whose `href` is an absolute local file path.
+  - the backend preview endpoints then allow only files that resolve inside configured allowed roots, and the drawer supports only text/image content types.
+  - relative links, paths outside allowed roots, and unsupported file types remain non-previewable from this surface.
+  - text previews currently load only the first 10000 lines of a file; if a requested `#L<number>` target falls beyond that window, the drawer opens without a visible highlight for that out-of-range line.
+- Workaround:
+  - emit absolute allowed-root paths when a provider/tool wants the Web UI drawer to open the file, inspect unsupported files with external tooling, and use an external editor/CLI if the needed content lies past line 10000.
+- Follow-up plan:
+  - evaluate whether relative repo-local links should be normalized into absolute preview targets and whether unsupported file types need a separate safe download/action surface.
+
 - ID: KI-048
 - Title: Git-diff file icons currently cover a curated subset of common file types
 - Status: Open

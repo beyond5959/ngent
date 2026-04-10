@@ -13,6 +13,28 @@ This file is the source of milestone progress, validation commands, and next act
 
 ## Latest Update (2026-04-10)
 
+- `Post-M8` Web UI markdown file preview drawer completed:
+  - added thread-scoped local file preview endpoints:
+    - `GET /v1/threads/{threadId}/file-preview?path=...`
+    - `GET /v1/threads/{threadId}/file-preview-content?path=...`
+  - backend preview now validates absolute file paths against configured allowed roots, resolves symlinks before authorization, and supports only text/image content types.
+  - text previews now render one bounded prefix with absolute line numbers: the backend reads at most the first 10000 lines and applies `#L<number>` highlight only when that target line falls inside the returned range.
+  - image previews stream the raw file bytes through the new content endpoint so the browser can render authenticated local images without exposing bearer tokens in query strings.
+  - finalized markdown links whose `href` is an absolute local file path are now rendered in the Web UI as ordinary inline file links instead of plain browser navigation targets.
+  - clicking those inline file links reuses the existing right-side drawer:
+    - text files show at most the first 10000 lines with optional focused-line highlight.
+    - image files show an inline preview surface.
+    - opening a message-linked file explicitly dismisses any currently open git-diff file drawer first.
+  - unsupported file types remain non-previewable from this surface and render as disabled inline links rather than broken browser navigations.
+  - follow-up polish:
+    - removed the message-link file icons so only the label and optional `L<number>` badge remain in transcript markdown.
+    - removed the preview drawer's file-type icon row for message-linked previews; git-diff file rows keep their existing icons.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-04-10)
+
 - `Post-M8` session-history replay load-gating and history-event batching completed:
   - moved selected-session transcript live-load gating from the embedded SPA into the backend `/history` path.
   - session-scoped history now calls provider `session/load` only when the selected session has no filtered turns in the current `/history` response; once filtered turns exist, `/history` will reuse cached `sessionTranscript` if available but will not live-load a missing transcript from the provider.

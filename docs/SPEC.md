@@ -47,6 +47,14 @@ Modules:
     - adjacent rendered rows with the same tone and the same visible number-column shape are compacted into the same block.
     - clients infer whether line-number columns should render from the presence of those old/new number arrays; there is no separate `showLineNumbers` field.
   - expanded git-diff rows can also show curated basename/extension-based type icons sourced from locally vendored `file-icons/vscode` font assets; unknown file types fall back to the generic file icon.
+  - finalized markdown links in transcript/reasoning content whose `href` is an absolute local file path can also open the same right-side inspection shell through thread-scoped preview endpoints:
+    - `GET /v1/threads/{threadId}/file-preview?path=...` returns preview metadata and, for text files, grouped rendered `blocks[]` for at most the first 10000 lines.
+    - `GET /v1/threads/{threadId}/file-preview-content?path=...` streams authenticated raw bytes only for previewable image files.
+    - only text files and image files are previewable from this message-link surface; other file types stay disabled/unsupported.
+    - optional markdown fragments such as `#L1430` request a highlight target, but the drawer only highlights it when the line falls inside the returned 10000-line prefix.
+    - message-link entries keep an ordinary inline-link treatment in the transcript; curated file icons remain limited to the git-diff file list.
+    - opening a message-linked preview must dismiss any currently visible git-diff file drawer first, because both surfaces reuse the same right-side shell.
+    - preview-path authorization is thread-scoped and read-only, but the requested absolute path must still resolve inside configured allowed roots after symlink resolution.
   - that chip's expanded/collapsed state is browser-local UI state and must not depend on polling cadence or incoming diff payload refreshes.
   - once a git-diff file drawer is open, the visible drawer content is driven by a browser-local preview snapshot keyed by thread-session scope rather than by each incoming `/git-diff` poll response; polling may refresh the chip/list, but it must not implicitly close or rebuild the open drawer.
   - browser-local preview state is presentation-only; selecting a file row must still issue a fresh `/git-diff-file` request for that file each time instead of reusing the previous open's detail payload as authoritative data.
@@ -164,6 +172,7 @@ On restart:
 - thread slash-command snapshot lookup (`GET /v1/threads/{threadId}/slash-commands`)
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
 - thread git diff summary + file preview (`GET /v1/threads/{threadId}/git-diff`, `GET /v1/threads/{threadId}/git-diff-file?path=...`)
+- thread-scoped absolute-file preview for message markdown links (`GET /v1/threads/{threadId}/file-preview?path=...`, `GET /v1/threads/{threadId}/file-preview-content?path=...`)
 - thread session-usage snapshot lookup (`GET /v1/threads/{threadId}/session-usage?sessionId=...`)
 - turn create (`POST /v1/threads/{threadId}/turns`, JSON or multipart for attachment-backed prompts)
 - attachment readback (`GET /attachments/{attachmentId}`)

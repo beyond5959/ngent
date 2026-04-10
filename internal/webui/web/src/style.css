@@ -1348,6 +1348,53 @@ body {
   text-decoration: underline;
 }
 
+.message-file-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  vertical-align: baseline;
+  transition: color var(--t-fast), opacity var(--t-fast);
+}
+
+.message-file-link:hover {
+  color: color-mix(in srgb, var(--accent) 84%, var(--text-1));
+  text-decoration: underline;
+}
+
+.message-file-link__label {
+  min-width: 0;
+  max-width: min(100%, 48ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: inherit;
+}
+
+.message-file-link__line {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.message-file-link--disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+  text-decoration: none;
+  opacity: 0.9;
+}
+
+.message-file-link--disabled:hover {
+  color: var(--text-3);
+  text-decoration: none;
+}
+
 .message-content-card__image {
   display: block;
   max-width: min(100%, 560px);
@@ -5541,6 +5588,61 @@ button:active:not(:disabled),
 
 .git-diff-drawer__line--deleted .git-diff-drawer__line-text {
   color: color-mix(in srgb, var(--error) 86%, var(--text-1) 14%);
+}
+
+.git-diff-drawer__line--highlight {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 64%, transparent);
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg-panel-strong));
+}
+
+.message-file-preview__image-wrap {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+}
+
+.message-file-preview__image {
+  display: block;
+  max-width: 100%;
+  max-height: min(72vh, 860px);
+  width: auto;
+  height: auto;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-inset) 92%, transparent);
+  object-fit: contain;
+}
+
+.message-file-preview__pager {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-strong) 88%, transparent);
+}
+
+.message-file-preview__pager-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.message-file-preview__pager-lines {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.message-file-preview__pager-error {
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.4;
 }
 
 .thread-model-switch--composer .thread-model-trigger {

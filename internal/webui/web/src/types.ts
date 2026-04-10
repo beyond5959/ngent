@@ -121,6 +121,19 @@ export interface ThreadGitDiffRenderedBlock {
   newLineNumbers?: number[]
 }
 
+export interface ThreadFilePreview {
+  threadId: string
+  path: string
+  supported: boolean
+  kind?: 'text' | 'image'
+  mimeType?: string
+  startLine?: number
+  endLine?: number
+  focusLine?: number
+  blocks?: ThreadGitDiffRenderedBlock[]
+  reason?: 'binary' | 'non_text'
+}
+
 export interface SessionUsage {
   sessionId: string
   updatedAt?: string

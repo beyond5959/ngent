@@ -11,6 +11,7 @@ import {
 } from './components/permission-card.ts'
 import { resolveGitDiffFileIcon } from './git-file-icons.ts'
 import { renderMarkdown, bindMarkdownControls } from './markdown.ts'
+import type { LocalFileLinkDetail } from './markdown.ts'
 import type {
   Thread,
   Message,
@@ -27,6 +28,7 @@ import type {
   SessionTranscriptMessage,
   ToolCall,
   MessageAttachment,
+  ThreadFilePreview,
   ThreadGitDiffInfo,
   ThreadGitDiffFileDetail,
   ThreadGitDiffRenderedBlock,
@@ -281,6 +283,25 @@ interface ThreadGitDiffPreviewState {
   detail: ThreadGitDiffFileDetailState
 }
 
+interface MessageFilePreviewState {
+  scopeKey: string
+  path: string
+  label: string
+  line?: number
+  supported: boolean | null
+  kind: ThreadFilePreview['kind']
+  mimeType: string
+  startLine: number
+  endLine: number
+  focusLine: number
+  blocks: ThreadGitDiffRenderedBlock[]
+  imageUrl: string
+  focusPending: boolean
+  loading: boolean
+  error: string
+  reason: ThreadFilePreview['reason']
+}
+
 interface ComposerAttachmentDraft {
   id: string
   file: File
@@ -304,17 +325,20 @@ const composerDraftByScope = new Map<string, string>()
 const threadGitStateByThread = new Map<string, ThreadGitState>()
 const threadGitDiffStateByScope = new Map<string, ThreadGitDiffState>()
 const threadGitDiffPreviewByScope = new Map<string, ThreadGitDiffPreviewState>()
+const messageFilePreviewByScope = new Map<string, MessageFilePreviewState>()
 const expandedThreadGitDiffScopes = new Set<string>()
 const pendingThreadGitDiffToggleScopes = new Set<string>()
 const sessionUsageByScope = new Map<string, SessionUsage>()
 const threadGitRequestSeqByThread = new Map<string, number>()
 const threadGitDiffRequestSeqByScope = new Map<string, number>()
 const threadGitDiffDetailRequestSeqByKey = new Map<string, number>()
+const messageFilePreviewRequestSeqByScope = new Map<string, number>()
 let sessionPanelRequestSeq = 0
 let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
 let threadGitDiffRequestSeq = 0
 let threadGitDiffDetailRequestSeq = 0
+let messageFilePreviewRequestSeq = 0
 let lastComposerAttachmentPasteSignature = ''
 const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 60_000
 const COMPOSER_ATTACHMENT_PASTE_DEBOUNCE_MS = 300
@@ -462,6 +486,122 @@ function cloneThreadGitDiffFileDetailState(
         : undefined,
     })) : [],
     error: typeof detail?.error === 'string' ? detail.error : '',
+  }
+}
+
+function emptyMessageFilePreviewState(scopeKey = ''): MessageFilePreviewState {
+  return {
+    scopeKey: scopeKey.trim(),
+    path: '',
+    label: '',
+    line: undefined,
+    supported: null,
+    kind: undefined,
+    mimeType: '',
+    startLine: 0,
+    endLine: 0,
+    focusLine: 0,
+    blocks: [],
+    imageUrl: '',
+    focusPending: false,
+    loading: false,
+    error: '',
+    reason: undefined,
+  }
+}
+
+function cloneMessageFilePreviewState(
+  preview: Partial<MessageFilePreviewState> | null | undefined,
+  scopeKey = '',
+): MessageFilePreviewState {
+  return {
+    ...emptyMessageFilePreviewState(preview?.scopeKey ?? scopeKey),
+    ...preview,
+    scopeKey: preview?.scopeKey?.trim() || scopeKey.trim(),
+    path: preview?.path?.trim() || '',
+    label: preview?.label?.trim() || '',
+    mimeType: preview?.mimeType?.trim() || '',
+    startLine: typeof preview?.startLine === 'number' && Number.isFinite(preview.startLine) ? preview.startLine : 0,
+    endLine: typeof preview?.endLine === 'number' && Number.isFinite(preview.endLine) ? preview.endLine : 0,
+    focusLine: typeof preview?.focusLine === 'number' && Number.isFinite(preview.focusLine) ? preview.focusLine : 0,
+    blocks: Array.isArray(preview?.blocks) ? preview.blocks.map(block => ({
+      tone: block.tone,
+      text: Array.isArray(block.text) ? block.text.map(line => typeof line === 'string' ? line : '') : [],
+      oldLineNumbers: Array.isArray(block.oldLineNumbers)
+        ? block.oldLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+        : undefined,
+      newLineNumbers: Array.isArray(block.newLineNumbers)
+        ? block.newLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+        : undefined,
+    })) : [],
+    imageUrl: preview?.imageUrl?.trim() || '',
+    focusPending: !!preview?.focusPending,
+    error: typeof preview?.error === 'string' ? preview.error : '',
+  }
+}
+
+function messageFilePreview(scopeKey: string): MessageFilePreviewState | null {
+  return messageFilePreviewByScope.get(scopeKey.trim()) ?? null
+}
+
+function selectedMessageFilePreview(thread: Thread | null | undefined): MessageFilePreviewState | null {
+  const scopeKey = threadChatScopeKey(thread)
+  if (!scopeKey) return null
+  return messageFilePreview(scopeKey)
+}
+
+function revokeMessageFilePreviewImageURL(preview: MessageFilePreviewState | null | undefined): void {
+  if (!preview?.imageUrl) return
+  URL.revokeObjectURL(preview.imageUrl)
+}
+
+function setMessageFilePreview(scopeKey: string, patch: Partial<MessageFilePreviewState>): MessageFilePreviewState {
+  const normalizedScopeKey = scopeKey.trim()
+  const current = messageFilePreview(normalizedScopeKey)
+  const next = cloneMessageFilePreviewState({
+    ...(current ?? emptyMessageFilePreviewState(normalizedScopeKey)),
+    ...patch,
+    scopeKey: normalizedScopeKey,
+  }, normalizedScopeKey)
+
+  if (current?.imageUrl && current.imageUrl !== next.imageUrl) {
+    revokeMessageFilePreviewImageURL(current)
+  }
+  if (!next.path && !next.loading && !next.error && !next.imageUrl && !next.blocks.length) {
+    messageFilePreviewByScope.delete(normalizedScopeKey)
+    return emptyMessageFilePreviewState(normalizedScopeKey)
+  }
+
+  messageFilePreviewByScope.set(normalizedScopeKey, next)
+  return next
+}
+
+function clearMessageFilePreview(scopeKey: string): void {
+  const normalizedScopeKey = scopeKey.trim()
+  if (!normalizedScopeKey) return
+  const current = messageFilePreview(normalizedScopeKey)
+  if (current) {
+    revokeMessageFilePreviewImageURL(current)
+  }
+  messageFilePreviewByScope.delete(normalizedScopeKey)
+  messageFilePreviewRequestSeqByScope.delete(normalizedScopeKey)
+}
+
+function rebindMessageFilePreviewScope(oldScopeKey: string, nextScopeKey: string): void {
+  oldScopeKey = oldScopeKey.trim()
+  nextScopeKey = nextScopeKey.trim()
+  if (!oldScopeKey || !nextScopeKey || oldScopeKey === nextScopeKey) return
+
+  const current = messageFilePreview(oldScopeKey)
+  if (current) {
+    messageFilePreviewByScope.delete(oldScopeKey)
+    messageFilePreviewByScope.set(nextScopeKey, cloneMessageFilePreviewState(current, nextScopeKey))
+  }
+
+  const requestSeq = messageFilePreviewRequestSeqByScope.get(oldScopeKey)
+  if (typeof requestSeq === 'number') {
+    messageFilePreviewRequestSeqByScope.delete(oldScopeKey)
+    messageFilePreviewRequestSeqByScope.set(nextScopeKey, requestSeq)
   }
 }
 
@@ -2162,7 +2302,7 @@ function appendOrRestoreStreamingBubble(thread: Thread): void {
         <span class="message-time">${formatTimestamp(startedAt)}</span>
       </div>
     </div>`
-  bindMarkdownControls(div)
+  bindMarkdownUI(div)
 
   listEl.appendChild(div)
   activeStreamMsgId = streamState.messageId
@@ -2265,6 +2405,7 @@ function rebindScopeRuntime(oldScopeKey: string, nextScopeKey: string, nextSessi
       sessionUsageByScope.set(nextScopeKey, mergedUsage)
     }
   }
+  rebindMessageFilePreviewScope(oldScopeKey, nextScopeKey)
   moveComposerDraft(oldScopeKey, nextScopeKey)
   if (activeStreamScopeKey === oldScopeKey) {
     activeStreamScopeKey = nextScopeKey
@@ -5478,13 +5619,17 @@ function renderMessage(msg: Message): string {
     </div>`
 }
 
+function bindMarkdownUI(container: HTMLElement): void {
+  bindMarkdownControls(container, { onLocalFileOpen: openLocalFilePreviewFromMarkdown })
+}
+
 function createMessageNode(msg: Message): HTMLElement | null {
   const template = document.createElement('template')
   template.innerHTML = renderMessage(msg).trim()
   const node = template.content.firstElementChild
   if (!(node instanceof HTMLElement)) return null
 
-  bindMarkdownControls(node)
+  bindMarkdownUI(node)
   bindReasoningPanels(node)
   bindToolCallPanels(node)
   return node
@@ -5579,7 +5724,7 @@ async function renderMessageListAsync(
 
 function renderMessageListSync(listEl: HTMLElement, msgs: Message[]): void {
   listEl.innerHTML = msgs.map(m => renderMessage(m)).join('')
-  bindMarkdownControls(listEl)
+  bindMarkdownUI(listEl)
   bindReasoningPanels(listEl)
   bindToolCallPanels(listEl)
   finishMessageListRender(listEl)
@@ -5624,7 +5769,7 @@ function updateStreamingBubbleSegments(
     activeStreamingToolCallSegmentID,
     '',
   )
-  bindMarkdownControls(segmentsEl)
+  bindMarkdownUI(segmentsEl)
   bindReasoningPanels(segmentsEl)
   bindToolCallPanels(segmentsEl)
 }
@@ -5703,7 +5848,7 @@ function setToolCallPanelExpanded(panelEl: HTMLElement, expanded: boolean): void
   if (contentEl) {
     contentEl.dataset.state = state
     contentEl.hidden = !expanded
-    if (expanded) bindMarkdownControls(contentEl)
+    if (expanded) bindMarkdownUI(contentEl)
   }
 }
 
@@ -5877,12 +6022,67 @@ function setThreadGitDiffExpanded(scopeKey: string, expanded: boolean): void {
   expandedThreadGitDiffScopes.delete(scopeKey)
 }
 
+function openLocalFilePreviewFromMarkdown(detail: LocalFileLinkDetail): void {
+  const { activeThreadId, threads } = store.get()
+  if (!activeThreadId) return
+  const thread = threads.find(item => item.threadId === activeThreadId)
+  const scopeKey = threadChatScopeKey(thread)
+  if (!scopeKey) return
+  openMessageFilePreview(scopeKey, detail)
+}
+
+function openMessageFilePreview(scopeKey: string, detail: LocalFileLinkDetail): void {
+  const normalizedScopeKey = scopeKey.trim()
+  const normalizedPath = detail.path.trim()
+  if (!normalizedScopeKey || !normalizedPath) return
+
+  const current = messageFilePreview(normalizedScopeKey)
+  if (
+    current
+    && current.path === normalizedPath
+    && (current.line ?? 0) === (detail.line ?? 0)
+    && !current.loading
+  ) {
+    return
+  }
+
+  const threadId = threadIDFromScopeKey(normalizedScopeKey)
+  closeThreadGitDiffDrawer(threadId)
+  setMessageFilePreview(normalizedScopeKey, {
+    path: normalizedPath,
+    label: detail.label,
+    line: detail.line,
+    supported: null,
+    kind: undefined,
+    mimeType: '',
+    startLine: 0,
+    endLine: 0,
+    focusLine: detail.line ?? 0,
+    blocks: [],
+    imageUrl: '',
+    focusPending: !!detail.line,
+    loading: true,
+    error: '',
+    reason: undefined,
+  })
+
+  if (store.get().activeThreadId === threadId) {
+    syncThreadGitDiffDrawer(threadId)
+  }
+  void loadMessageFilePreview(threadId, normalizedScopeKey, {
+    path: normalizedPath,
+    label: detail.label,
+    line: detail.line,
+  })
+}
+
 function openThreadGitDiffDrawer(scopeKey: string, filePath: string): void {
   const threadId = threadIDFromScopeKey(scopeKey)
   const state = threadGitDiffState(scopeKey)
   const selectedFile = state.files.find(file => file.path === filePath)
   if (!isThreadGitDiffFileViewable(selectedFile)) return
   if (state.drawerOpen && state.selectedFilePath === filePath) return
+  clearMessageFilePreview(activeChatScopeKey())
   setThreadGitDiffState(scopeKey, {
     drawerOpen: true,
     selectedFilePath: filePath,
@@ -5936,6 +6136,122 @@ function closeThreadGitDiffDrawer(threadId = store.get().activeThreadId ?? ''): 
   }
 }
 
+function closeMessageFilePreview(threadId = store.get().activeThreadId ?? ''): void {
+  const thread = store.get().threads.find(item => item.threadId === threadId)
+  const scopeKey = threadChatScopeKey(thread)
+  if (!scopeKey) return
+  clearMessageFilePreview(scopeKey)
+  if (store.get().activeThreadId === threadId) {
+    syncThreadGitDiffDrawer(threadId)
+  }
+}
+
+async function loadMessageFilePreview(
+  threadId: string,
+  scopeKey: string,
+  options: { path: string; label: string; line?: number },
+): Promise<MessageFilePreviewState | null> {
+  const normalizedThreadID = threadId.trim()
+  const normalizedScopeKey = scopeKey.trim()
+  const normalizedPath = options.path.trim()
+  if (!normalizedThreadID || !normalizedScopeKey || !normalizedPath) {
+    return null
+  }
+
+  const currentPreview = messageFilePreview(normalizedScopeKey)
+  const retainedPreview = currentPreview && currentPreview.path === normalizedPath
+    ? currentPreview
+    : null
+
+  messageFilePreviewRequestSeq += 1
+  const requestSeq = messageFilePreviewRequestSeq
+  messageFilePreviewRequestSeqByScope.set(normalizedScopeKey, requestSeq)
+  setMessageFilePreview(normalizedScopeKey, {
+    path: normalizedPath,
+    label: options.label,
+    line: retainedPreview?.line ?? options.line,
+    focusLine: options.line ?? 0,
+    focusPending: !!options.line,
+    startLine: 0,
+    endLine: 0,
+    blocks: [],
+    imageUrl: '',
+    loading: true,
+    error: '',
+  })
+
+  if (store.get().activeThreadId === normalizedThreadID) {
+    syncThreadGitDiffDrawer(normalizedThreadID)
+  }
+
+  try {
+    const preview = await api.getThreadFilePreview(normalizedThreadID, normalizedPath, {
+      line: options.line,
+    })
+    if (messageFilePreviewRequestSeqByScope.get(normalizedScopeKey) !== requestSeq) {
+      return messageFilePreview(normalizedScopeKey)
+    }
+
+    let imageUrl = ''
+    if (preview.supported && preview.kind === 'image') {
+      const imageBlob = await api.getThreadFilePreviewImageBlob(normalizedThreadID, normalizedPath)
+      if (messageFilePreviewRequestSeqByScope.get(normalizedScopeKey) !== requestSeq) {
+        return messageFilePreview(normalizedScopeKey)
+      }
+      imageUrl = URL.createObjectURL(imageBlob)
+    }
+
+    const nextPreview = setMessageFilePreview(normalizedScopeKey, {
+      path: preview.path,
+      label: options.label,
+      line: retainedPreview?.line ?? options.line,
+      supported: preview.supported,
+      kind: preview.kind,
+      mimeType: preview.mimeType ?? '',
+      startLine: preview.startLine ?? 0,
+      endLine: preview.endLine ?? 0,
+      focusLine: preview.focusLine ?? 0,
+      focusPending: (preview.focusLine ?? 0) > 0,
+      blocks: preview.blocks ?? [],
+      imageUrl,
+      loading: false,
+      error: '',
+      reason: preview.reason,
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncThreadGitDiffDrawer(normalizedThreadID)
+    }
+    return nextPreview
+  } catch (err) {
+    if (messageFilePreviewRequestSeqByScope.get(normalizedScopeKey) !== requestSeq) {
+      return messageFilePreview(normalizedScopeKey)
+    }
+
+    const message = err instanceof Error ? err.message : String(err)
+    const nextPreview = setMessageFilePreview(normalizedScopeKey, {
+      path: normalizedPath,
+      label: options.label,
+      line: retainedPreview?.line ?? options.line,
+      startLine: 0,
+      endLine: 0,
+      focusLine: options.line ?? 0,
+      focusPending: !!options.line,
+      loading: false,
+      error: message,
+      supported: false,
+      kind: undefined,
+      mimeType: '',
+      blocks: [],
+      imageUrl: '',
+      reason: undefined,
+    })
+    if (store.get().activeThreadId === normalizedThreadID) {
+      syncThreadGitDiffDrawer(normalizedThreadID)
+    }
+    return nextPreview
+  }
+}
+
 function syncThreadGitDiffControl(threadId = store.get().activeThreadId ?? ''): void {
   const slotEl = document.getElementById('thread-git-diff-slot')
   if (!(slotEl instanceof HTMLElement)) return
@@ -5975,11 +6291,18 @@ function syncThreadGitDiffDrawer(threadId = store.get().activeThreadId ?? ''): v
     return
   }
 
-  const preview = selectedThreadGitDiffPreview(thread)
-  const markup = preview ? renderThreadGitDiffDrawer(preview) : ''
+  const messagePreview = selectedMessageFilePreview(thread)
+  const gitPreview = selectedThreadGitDiffPreview(thread)
+  const markup = messagePreview
+    ? renderMessageFilePreviewDrawer(messagePreview)
+    : (gitPreview ? renderThreadGitDiffDrawer(gitPreview) : '')
   slotEl.innerHTML = markup
   slotEl.hidden = !markup
   if (!markup) return
+  if (messagePreview) {
+    bindMessageFilePreviewDrawer(thread)
+    return
+  }
   bindThreadGitDiffDrawer(thread)
 }
 
@@ -5992,6 +6315,7 @@ function refreshThreadGitDiffPreview(scopeKey: string): void {
     : null
   const activeScopeKey = selectedThreadGitDiffScopeKey(activeThread)
   if (!activeScopeKey || activeScopeKey !== scopeKey.trim()) return
+  if (selectedMessageFilePreview(activeThread)) return
 
   const preview = threadGitDiffPreview(activeScopeKey)
   if (!preview) return
@@ -6475,6 +6799,32 @@ function bindThreadGitDiffDrawer(thread: Thread): void {
   })
 }
 
+function scrollMessageFilePreviewToFocusLine(): void {
+  const focusLineEl = document.querySelector<HTMLElement>('.git-diff-drawer__line--highlight[data-focus-line]')
+  focusLineEl?.scrollIntoView({ block: 'center' })
+}
+
+function bindMessageFilePreviewDrawer(thread: Thread): void {
+  const drawerEl = document.getElementById('message-file-preview-drawer')
+  if (!(drawerEl instanceof HTMLElement)) return
+
+  const closeBtn = document.getElementById('message-file-preview-close') as HTMLButtonElement | null
+  closeBtn?.addEventListener('click', event => {
+    event.preventDefault()
+    closeMessageFilePreview(thread.threadId)
+  })
+
+  const preview = selectedMessageFilePreview(thread)
+  if (!preview) return
+
+  if (preview.focusPending && preview.focusLine > 0) {
+    window.requestAnimationFrame(() => {
+      scrollMessageFilePreviewToFocusLine()
+      setMessageFilePreview(preview.scopeKey, { focusPending: false })
+    })
+  }
+}
+
 function closeSlashCommandMenu(): void {
   const menuEl = document.getElementById('slash-command-menu') as HTMLDivElement | null
   if (!menuEl) return
@@ -6849,6 +7199,7 @@ function renderThreadGitDiffFileRow(
 function renderThreadGitDiffDrawerContent(
   detail: ThreadGitDiffFileDetailState,
   fallbackKind: ThreadGitDiffFileDetail['kind'],
+  options: { focusLine?: number; unsupportedMessage?: string } = {},
 ): string {
   if (detail.loading) {
     return `
@@ -6868,7 +7219,8 @@ function renderThreadGitDiffDrawerContent(
       </div>`
   }
   if (detail.supported === false) {
-    const message = detail.reason === 'binary' ? t('gitDiffUnsupportedBinary') : t('gitDiffUnsupportedText')
+    const message = options.unsupportedMessage
+      || (detail.reason === 'binary' ? t('gitDiffUnsupportedBinary') : t('gitDiffUnsupportedText'))
     return `<div class="git-diff-drawer__empty">${escHtml(message)}</div>`
   }
 
@@ -6877,18 +7229,19 @@ function renderThreadGitDiffDrawerContent(
     return textLines.map((lineText, index) => {
       const oldLineNumber = Array.isArray(block.oldLineNumbers) ? block.oldLineNumbers[index] : undefined
       const newLineNumber = Array.isArray(block.newLineNumbers) ? block.newLineNumbers[index] : undefined
+      const highlighted = !!options.focusLine && (oldLineNumber === options.focusLine || newLineNumber === options.focusLine)
       const showLineNumbers = block.tone !== 'hunk' && block.tone !== 'meta' && (
         typeof oldLineNumber === 'number' || typeof newLineNumber === 'number'
       )
       if (!showLineNumbers) {
         return `
-          <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone} git-diff-drawer__line--no-numbers">
+          <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone} git-diff-drawer__line--no-numbers${highlighted ? ' git-diff-drawer__line--highlight' : ''}">
             <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
           </div>`
       }
 
       return `
-        <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone}">
+        <div class="git-diff-drawer__line git-diff-drawer__line--${block.tone}${highlighted ? ' git-diff-drawer__line--highlight' : ''}"${highlighted ? ` data-focus-line="${options.focusLine}"` : ''}>
           <span class="git-diff-drawer__line-no git-diff-drawer__line-no--old" aria-hidden="true">${typeof oldLineNumber === 'number' ? String(oldLineNumber) : '&nbsp;'}</span>
           <span class="git-diff-drawer__line-no git-diff-drawer__line-no--new" aria-hidden="true">${typeof newLineNumber === 'number' ? String(newLineNumber) : '&nbsp;'}</span>
           <code class="git-diff-drawer__line-text">${lineText ? escHtml(lineText) : '&nbsp;'}</code>
@@ -6927,6 +7280,82 @@ function renderThreadGitDiffDrawer(preview: ThreadGitDiffPreviewState): string {
         </button>
       </div>
       ${renderThreadGitDiffDrawerContent(detail, detailKind)}
+    </aside>`
+}
+
+function renderMessageFilePreviewPager(preview: MessageFilePreviewState): string {
+  const isTextPreview = preview.kind === 'text' || (!!preview.blocks.length && !preview.imageUrl)
+  if (!isTextPreview || preview.supported === false) return ''
+
+  const linesLabel = preview.startLine > 0 && preview.endLine >= preview.startLine
+    ? t('filePreviewLines', { start: preview.startLine, end: preview.endLine })
+    : ''
+  if (!linesLabel && !preview.error) return ''
+
+  return `
+    <div class="message-file-preview__pager">
+      <div class="message-file-preview__pager-copy">
+        ${linesLabel ? `<span class="message-file-preview__pager-lines">${escHtml(linesLabel)}</span>` : ''}
+        ${preview.error ? `<span class="message-file-preview__pager-error">${escHtml(preview.error)}</span>` : ''}
+      </div>
+    </div>`
+}
+
+function renderMessageFilePreviewDrawer(preview: MessageFilePreviewState): string {
+  if (!preview.scopeKey || !preview.path) return ''
+
+  const badgeBits = [
+    preview.kind === 'image' ? t('image') : t('file'),
+    preview.line ? `L${preview.line}` : '',
+  ].filter(Boolean)
+  const badgeLabel = badgeBits.join(' · ')
+  const hasLoadedTextBlocks = preview.supported === true && preview.kind === 'text' && preview.blocks.length > 0
+  const detailState = cloneThreadGitDiffFileDetailState({
+    path: preview.path,
+    supported: preview.supported,
+    kind: 'file',
+    blocks: preview.blocks,
+    reason: preview.reason,
+    loading: preview.loading && !hasLoadedTextBlocks,
+    error: hasLoadedTextBlocks ? '' : preview.error,
+  }, preview.path)
+
+  const contentHTML = preview.supported && preview.kind === 'image' && preview.imageUrl
+    ? `
+      <div class="git-diff-drawer__body">
+        <div class="message-file-preview__image-wrap">
+          <img
+            class="message-file-preview__image"
+            src="${escHtml(preview.imageUrl)}"
+            alt="${escHtml(preview.label || preview.path)}"
+            loading="eager"
+          />
+        </div>
+      </div>`
+    : renderThreadGitDiffDrawerContent(detailState, 'file', {
+      focusLine: preview.focusLine,
+      unsupportedMessage: t('filePreviewUnsupported'),
+    })
+
+  return `
+    <aside class="git-diff-drawer message-file-preview-drawer" id="message-file-preview-drawer" data-scope-key="${escHtml(preview.scopeKey)}" role="dialog" aria-label="${escHtml(t('filePreviewDrawerTitle'))}">
+      <div class="git-diff-drawer__header">
+        <div class="git-diff-drawer__copy">
+          <span class="git-diff-drawer__eyebrow">${escHtml(t('filePreviewDrawerTitle'))}</span>
+          <div class="git-diff-drawer__title-row">
+            <h3 class="git-diff-drawer__title" title="${escHtml(preview.path)}">${escHtml(preview.label || preview.path)}</h3>
+            <span class="git-diff-drawer__badge">${escHtml(badgeLabel || t('file'))}</span>
+          </div>
+          <div class="git-diff-drawer__repo message-file-preview__path" title="${escHtml(preview.path)}">
+            <span class="git-diff-drawer__repo-label">${escHtml(preview.path)}</span>
+          </div>
+        </div>
+        <button class="git-diff-drawer__close" id="message-file-preview-close" type="button" aria-label="${escHtml(t('close'))}">
+          ${iconClose}
+        </button>
+      </div>
+      ${contentHTML}
+      ${renderMessageFilePreviewPager(preview)}
     </aside>`
 }
 
@@ -7212,6 +7641,11 @@ function updateChatArea(): void {
 
   if (!thread) {
     stopThreadGitDiffPolling()
+    const previewShell = document.getElementById('git-diff-preview-shell')
+    if (previewShell) {
+      previewShell.innerHTML = ''
+      previewShell.hidden = true
+    }
     chat.innerHTML = renderChatEmpty()
     document.getElementById('new-thread-empty-btn')?.addEventListener('click', openNewThread)
     bindSidebarToggle()

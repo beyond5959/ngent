@@ -11,7 +11,42 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-04-04)
+## Latest Update (2026-04-10)
+
+- `Post-M8` Web UI markdown file preview drawer completed:
+  - added thread-scoped local file preview endpoints:
+    - `GET /v1/threads/{threadId}/file-preview?path=...`
+    - `GET /v1/threads/{threadId}/file-preview-content?path=...`
+  - backend preview now validates absolute file paths against configured allowed roots, resolves symlinks before authorization, and supports only text/image content types.
+  - text previews now render one bounded prefix with absolute line numbers: the backend reads at most the first 10000 lines and applies `#L<number>` highlight only when that target line falls inside the returned range.
+  - image previews stream the raw file bytes through the new content endpoint so the browser can render authenticated local images without exposing bearer tokens in query strings.
+  - finalized markdown links whose `href` is an absolute local file path are now rendered in the Web UI as ordinary inline file links instead of plain browser navigation targets.
+  - clicking those inline file links reuses the existing right-side drawer:
+    - text files show at most the first 10000 lines with optional focused-line highlight.
+    - image files show an inline preview surface.
+    - opening a message-linked file explicitly dismisses any currently open git-diff file drawer first.
+    - shared drawer follow-up polish: file-content previews now use a single line-number column instead of the diff view's two-column old/new gutter; the full two-column gutter remains only for tracked patch views.
+  - unsupported file types remain non-previewable from this surface and render as disabled inline links rather than broken browser navigations.
+  - follow-up polish:
+    - removed the message-link file icons so only the label and optional `L<number>` badge remain in transcript markdown.
+    - removed the preview drawer's file-type icon row for message-linked previews; git-diff file rows keep their existing icons.
+  - validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`
+
+## Previous Update (2026-04-10)
+
+- `Post-M8` session-history replay load-gating and history-event batching completed:
+  - moved selected-session transcript live-load gating from the embedded SPA into the backend `/history` path.
+  - session-scoped history now calls provider `session/load` only when the selected session has no filtered turns in the current `/history` response; once filtered turns exist, `/history` will reuse cached `sessionTranscript` if available but will not live-load a missing transcript from the provider.
+  - the embedded SPA keeps the simpler merge path: when replay is present it still renders replay first and local turns after it, but same-version backend behavior now determines whether replay comes from cache or from a fresh provider load.
+  - follow-up performance fix: thread history no longer issues one SQLite `ListEventsByTurn` read per turn when events are needed; the handler now batch-loads events for the thread's turns in one storage call and groups them in memory before session filtering/serialization.
+  - documentation now records the backend-gated live-replay policy and the remaining limitation that provider-only prehistory is unavailable after ngent turns exist unless a transcript snapshot was warmed into cache earlier, and that warmed transcript snapshots can still overlap with persisted turns because replay remains separate from `turns/events`.
+  - validation:
+    - pass: `go test ./...`
+    - pass: `git diff --check`
+
+## Previous Update (2026-04-04)
 
 - `Post-M8` memory-file redundancy cleanup completed:
   - kept `docs/SPEC.md` focused on current-state behavior while retaining older rollout notes in the appendix instead of duplicating them in the normative sections.

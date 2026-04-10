@@ -1540,6 +1540,163 @@ func TestThreadHistoryEndpointUsesCachedSessionTranscriptAcrossRestart(t *testin
 	}
 }
 
+func TestThreadHistoryEndpointSkipsSessionTranscriptWhenSessionAlreadyHasTurns(t *testing.T) {
+	root := t.TempDir()
+	streamer := &sessionBoundTranscriptCountingStreamer{
+		sessionID: "ses-a",
+		result: agents.SessionTranscriptResult{
+			Messages: []agents.SessionTranscriptMessage{
+				{Role: "user", Content: "older hello", Timestamp: "2026-04-10T01:00:00Z"},
+				{Role: "assistant", Content: "older world", Timestamp: "2026-04-10T01:00:01Z"},
+			},
+		},
+	}
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	status, body := doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"sessionId": "ses-a"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("set session status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	turnResp := runTurnStreamRequest(t, ts.URL, "client-a", threadID, "from-a")
+	if turnResp.StatusCode != http.StatusOK {
+		t.Fatalf("session turn status = %d, want %d, body=%s", turnResp.StatusCode, http.StatusOK, turnResp.Body)
+	}
+
+	status, body = doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID+"/history?includeEvents=true&sessionId=ses-a",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("history(sessionId=ses-a) status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	var history historyWithEventsResponse
+	if err := json.Unmarshal([]byte(body), &history); err != nil {
+		t.Fatalf("unmarshal history(sessionId=ses-a): %v", err)
+	}
+	if got, want := len(history.Turns), 1; got != want {
+		t.Fatalf("len(turns) = %d, want %d", got, want)
+	}
+	if got, want := history.Turns[0].ResponseText, "from-a"; got != want {
+		t.Fatalf("turns[0].responseText = %q, want %q", got, want)
+	}
+	if history.SessionTranscript != nil {
+		t.Fatalf("sessionTranscript = %#v, want nil when session already has turns", history.SessionTranscript)
+	}
+	if got := streamer.LoadCalls(); got != 0 {
+		t.Fatalf("LoadCalls() = %d, want 0", got)
+	}
+}
+
+func TestThreadHistoryEndpointReturnsCachedSessionTranscriptWhenSessionAlreadyHasTurns(t *testing.T) {
+	root := t.TempDir()
+	streamer := &sessionBoundTranscriptCountingStreamer{
+		sessionID: "ses-a",
+		result: agents.SessionTranscriptResult{
+			Messages: []agents.SessionTranscriptMessage{
+				{Role: "user", Content: "older hello", Timestamp: "2026-04-10T01:00:00Z"},
+				{Role: "assistant", Content: "older world", Timestamp: "2026-04-10T01:00:01Z"},
+			},
+		},
+	}
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+
+	status, body := doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID+"/history?sessionId=ses-a",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("warm history(sessionId=ses-a) status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+	if got := streamer.LoadCalls(); got != 1 {
+		t.Fatalf("LoadCalls() after warmup = %d, want 1", got)
+	}
+
+	status, body = doJSON(
+		t,
+		http.MethodPatch,
+		ts.URL+"/v1/threads/"+threadID,
+		map[string]any{"agentOptions": map[string]any{"sessionId": "ses-a"}},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("set session status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	turnResp := runTurnStreamRequest(t, ts.URL, "client-a", threadID, "from-a")
+	if turnResp.StatusCode != http.StatusOK {
+		t.Fatalf("session turn status = %d, want %d, body=%s", turnResp.StatusCode, http.StatusOK, turnResp.Body)
+	}
+
+	status, body = doJSON(
+		t,
+		http.MethodGet,
+		ts.URL+"/v1/threads/"+threadID+"/history?includeEvents=true&sessionId=ses-a",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("history(sessionId=ses-a) status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	var history historyWithEventsResponse
+	if err := json.Unmarshal([]byte(body), &history); err != nil {
+		t.Fatalf("unmarshal history(sessionId=ses-a): %v", err)
+	}
+	if got, want := len(history.Turns), 1; got != want {
+		t.Fatalf("len(turns) = %d, want %d", got, want)
+	}
+	if history.SessionTranscript == nil {
+		t.Fatal("sessionTranscript = nil, want cached value")
+	}
+	if !history.SessionTranscript.Supported {
+		t.Fatal("sessionTranscript.supported = false, want true")
+	}
+	if got, want := len(history.SessionTranscript.Messages), 2; got != want {
+		t.Fatalf("len(sessionTranscript.messages) = %d, want %d", got, want)
+	}
+	if got := history.SessionTranscript.Messages[1].Content; got != "older world" {
+		t.Fatalf("sessionTranscript.messages[1].content = %q, want %q", got, "older world")
+	}
+	if got := streamer.LoadCalls(); got != 1 {
+		t.Fatalf("LoadCalls() after turns exist = %d, want 1", got)
+	}
+}
+
 func TestThreadHistoryEndpointKeepsTurnsWhenSessionTranscriptLoadFails(t *testing.T) {
 	root := t.TempDir()
 	h := newTestServer(t, testServerOptions{
@@ -3018,6 +3175,216 @@ func TestThreadGitDiffFileRejectsUnsafePath(t *testing.T) {
 	)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+}
+
+func TestThreadFilePreviewReturnsFirst10000LinesWithFocusedLine(t *testing.T) {
+	root := t.TempDir()
+	var builder strings.Builder
+	for index := 1; index <= 12050; index += 1 {
+		builder.WriteString(fmt.Sprintf("line %d\n", index))
+	}
+	path := filepath.Join(root, "docs", "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(path): %v", err)
+	}
+	if err := os.WriteFile(path, []byte(builder.String()), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(path): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+	threadID := createThreadForClient(t, h, "client-a", root)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/file-preview?path="+url.QueryEscape(path)+"&line=743",
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		ThreadID  string `json:"threadId"`
+		Path      string `json:"path"`
+		Supported bool   `json:"supported"`
+		Kind      string `json:"kind"`
+		StartLine int    `json:"startLine"`
+		EndLine   int    `json:"endLine"`
+		FocusLine int    `json:"focusLine"`
+		Blocks    []struct {
+			Tone           string   `json:"tone"`
+			Text           []string `json:"text"`
+			NewLineNumbers []int    `json:"newLineNumbers"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got, want := body.ThreadID, threadID; got != want {
+		t.Fatalf("threadId = %q, want %q", got, want)
+	}
+	if got, want := body.Path, evalPath(t, path); got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if !body.Supported || body.Kind != "text" {
+		t.Fatalf("supported/kind = %v/%q, want true/text", body.Supported, body.Kind)
+	}
+	if got, want := body.StartLine, 1; got != want {
+		t.Fatalf("startLine = %d, want %d", got, want)
+	}
+	if got, want := body.EndLine, 10000; got != want {
+		t.Fatalf("endLine = %d, want %d", got, want)
+	}
+	if got, want := body.FocusLine, 743; got != want {
+		t.Fatalf("focusLine = %d, want %d", got, want)
+	}
+	if len(body.Blocks) != 1 {
+		t.Fatalf("len(blocks) = %d, want 1", len(body.Blocks))
+	}
+	block := body.Blocks[0]
+	if got, want := block.Tone, "plain"; got != want {
+		t.Fatalf("blocks[0].tone = %q, want %q", got, want)
+	}
+	if got, want := len(block.Text), 10000; got != want {
+		t.Fatalf("len(blocks[0].text) = %d, want %d", got, want)
+	}
+	if got, want := block.Text[0], "line 1"; got != want {
+		t.Fatalf("blocks[0].text[0] = %q, want %q", got, want)
+	}
+	if got, want := block.Text[742], "line 743"; got != want {
+		t.Fatalf("blocks[0].text[742] = %q, want %q", got, want)
+	}
+	if got, want := block.NewLineNumbers[0], 1; got != want {
+		t.Fatalf("blocks[0].newLineNumbers[0] = %d, want %d", got, want)
+	}
+	if got, want := block.NewLineNumbers[len(block.NewLineNumbers)-1], 10000; got != want {
+		t.Fatalf("blocks[0].newLineNumbers[last] = %d, want %d", got, want)
+	}
+}
+
+func TestThreadFilePreviewMarksNonTextFilesUnsupported(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "artifacts", "document.pdf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(path): %v", err)
+	}
+	if err := os.WriteFile(path, []byte("%PDF-1.7\npreview test\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(path): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+	threadID := createThreadForClient(t, h, "client-a", root)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/file-preview?path="+url.QueryEscape(path),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var body struct {
+		Supported bool   `json:"supported"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.Supported {
+		t.Fatal("supported = true, want false")
+	}
+	if got, want := body.Reason, "non_text"; got != want {
+		t.Fatalf("reason = %q, want %q", got, want)
+	}
+}
+
+func TestThreadFilePreviewReturnsImageAndStreamsContent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "images", "preview.png")
+	imageBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(path): %v", err)
+	}
+	if err := os.WriteFile(path, imageBytes, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(path): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+	threadID := createThreadForClient(t, h, "client-a", root)
+
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/file-preview?path="+url.QueryEscape(path),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var preview struct {
+		Supported bool   `json:"supported"`
+		Kind      string `json:"kind"`
+		MimeType  string `json:"mimeType"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("unmarshal preview response: %v", err)
+	}
+	if !preview.Supported || preview.Kind != "image" {
+		t.Fatalf("supported/kind = %v/%q, want true/image", preview.Supported, preview.Kind)
+	}
+	if got, want := preview.MimeType, "image/png"; got != want {
+		t.Fatalf("mimeType = %q, want %q", got, want)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/file-preview-content?path="+url.QueryEscape(path),
+		nil,
+	)
+	req.Header.Set("X-Client-ID", "client-a")
+	rawRR := httptest.NewRecorder()
+	h.ServeHTTP(rawRR, req)
+
+	if rawRR.Code != http.StatusOK {
+		t.Fatalf("content status = %d, want %d, body=%s", rawRR.Code, http.StatusOK, rawRR.Body.String())
+	}
+	if got, want := rawRR.Header().Get("Content-Type"), "image/png"; got != want {
+		t.Fatalf("content-type = %q, want %q", got, want)
+	}
+	if got := rawRR.Body.Bytes(); !bytes.Equal(got, imageBytes) {
+		t.Fatalf("body = %v, want %v", got, imageBytes)
+	}
+}
+
+func TestThreadFilePreviewRejectsPathOutsideAllowedRoots(t *testing.T) {
+	root := t.TempDir()
+	otherRoot := t.TempDir()
+	path := filepath.Join(otherRoot, "secret.txt")
+	if err := os.WriteFile(path, []byte("secret\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(path): %v", err)
+	}
+
+	h := newTestServer(t, testServerOptions{allowedRoots: []string{root}})
+	threadID := createThreadForClient(t, h, "client-a", root)
+	rr := performJSONRequest(
+		t,
+		h,
+		http.MethodGet,
+		"/v1/threads/"+threadID+"/file-preview?path="+url.QueryEscape(path),
+		nil,
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusForbidden, rr.Body.String())
 	}
 }
 
@@ -6561,6 +6928,42 @@ func (s *sessionTranscriptStreamer) LoadSessionTranscript(ctx context.Context, r
 }
 
 func (s *sessionTranscriptStreamer) LoadCalls() int32 {
+	return s.loadCalls.Load()
+}
+
+type sessionBoundTranscriptCountingStreamer struct {
+	sessionID     string
+	result        agents.SessionTranscriptResult
+	lastSessionID atomic.Value
+	loadCalls     atomic.Int32
+	err           error
+}
+
+func (s *sessionBoundTranscriptCountingStreamer) Name() string {
+	return "session-bound-transcript-counting-streamer"
+}
+
+func (s *sessionBoundTranscriptCountingStreamer) Stream(ctx context.Context, input string, onDelta func(delta string) error) (agents.StopReason, error) {
+	if err := agents.NotifySessionBound(ctx, s.sessionID); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	if err := onDelta(input); err != nil {
+		return agents.StopReasonEndTurn, err
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+func (s *sessionBoundTranscriptCountingStreamer) LoadSessionTranscript(ctx context.Context, req agents.SessionTranscriptRequest) (agents.SessionTranscriptResult, error) {
+	_ = ctx
+	s.loadCalls.Add(1)
+	s.lastSessionID.Store(strings.TrimSpace(req.SessionID))
+	if s.err != nil {
+		return agents.SessionTranscriptResult{}, s.err
+	}
+	return agents.CloneSessionTranscriptResult(s.result), nil
+}
+
+func (s *sessionBoundTranscriptCountingStreamer) LoadCalls() int32 {
 	return s.loadCalls.Load()
 }
 

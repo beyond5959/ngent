@@ -2,6 +2,8 @@
 
 ## ADR Index
 
+- ADR-095: Preview absolute local markdown file links through the shared right-side drawer. (Accepted)
+- ADR-094: Skip live provider transcript replay once a selected session already has filtered turns. (Accepted)
 - ADR-093: Integrate Pi Agent through the embedded `pkg/piacp` runtime. (Accepted)
 - ADR-092: Fold provider session replay into session-scoped `/history` responses. (Accepted)
 - ADR-091: Persist learned config snapshots per provider session. (Accepted)
@@ -91,6 +93,61 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-095: Preview Absolute Local Markdown File Links Through The Shared Right-Side Drawer
+
+- Status: Accepted
+- Date: 2026-04-10
+- Context:
+  - the embedded SPA previously left those links as ordinary browser navigations, which pushed the browser to a meaningless local-app URL and showed no useful file content.
+  - product requires that these message-linked files behave like the existing git-diff file surface:
+    - open inside the same right-side inspection panel instead of navigating away.
+    - support text preview and image preview.
+    - stay fail-closed for unsupported types.
+- Decision:
+  - add thread-scoped preview endpoints:
+    - `GET /v1/threads/{threadId}/file-preview?path=...`
+    - `GET /v1/threads/{threadId}/file-preview-content?path=...`
+  - authorize preview targets only when the requested absolute path resolves inside configured allowed roots; resolve symlinks before the allowed-root check so symlink escapes are rejected.
+  - support only text files and image files from this surface.
+    - text files return grouped rendered `blocks[]` for at most the first 10000 lines of the file.
+    - image files return preview metadata from `file-preview` and raw bytes from `file-preview-content`.
+    - other content types stay unsupported and do not get inline viewers or downloads here.
+  - parse optional `#L<number>` markdown fragments on the client and pass the line number to the preview endpoint; the drawer highlights that focused line after render when it falls inside the returned 10000-line window.
+  - render absolute local markdown links in finalized message markdown as ordinary inline links without pill chrome or extra file-type icons; unsupported extensions render as visibly disabled inline links.
+  - reuse the existing right-side drawer shell for both git-diff previews and message-linked file previews, with message-linked opens explicitly dismissing any current git-diff file drawer first.
+  - when that shared drawer is rendering whole-file contents rather than a unified patch, collapse the line-number area to one column to avoid wasting horizontal space; the old/new columns remain reserved for real patch previews only.
+- Consequences:
+  - clicking an absolute local file link in assistant output no longer navigates the browser away from the conversation.
+  - large text files stay readable because the drawer loads only a bounded 10000-line prefix instead of trying to page through the entire file in the browser.
+  - authenticated image previews remain local-first without leaking bearer tokens into query-string image URLs.
+  - preview authorization stays within ngent's existing absolute-path and allowed-root safety boundary.
+- Alternatives considered:
+  - leave message links as normal anchors and rely on browser navigation (rejected: the destination view is empty/useless in the embedded app shell).
+  - embed full file contents directly into the message stream (rejected: inflates turn payloads and makes large files impractical).
+  - support arbitrary binary downloads/viewers from the same surface (rejected: broader security/UI surface than required for the current workflow).
+
+## ADR-094: Skip Live Provider Transcript Replay Once A Selected Session Already Has Filtered Turns
+
+- Status: Accepted
+- Date: 2026-04-10
+- Context:
+  - ADR-092 let one session-scoped `/history` response carry both filtered persisted `turns` and optional provider-owned `sessionTranscript` replay.
+  - the embedded Web UI merged those two sources when replay was available so provider-owned prehistory could appear ahead of ngent-owned turns.
+  - real usage exposed a duplication bug: once a selected session already had visible filtered turns in `/history`, the provider replay could still reintroduce the same visible `user` / `assistant` transcript content, leaving the chat pane with duplicated history.
+- Decision:
+  - move the duplication guard to the backend history path instead of keeping it as a frontend-only merge rule.
+  - when `GET /v1/threads/{threadId}/history?sessionId=...` finds one or more filtered turns for that selected session in the current response, skip live provider transcript loading through `session/load`.
+  - in that filtered-turn case, `/history` may still attach `sessionTranscript` when sqlite `session_transcript_cache` already holds a snapshot for the same `(agent, cwd, sessionId)`, but it must not call the provider again on a cache miss.
+  - only when the selected session currently has no filtered turns does `/history` fall back to provider `session/load` after checking cache.
+  - keep the existing fresh-session promotion path in the Web UI; it still reuses browser-local messages after the first bind, and the UI continues rendering replay first and local turns after it whenever `sessionTranscript` is present.
+- Consequences:
+  - once filtered turns exist, session switches no longer trigger a fresh provider replay for chat reconstruction, removing one major source of duplicated visible transcript content.
+  - provider-owned historical context remains available without a new provider call when that transcript snapshot was already warmed earlier into sqlite cache.
+  - if a selected session later returns one or more filtered turns before any transcript snapshot was ever cached, later `/history` requests will not live-load the missing provider prehistory.
+- Alternatives considered:
+  - keep unconditional frontend merging and rely on overlap heuristics alone (rejected: brittle and already producing user-visible duplicates).
+  - import provider replay directly into persisted `turns/events` (rejected for now: still conflates provider-owned transcript with ngent-owned durable history and needs a broader storage migration).
 
 ## ADR-093: Integrate Pi Agent Through The Embedded `pkg/piacp` Runtime
 

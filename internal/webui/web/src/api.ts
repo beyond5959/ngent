@@ -5,6 +5,7 @@ import type {
   ConfigOption,
   ModelOption,
   SessionInfo,
+  ThreadFilePreview,
   ThreadGitDiffInfo,
   ThreadGitDiffFileDetail,
   ThreadGitDiffRenderedBlock,
@@ -103,6 +104,18 @@ interface ThreadGitDiffFileResponse {
   blocks?: ThreadGitDiffRenderedBlock[]
   reason?: ThreadGitDiffFileDetail['reason']
 }
+interface ThreadFilePreviewResponse {
+  threadId: string
+  path?: string
+  supported: boolean
+  kind?: ThreadFilePreview['kind']
+  mimeType?: string
+  startLine?: number
+  endLine?: number
+  focusLine?: number
+  blocks?: ThreadGitDiffRenderedBlock[]
+  reason?: ThreadFilePreview['reason']
+}
 interface CancelTurnResponse    { turnId: string; threadId: string; status: string }
 interface DeleteThreadResponse  { threadId: string; status: string }
 interface PathSearchResponse    { query: string; results: string[] }
@@ -125,12 +138,17 @@ class ApiClient {
     return h
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async fetchResponse(
+    method: string,
+    path: string,
+    body?: unknown,
+    contentType: string | null = 'application/json',
+  ): Promise<Response> {
     let res: Response
     try {
       res = await fetch(this.url(path), {
         method,
-        headers: this.headers(),
+        headers: this.headers(contentType),
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
     } catch (err) {
@@ -154,7 +172,17 @@ class ApiClient {
       throw new ApiError(message, code, res.status, details)
     }
 
+    return res
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await this.fetchResponse(method, path, body)
     return res.json() as Promise<T>
+  }
+
+  private async requestBlob(method: string, path: string): Promise<Blob> {
+    const res = await this.fetchResponse(method, path, undefined, null)
+    return res.blob()
   }
 
   /** GET /v1/agents */
@@ -332,6 +360,51 @@ class ApiClient {
       })),
       reason: data.reason,
     }
+  }
+
+  /** GET /v1/threads/{threadId}/file-preview */
+  async getThreadFilePreview(
+    threadId: string,
+    path: string,
+    options: { line?: number } = {},
+  ): Promise<ThreadFilePreview> {
+    const params = new URLSearchParams({ path: path.trim() })
+    if (typeof options.line === 'number' && Number.isFinite(options.line) && options.line > 0) {
+      params.set('line', String(Math.trunc(options.line)))
+    }
+    const data = await this.request<ThreadFilePreviewResponse>(
+      'GET',
+      `/v1/threads/${encodeURIComponent(threadId)}/file-preview?${params.toString()}`,
+    )
+    return {
+      threadId: data.threadId,
+      path: data.path?.trim() || path.trim(),
+      supported: !!data.supported,
+      kind: data.kind,
+      mimeType: data.mimeType?.trim() || undefined,
+      startLine: typeof data.startLine === 'number' ? data.startLine : undefined,
+      endLine: typeof data.endLine === 'number' ? data.endLine : undefined,
+      focusLine: typeof data.focusLine === 'number' ? data.focusLine : undefined,
+      blocks: (data.blocks ?? []).map(block => ({
+        tone: block.tone,
+        text: Array.isArray(block.text) ? block.text.map(line => typeof line === 'string' ? line : '') : [],
+        oldLineNumbers: Array.isArray(block.oldLineNumbers)
+          ? block.oldLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+          : undefined,
+        newLineNumbers: Array.isArray(block.newLineNumbers)
+          ? block.newLineNumbers.filter((lineNumber): lineNumber is number => typeof lineNumber === 'number' && Number.isFinite(lineNumber))
+          : undefined,
+      })),
+      reason: data.reason,
+    }
+  }
+
+  /** GET /v1/threads/{threadId}/file-preview-content */
+  async getThreadFilePreviewImageBlob(threadId: string, path: string): Promise<Blob> {
+    return this.requestBlob(
+      'GET',
+      `/v1/threads/${encodeURIComponent(threadId)}/file-preview-content?path=${encodeURIComponent(path)}`,
+    )
   }
 
   /** POST /v1/threads/{threadId}/config-options */

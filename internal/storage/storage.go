@@ -20,6 +20,8 @@ var (
 // agent's default config-options snapshot.
 const DefaultAgentConfigCatalogModelID = "__ngent_default__"
 
+const listEventsByTurnsBatchSize = 500
+
 // Store wraps SQLite-backed persistence operations.
 type Store struct {
 	path string
@@ -1425,9 +1427,64 @@ func (s *Store) ListTurnsByThread(ctx context.Context, threadID string) ([]Turn,
 	return turns, nil
 }
 
+// ListEventsByTurns returns all events for the provided turns ordered by sequence within each turn.
+func (s *Store) ListEventsByTurns(ctx context.Context, turnIDs []string) (map[string][]Event, error) {
+	filteredTurnIDs := make([]string, 0, len(turnIDs))
+	seen := make(map[string]struct{}, len(turnIDs))
+	for _, turnID := range turnIDs {
+		trimmedTurnID := strings.TrimSpace(turnID)
+		if trimmedTurnID == "" {
+			continue
+		}
+		if _, ok := seen[trimmedTurnID]; ok {
+			continue
+		}
+		seen[trimmedTurnID] = struct{}{}
+		filteredTurnIDs = append(filteredTurnIDs, trimmedTurnID)
+	}
+	if len(filteredTurnIDs) == 0 {
+		return map[string][]Event{}, nil
+	}
+
+	eventsByTurnID := make(map[string][]Event, len(filteredTurnIDs))
+	for start := 0; start < len(filteredTurnIDs); start += listEventsByTurnsBatchSize {
+		end := start + listEventsByTurnsBatchSize
+		if end > len(filteredTurnIDs) {
+			end = len(filteredTurnIDs)
+		}
+
+		batchTurnIDs := filteredTurnIDs[start:end]
+		queryArgs := make([]any, 0, len(batchTurnIDs))
+		for _, turnID := range batchTurnIDs {
+			queryArgs = append(queryArgs, turnID)
+		}
+
+		events, err := s.listEventsQuery(ctx, `
+			SELECT
+				event_id,
+				turn_id,
+				seq,
+				type,
+				data_json,
+				created_at
+			FROM events
+			WHERE turn_id IN (`+sqlPlaceholders(len(batchTurnIDs))+`)
+			ORDER BY turn_id ASC, seq ASC;
+		`, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+		for _, event := range events {
+			eventsByTurnID[event.TurnID] = append(eventsByTurnID[event.TurnID], event)
+		}
+	}
+
+	return eventsByTurnID, nil
+}
+
 // ListEventsByTurn returns all events for one turn ordered by sequence.
 func (s *Store) ListEventsByTurn(ctx context.Context, turnID string) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return s.listEventsQuery(ctx, `
 		SELECT
 			event_id,
 			turn_id,
@@ -1439,6 +1496,10 @@ func (s *Store) ListEventsByTurn(ctx context.Context, turnID string) ([]Event, e
 		WHERE turn_id = ?
 		ORDER BY seq ASC;
 	`, turnID)
+}
+
+func (s *Store) listEventsQuery(ctx context.Context, query string, args ...any) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: list events: %w", err)
 	}
@@ -1472,6 +1533,13 @@ func (s *Store) ListEventsByTurn(ctx context.Context, turnID string) ([]Event, e
 		return nil, fmt.Errorf("storage: list events rows: %w", err)
 	}
 	return events, nil
+}
+
+func sqlPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
 
 // AppendEvent appends one turn event and computes its next contiguous seq.

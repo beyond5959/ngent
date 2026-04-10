@@ -46,7 +46,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - with the drawer open, click elsewhere in the workspace and verify the drawer stays visible until an explicit close control is used.
   - with the drawer open, click the git-diff chip trigger to collapse the changed-file list and verify the drawer remains open with the same file content.
   - leave the same drawer open through at least one subsequent `/git-diff` summary refresh and verify the visible drawer content does not flash/reload or jump scroll position just because the summary chip refreshed.
-  - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch.
+  - click a newly created untracked text file row and verify the drawer shows current file contents rather than a git patch, using only one line-number column instead of the diff view's two-column gutter.
   - include at least one non-text/binary untracked file and verify its row stays disabled and does not open the drawer.
   - inspect one `/git-diff-file` network response and verify it returns grouped rendered `blocks[]` rather than duplicated raw `content` plus fully expanded per-line rows.
   - repeat with a non-git `cwd` or a host without `git` and verify the chip is absent.
@@ -62,6 +62,7 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - outside clicks in the rest of the workspace do not dismiss the open drawer.
   - collapsing the git-diff chip hides only the changed-file list; it does not dismiss the already open right-side drawer.
   - `/git-diff` polling continues to refresh the chip/list, but an already open drawer keeps the same visible content and scroll position until the user explicitly changes or closes that preview.
+  - file-content previews in the shared drawer use a single line-number column; tracked patch previews still show the full old/new columns.
   - drawer content rows render without horizontal separator rules between every line.
   - drawer content typography matches the composer footer's model-label styling.
   - the actual rendered code/content nodes inherit that typography as well, rather than falling back to the browser's default `code` font family.
@@ -79,6 +80,33 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/httpapi -run 'TestThreadGitDiffDoesNotRequireSessionID|TestThreadGitDiffUnavailableForNonRepository|TestThreadGitDiffSummaryAndFiles|TestThreadGitDiffFileReturnsPatchForTrackedFile|TestThreadGitDiffFileReturnsContentsForUntrackedTextFile|TestThreadGitDiffFileMarksBinaryUntrackedFilesUnsupported|TestThreadGitDiffFileRejectsUnsafePath' -count=1`
   - `cd internal/webui/web && npm run build`
   - manual browser check against a repository-backed thread/session
+
+## Supplemental Web UI: Markdown Local File Preview
+
+- Operation:
+  - open a thread whose `cwd` is inside configured allowed roots and produce or replay an assistant message containing absolute-path markdown links such as:
+    - `[docs/ACCEPTANCE.md](/abs/path/to/docs/ACCEPTANCE.md)`
+    - `[storage.go](/abs/path/to/internal/storage/storage.go#L1430)`
+  - include at least one previewable image link and one unsupported non-text/non-image link (for example a PDF) in similar absolute-path markdown form.
+  - verify the message renders those file links as ordinary inline links instead of bordered pills or plain browser-navigation anchors.
+  - click the text-file link and verify the right-side drawer opens a text preview showing the file's leading lines without navigating away from the conversation.
+  - click the `#L1430` text-file link and verify the drawer still opens the same bounded preview and visually highlights line 1430 when it falls inside the returned range.
+  - use a file longer than 10000 lines and verify the drawer stops at line 10000 instead of exposing pagination or incremental loading controls.
+  - while a git-diff file drawer is open, click one of the message-linked file links and verify the git-diff drawer closes before the message-linked file preview appears in the same shell.
+  - click the image-file link and verify the drawer switches to an inline image preview.
+  - verify the unsupported file link remains non-previewable and does not open a broken viewer.
+- Expected:
+  - absolute local markdown links are rendered as readable inline links with no pill chrome or extra file-type icon chrome.
+  - previewable text links open in the shared right-side drawer, keep the current chat visible, and render at most the first 10000 lines in one load.
+  - `#L<number>` fragments highlight the requested line when it is inside the returned 10000-line window.
+  - message-linked file-content previews use the compact file view with a single line-number column instead of the diff view's two-column gutter.
+  - image links open the same drawer shell and render the image inline rather than forcing a browser navigation.
+  - opening a message-linked file replaces any existing git-diff file drawer content rather than stacking a second panel.
+  - unsupported file types stay visibly disabled/non-previewable instead of navigating to an empty route.
+- Verification command:
+  - `go test ./internal/httpapi -run 'TestThreadFilePreviewReturnsFirst10000LinesWithFocusedLine|TestThreadFilePreviewMarksNonTextFilesUnsupported|TestThreadFilePreviewReturnsImageAndStreamsContent|TestThreadFilePreviewRejectsPathOutsideAllowedRoots' -count=1`
+  - `cd internal/webui/web && npm run build`
+  - manual browser check against a thread whose transcript includes absolute-path markdown file links
 
 ## Supplemental Web UI: Language Selection
 
@@ -488,7 +516,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the backend proxies ACP `session/list` through `GET /v1/threads/{threadId}/sessions`.
   - response includes `supported`, `sessions`, and `nextCursor`.
-  - for providers that replay transcript over ACP `session/load`, the first session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` can warm sqlite `session_transcript_cache` through the embedded `sessionTranscript` response field, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
+  - for providers that replay transcript over ACP `session/load`, a session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` can warm sqlite `session_transcript_cache` through the embedded `sessionTranscript` response field when that selected session has no filtered turns yet.
+  - once that selected session has filtered turns in `/history`, later `/history?sessionId=...` replies no longer call provider `session/load` for chat reconstruction.
+  - if a matching transcript snapshot was already cached earlier, `/history?sessionId=...` may still include that cached `sessionTranscript` alongside filtered `turns`.
   - the Web UI renders one left grouped rail where each thread header shows its session rows directly underneath.
   - there is no dedicated session column and no chat-edge session-drawer collapse control.
   - each thread header uses the agent/provider icon as its leading visual and does not show a thread-level relative timestamp.
@@ -714,7 +744,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the Web UI calls `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSessionId>` instead of fetching the whole thread and filtering only in browser memory.
   - the response includes only the selected session's persisted turns, subject to the legacy fallback rules for unannotated pre-`session_bound` turns.
-  - when available, the same `/history` response also includes provider transcript replay under `sessionTranscript`, and the UI merges that replay on top of the persisted turn history so rich ngent-owned artifacts remain visible.
+  - when the selected session has no filtered turns yet, the same `/history` response can also include provider transcript replay under `sessionTranscript`.
+  - once the selected session already has filtered turns, the backend no longer live-loads transcript replay from the provider.
+  - if `sessionTranscript` had already been warmed into cache earlier, the same `/history` response may still include it and the UI still renders replay first and `turns` after it.
   - for large multi-session threads, browser-side history parse time is materially lower because the payload no longer includes unrelated sessions' events.
 - Verification commands (executed 2026-03-26):
   - `go test ./internal/httpapi -run TestThreadHistoryFiltersBySessionID -count=1`

@@ -378,19 +378,27 @@ func (s *Server) handleThreadHistory(w http.ResponseWriter, r *http.Request, cli
 	}
 
 	loadEvents := includeEvents || sessionID != ""
+	eventsByTurnID := map[string][]storage.Event(nil)
+	if loadEvents {
+		turnIDs := make([]string, 0, len(turns))
+		for _, turn := range turns {
+			turnIDs = append(turnIDs, turn.TurnID)
+		}
+		eventsByTurnID, err = s.store.ListEventsByTurns(r.Context(), turnIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list events", map[string]any{"reason": err.Error()})
+			return
+		}
+	}
+
 	historyTurns := make([]threadHistoryTurn, 0, len(turns))
 	for _, turn := range turns {
-		if !includeInternal && turn.IsInternal {
-			continue
-		}
 		historyTurn := threadHistoryTurn{turn: turn}
 		if loadEvents {
-			events, eventsErr := s.store.ListEventsByTurn(r.Context(), turn.TurnID)
-			if eventsErr != nil {
-				writeError(w, http.StatusInternalServerError, codeInternal, "failed to list events", map[string]any{"reason": eventsErr.Error()})
-				return
-			}
-			historyTurn.events = events
+			historyTurn.events = eventsByTurnID[turn.TurnID]
+		}
+		if !includeInternal && turn.IsInternal {
+			continue
 		}
 		historyTurns = append(historyTurns, historyTurn)
 	}
@@ -442,7 +450,7 @@ func (s *Server) handleThreadHistory(w http.ResponseWriter, r *http.Request, cli
 
 	resp := map[string]any{"turns": respTurns}
 	if sessionID != "" {
-		transcript, transcriptErr := s.loadThreadSessionTranscript(r.Context(), thread, sessionID)
+		transcript, transcriptErr := s.loadThreadSessionTranscript(r.Context(), thread, sessionID, len(historyTurns) == 0)
 		if transcriptErr != nil {
 			s.logger.Warn("thread_history.session_transcript_load_failed",
 				"threadId", thread.ThreadID,
@@ -450,7 +458,7 @@ func (s *Server) handleThreadHistory(w http.ResponseWriter, r *http.Request, cli
 				"sessionId", sessionID,
 				"reason", transcriptErr.Error(),
 			)
-		} else {
+		} else if transcript != nil {
 			resp["sessionTranscript"] = historySessionTranscriptResponse{
 				Supported: transcript.Supported,
 				Messages:  transcript.Messages,

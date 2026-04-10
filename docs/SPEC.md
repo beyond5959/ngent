@@ -40,13 +40,22 @@ Modules:
   - when the active thread also has a selected concrete session id, the composer can additionally poll `/v1/threads/{threadId}/git-diff` every 15 seconds and show a Kimi-style working-tree summary chip above the input; expanding it reveals parsed tracked `numstat` rows, untracked-file rows, and the repository root, while clean/non-git/unavailable-git cases render nothing.
   - expanded git-diff rows may expose browser-clickable file previews through `GET /v1/threads/{threadId}/git-diff-file?path=...`:
     - tracked text files render the `git --no-pager diff -- <path>` patch in a right-side drawer.
-    - untracked text files render current file contents directly in that same drawer.
+    - untracked text files render current file contents directly in that same drawer, using the compact file-content mode with a single line-number column.
     - binary/non-text rows stay visibly disabled and do not open a preview drawer.
   - `/git-diff-file` returns grouped rendered `blocks[]`, not duplicated raw preview text plus one JSON row per rendered line:
     - each block carries `tone`, `text[]`, and only the relevant `oldLineNumbers[]` / `newLineNumbers[]`.
     - adjacent rendered rows with the same tone and the same visible number-column shape are compacted into the same block.
     - clients infer whether line-number columns should render from the presence of those old/new number arrays; there is no separate `showLineNumbers` field.
   - expanded git-diff rows can also show curated basename/extension-based type icons sourced from locally vendored `file-icons/vscode` font assets; unknown file types fall back to the generic file icon.
+  - finalized markdown links in transcript/reasoning content whose `href` is an absolute local file path can also open the same right-side inspection shell through thread-scoped preview endpoints:
+    - `GET /v1/threads/{threadId}/file-preview?path=...` returns preview metadata and, for text files, grouped rendered `blocks[]` for at most the first 10000 lines.
+    - `GET /v1/threads/{threadId}/file-preview-content?path=...` streams authenticated raw bytes only for previewable image files.
+    - only text files and image files are previewable from this message-link surface; other file types stay disabled/unsupported.
+    - optional markdown fragments such as `#L1430` request a highlight target, but the drawer only highlights it when the line falls inside the returned 10000-line prefix.
+    - message-link entries keep an ordinary inline-link treatment in the transcript; curated file icons remain limited to the git-diff file list.
+    - file-content mode in the shared drawer uses a single line-number column; only unified patch mode keeps the old/new number columns.
+    - opening a message-linked preview must dismiss any currently visible git-diff file drawer first, because both surfaces reuse the same right-side shell.
+    - preview-path authorization is thread-scoped and read-only, but the requested absolute path must still resolve inside configured allowed roots after symlink resolution.
   - that chip's expanded/collapsed state is browser-local UI state and must not depend on polling cadence or incoming diff payload refreshes.
   - once a git-diff file drawer is open, the visible drawer content is driven by a browser-local preview snapshot keyed by thread-session scope rather than by each incoming `/git-diff` poll response; polling may refresh the chip/list, but it must not implicitly close or rebuild the open drawer.
   - browser-local preview state is presentation-only; selecting a file row must still issue a fresh `/git-diff-file` request for that file each time instead of reusing the previous open's detail payload as authoritative data.
@@ -164,6 +173,7 @@ On restart:
 - thread slash-command snapshot lookup (`GET /v1/threads/{threadId}/slash-commands`)
 - thread git state + local branch switching (`GET/POST /v1/threads/{threadId}/git`)
 - thread git diff summary + file preview (`GET /v1/threads/{threadId}/git-diff`, `GET /v1/threads/{threadId}/git-diff-file?path=...`)
+- thread-scoped absolute-file preview for message markdown links (`GET /v1/threads/{threadId}/file-preview?path=...`, `GET /v1/threads/{threadId}/file-preview-content?path=...`)
 - thread session-usage snapshot lookup (`GET /v1/threads/{threadId}/session-usage?sessionId=...`)
 - turn create (`POST /v1/threads/{threadId}/turns`, JSON or multipart for attachment-backed prompts)
 - attachment readback (`GET /attachments/{attachmentId}`)
@@ -568,6 +578,8 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - session transcript replay first checks SQLite `session_transcript_cache` keyed by `(agent_id, cwd, session_id)`.
   - on cache miss, `codex`, `kimi`, `opencode`, and `qwen` implement replay by calling ACP `session/load` and collecting the replayed `session/update` stream (`user_message_chunk` / `agent_message_chunk`) into displayable transcript messages.
   - successful replay snapshots, including empty transcript results, are written back to `session_transcript_cache` for reuse across later clicks and server restarts.
+  - `/history?sessionId=...` may still surface cached `sessionTranscript` snapshots even after ngent has stored turns for that session.
+  - provider-side transcript loading through live ACP `session/load` only happens when the selected session currently has no filtered turns in the current `/history` response; once filtered turns exist, `/history` can reuse cache but does not call provider `session/load` for chat reconstruction.
   - replay collectors must ignore provider-specific non-message updates (for example Qwen `tool_call_update`) instead of treating them as fatal transport errors.
   - `codex` must resolve the selected session and call `session/load` within the same embedded runtime because the raw ACP `sessionId` values returned by `session/list` are runtime-scoped.
   - replay content is provider-owned and is returned as-is from the ACP stream; ngent caches it separately from `turns/events` and does not import it into persisted SQLite turn/event history.
@@ -853,9 +865,13 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - if the thread has exactly one annotated session and it matches the requested `sessionId`, unannotated legacy turns are included with that session so old pre-annotation history remains visible.
   - otherwise only turns whose persisted `session_bound.sessionId` matches the requested session are returned.
   - cancelled turns with no visible `responseText` are still excluded from session-scoped replay.
+  - when event data is needed for session filtering or response replay, the history handler batch-loads events for the candidate turns in one storage call instead of issuing one `ListEventsByTurn` query per turn.
 - When `sessionId` is present, `/history` also tries to attach provider-owned replay as `sessionTranscript { supported, messages }`, loaded via sqlite first and provider `session/load` on cache miss.
+- When `sessionId` is present and the filtered session history already contains one or more turns for the current response, `/history` skips live provider transcript loading but may still attach a previously cached `sessionTranscript` snapshot.
 - If provider transcript replay fails, `/history` still returns the filtered persisted turns and simply omits `sessionTranscript` instead of failing the whole request.
-- The Web UI session switch path now calls only `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSession>` and merges `sessionTranscript.messages` on top of the persisted turn history when available.
+- The Web UI session switch path now calls only `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSession>`.
+  - if the selected session has no filtered turns yet, the UI may still use `sessionTranscript.messages` to fill provider-owned context above the local replay.
+  - once the selected session already has filtered turns in that response, the backend no longer live-loads replay from the provider, but the UI may still receive and render cached `sessionTranscript` when one was warmed earlier.
 - The existing client-side `filterTurnsBySession()` logic remains as a compatibility fallback, but under normal same-version operation the browser now receives only the selected session's persisted turns rather than the entire thread history.
 
 ### 18.8 Delta-Run Compaction And Incremental History Rendering

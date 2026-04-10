@@ -9,6 +9,7 @@ import json from 'highlight.js/lib/languages/json'
 import yaml from 'highlight.js/lib/languages/yaml'
 import { t } from './i18n.ts'
 import { copyText, escHtml } from './utils.ts'
+import { localFilePreviewHint, parseLocalFileLinkHref } from './local-file-links.ts'
 
 // Register language subset to minimise bundle size
 hljs.registerLanguage('go',         go)
@@ -78,8 +79,57 @@ export function renderMarkdown(text: string): string {
     .replace(/<\/table>/g, '</table></div>')
 }
 
+export interface LocalFileLinkDetail {
+  path: string
+  label: string
+  line?: number
+}
+
+export interface MarkdownControlHandlers {
+  onLocalFileOpen?: (detail: LocalFileLinkDetail) => void
+}
+
 /** Bind copy/expand/message-copy buttons within a container. Idempotent. */
-export function bindMarkdownControls(container: HTMLElement): void {
+export function bindMarkdownControls(
+  container: HTMLElement,
+  handlers: MarkdownControlHandlers = {},
+): void {
+  container
+    .querySelectorAll<HTMLAnchorElement>('.message-answer--md a[href]:not([data-local-file-bound]), .message-reasoning__content--md a[href]:not([data-local-file-bound]), .message-prompt--md a[href]:not([data-local-file-bound])')
+    .forEach(anchor => {
+      anchor.dataset.localFileBound = '1'
+      const target = parseLocalFileLinkHref(anchor.getAttribute('href') ?? '')
+      if (!target) return
+
+      const label = anchor.textContent?.trim() || target.path.split(/[\\/]/).pop()?.trim() || target.path
+      const previewHint = localFilePreviewHint(target.path)
+      const disabled = previewHint === 'unsupported'
+      const badge = target.line ? `<span class="message-file-link__line">L${target.line}</span>` : ''
+
+      anchor.classList.add('message-file-link')
+      anchor.title = target.path
+      anchor.innerHTML = `
+        <span class="message-file-link__label">${escHtml(label)}</span>
+        ${badge}`
+
+      if (disabled) {
+        anchor.classList.add('message-file-link--disabled')
+        anchor.removeAttribute('href')
+        anchor.setAttribute('aria-disabled', 'true')
+        anchor.addEventListener('click', event => event.preventDefault())
+        return
+      }
+
+      anchor.addEventListener('click', event => {
+        event.preventDefault()
+        handlers.onLocalFileOpen?.({
+          path: target.path,
+          line: target.line,
+          label,
+        })
+      })
+    })
+
   // Code copy buttons
   container
     .querySelectorAll<HTMLButtonElement>('.code-copy-btn:not([data-bound])')

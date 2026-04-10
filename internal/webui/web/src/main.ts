@@ -315,9 +315,14 @@ let messageListRenderSeq = 0
 let threadGitRequestSeq = 0
 let threadGitDiffRequestSeq = 0
 let threadGitDiffDetailRequestSeq = 0
+let lastComposerAttachmentPasteSignature = ''
 const THREAD_GIT_DIFF_POLL_INTERVAL_MS = 60_000
+const COMPOSER_ATTACHMENT_PASTE_DEBOUNCE_MS = 300
 const INLINE_SESSION_PAGE_SIZE = 5
 let threadGitDiffPollTimer = 0
+const resetComposerAttachmentPasteGuard = debounce(() => {
+  lastComposerAttachmentPasteSignature = ''
+}, COMPOSER_ATTACHMENT_PASTE_DEBOUNCE_MS)
 let threadGitDiffPollScopeKey = ''
 let sidebarCollapsed = false
 const SIDEBAR_LAYOUT_SYNC_PROPERTIES = new Set(['width', 'min-width', 'margin-right', 'transform'])
@@ -7601,7 +7606,15 @@ function bindInputResize(): void {
     const attachmentBtn = document.getElementById('attachment-btn') as HTMLButtonElement | null
     if (attachmentBtn?.disabled) return
 
+    const pasteSignature = composerAttachmentPasteSignature(activeThreadId, files)
     e.preventDefault()
+    if (pasteSignature && pasteSignature === lastComposerAttachmentPasteSignature) {
+      resetComposerAttachmentPasteGuard()
+      return
+    }
+
+    lastComposerAttachmentPasteSignature = pasteSignature
+    resetComposerAttachmentPasteGuard()
     addComposerAttachments(activeThreadId, files)
   })
 
@@ -7660,33 +7673,58 @@ function renderComposerAttachments(threadId: string): void {
 function clipboardFiles(data: DataTransfer | null): File[] {
   if (!data) return []
 
-  const files: File[] = []
-  const seen = new Set<string>()
-  const pushFile = (file: File | null): void => {
-    if (!file) return
-    const key = `${file.name}:${file.size}:${file.type}:${file.lastModified}`
-    if (seen.has(key)) return
-    seen.add(key)
-    files.push(file)
+  const dedupeFiles = (entries: Array<File | null>): File[] => {
+    const files: File[] = []
+    const seen = new Set<string>()
+    entries.forEach(file => {
+      if (!file) return
+      const key = composerAttachmentPasteKey(file)
+      if (seen.has(key)) return
+      seen.add(key)
+      files.push(file)
+    })
+    return files
   }
 
-  Array.from(data.files ?? []).forEach(file => pushFile(file))
-  Array.from(data.items ?? []).forEach(item => {
-    if (item.kind !== 'file') return
-    pushFile(item.getAsFile())
-  })
-  return files
+  // Prefer DataTransfer.items over DataTransfer.files so one clipboard image
+  // payload cannot be counted twice when the browser mirrors it through both
+  // surfaces with slightly different File metadata.
+  const itemFiles = dedupeFiles(Array.from(data.items ?? []).map(item => (
+    item.kind === 'file' ? item.getAsFile() : null
+  )))
+  if (itemFiles.length) return itemFiles
+
+  return dedupeFiles(Array.from(data.files ?? []))
+}
+
+function composerAttachmentPasteSignature(threadId: string, files: File[]): string {
+  threadId = threadId.trim()
+  if (!threadId || !files.length) return ''
+  const normalized = files
+    .map(file => composerAttachmentPasteKey(file))
+    .filter(Boolean)
+    .sort()
+  if (!normalized.length) return ''
+  return `${threadId}::${normalized.join('|')}`
+}
+
+function composerAttachmentPasteKey(file: Pick<File, 'name' | 'size' | 'type'>): string {
+  return `${file.name}:${file.size}:${file.type}`
+}
+
+function composerAttachmentDraftKey(file: Pick<File, 'name' | 'size' | 'type' | 'lastModified'>): string {
+  return `${composerAttachmentPasteKey(file)}:${file.lastModified}`
 }
 
 function addComposerAttachments(threadId: string, files: File[]): void {
   if (!threadId || !files.length) return
 
   const existing = threadComposerAttachments(threadId)
-  const seen = new Set(existing.map(attachment => `${attachment.name}:${attachment.size}:${attachment.file.lastModified}`))
+  const seen = new Set(existing.map(attachment => composerAttachmentDraftKey(attachment.file)))
   const nextAttachments = [...existing]
 
   files.forEach(file => {
-    const key = `${file.name}:${file.size}:${file.lastModified}`
+    const key = composerAttachmentDraftKey(file)
     if (seen.has(key)) return
     seen.add(key)
     nextAttachments.push({

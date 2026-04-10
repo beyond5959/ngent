@@ -488,7 +488,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the backend proxies ACP `session/list` through `GET /v1/threads/{threadId}/sessions`.
   - response includes `supported`, `sessions`, and `nextCursor`.
-  - for providers that replay transcript over ACP `session/load`, the first session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` can warm sqlite `session_transcript_cache` through the embedded `sessionTranscript` response field, and later requests can return the same replayed `user` / `assistant` messages without calling the provider again.
+  - for providers that replay transcript over ACP `session/load`, a session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` can warm sqlite `session_transcript_cache` through the embedded `sessionTranscript` response field when that selected session has no filtered turns yet.
+  - once that selected session has filtered turns in `/history`, later `/history?sessionId=...` replies no longer call provider `session/load` for chat reconstruction.
+  - if a matching transcript snapshot was already cached earlier, `/history?sessionId=...` may still include that cached `sessionTranscript` alongside filtered `turns`.
   - the Web UI renders one left grouped rail where each thread header shows its session rows directly underneath.
   - there is no dedicated session column and no chat-edge session-drawer collapse control.
   - each thread header uses the agent/provider icon as its leading visual and does not show a thread-level relative timestamp.
@@ -714,7 +716,9 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Expected:
   - the Web UI calls `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSessionId>` instead of fetching the whole thread and filtering only in browser memory.
   - the response includes only the selected session's persisted turns, subject to the legacy fallback rules for unannotated pre-`session_bound` turns.
-  - when available, the same `/history` response also includes provider transcript replay under `sessionTranscript`, and the UI merges that replay on top of the persisted turn history so rich ngent-owned artifacts remain visible.
+  - when the selected session has no filtered turns yet, the same `/history` response can also include provider transcript replay under `sessionTranscript`.
+  - once the selected session already has filtered turns, the backend no longer live-loads transcript replay from the provider.
+  - if `sessionTranscript` had already been warmed into cache earlier, the same `/history` response may still include it and the UI still renders replay first and `turns` after it.
   - for large multi-session threads, browser-side history parse time is materially lower because the payload no longer includes unrelated sessions' events.
 - Verification commands (executed 2026-03-26):
   - `go test ./internal/httpapi -run TestThreadHistoryFiltersBySessionID -count=1`

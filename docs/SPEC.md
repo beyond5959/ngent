@@ -568,6 +568,8 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - session transcript replay first checks SQLite `session_transcript_cache` keyed by `(agent_id, cwd, session_id)`.
   - on cache miss, `codex`, `kimi`, `opencode`, and `qwen` implement replay by calling ACP `session/load` and collecting the replayed `session/update` stream (`user_message_chunk` / `agent_message_chunk`) into displayable transcript messages.
   - successful replay snapshots, including empty transcript results, are written back to `session_transcript_cache` for reuse across later clicks and server restarts.
+  - `/history?sessionId=...` may still surface cached `sessionTranscript` snapshots even after ngent has stored turns for that session.
+  - provider-side transcript loading through live ACP `session/load` only happens when the selected session currently has no filtered turns in the current `/history` response; once filtered turns exist, `/history` can reuse cache but does not call provider `session/load` for chat reconstruction.
   - replay collectors must ignore provider-specific non-message updates (for example Qwen `tool_call_update`) instead of treating them as fatal transport errors.
   - `codex` must resolve the selected session and call `session/load` within the same embedded runtime because the raw ACP `sessionId` values returned by `session/list` are runtime-scoped.
   - replay content is provider-owned and is returned as-is from the ACP stream; ngent caches it separately from `turns/events` and does not import it into persisted SQLite turn/event history.
@@ -853,9 +855,13 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - if the thread has exactly one annotated session and it matches the requested `sessionId`, unannotated legacy turns are included with that session so old pre-annotation history remains visible.
   - otherwise only turns whose persisted `session_bound.sessionId` matches the requested session are returned.
   - cancelled turns with no visible `responseText` are still excluded from session-scoped replay.
+  - when event data is needed for session filtering or response replay, the history handler batch-loads events for the candidate turns in one storage call instead of issuing one `ListEventsByTurn` query per turn.
 - When `sessionId` is present, `/history` also tries to attach provider-owned replay as `sessionTranscript { supported, messages }`, loaded via sqlite first and provider `session/load` on cache miss.
+- When `sessionId` is present and the filtered session history already contains one or more turns for the current response, `/history` skips live provider transcript loading but may still attach a previously cached `sessionTranscript` snapshot.
 - If provider transcript replay fails, `/history` still returns the filtered persisted turns and simply omits `sessionTranscript` instead of failing the whole request.
-- The Web UI session switch path now calls only `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSession>` and merges `sessionTranscript.messages` on top of the persisted turn history when available.
+- The Web UI session switch path now calls only `GET /v1/threads/{threadId}/history?includeEvents=1&sessionId=<selectedSession>`.
+  - if the selected session has no filtered turns yet, the UI may still use `sessionTranscript.messages` to fill provider-owned context above the local replay.
+  - once the selected session already has filtered turns in that response, the backend no longer live-loads replay from the provider, but the UI may still receive and render cached `sessionTranscript` when one was warmed earlier.
 - The existing client-side `filterTurnsBySession()` logic remains as a compatibility fallback, but under normal same-version operation the browser now receives only the selected session's persisted turns rather than the entire thread history.
 
 ### 18.8 Delta-Run Compaction And Incremental History Rendering

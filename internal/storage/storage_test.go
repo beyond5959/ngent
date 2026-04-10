@@ -593,6 +593,63 @@ func TestAppendEventKeepsConsecutiveDeltaRunsAppendOnly(t *testing.T) {
 	assertDeltaEventPayload(t, events[4].DataJSON, "tu-merge", "!")
 }
 
+func TestListEventsByTurns(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	defer func() {
+		_ = store.Close()
+	}()
+
+	if err := store.UpsertClient(ctx, "client-events-batch"); err != nil {
+		t.Fatalf("UpsertClient(): %v", err)
+	}
+	if _, err := store.CreateThread(ctx, CreateThreadParams{
+		ThreadID:         "th-events-batch",
+		AgentID:          "codex",
+		CWD:              "/tmp/project-events-batch",
+		Title:            "events-batch",
+		AgentOptionsJSON: "{}",
+		Summary:          "",
+	}); err != nil {
+		t.Fatalf("CreateThread(): %v", err)
+	}
+	for _, turnID := range []string{"tu-batch-1", "tu-batch-2"} {
+		if _, err := store.CreateTurn(ctx, CreateTurnParams{
+			TurnID:      turnID,
+			ThreadID:    "th-events-batch",
+			RequestText: "hello",
+			Status:      "running",
+		}); err != nil {
+			t.Fatalf("CreateTurn(%q): %v", turnID, err)
+		}
+	}
+
+	if _, err := store.AppendEvent(ctx, "tu-batch-1", "message_delta", `{"turnId":"tu-batch-1","delta":"one"}`); err != nil {
+		t.Fatalf("AppendEvent(tu-batch-1 #1): %v", err)
+	}
+	if _, err := store.AppendEvent(ctx, "tu-batch-2", "message_delta", `{"turnId":"tu-batch-2","delta":"two"}`); err != nil {
+		t.Fatalf("AppendEvent(tu-batch-2 #1): %v", err)
+	}
+	if _, err := store.AppendEvent(ctx, "tu-batch-1", "message_delta", `{"turnId":"tu-batch-1","delta":"three"}`); err != nil {
+		t.Fatalf("AppendEvent(tu-batch-1 #2): %v", err)
+	}
+
+	eventsByTurnID, err := store.ListEventsByTurns(ctx, []string{"tu-batch-2", "tu-batch-1", "tu-batch-2"})
+	if err != nil {
+		t.Fatalf("ListEventsByTurns(): %v", err)
+	}
+
+	if got, want := len(eventsByTurnID["tu-batch-1"]), 2; got != want {
+		t.Fatalf("len(eventsByTurnID[tu-batch-1]) = %d, want %d", got, want)
+	}
+	if got, want := len(eventsByTurnID["tu-batch-2"]), 1; got != want {
+		t.Fatalf("len(eventsByTurnID[tu-batch-2]) = %d, want %d", got, want)
+	}
+	assertDeltaEventPayload(t, eventsByTurnID["tu-batch-1"][0].DataJSON, "tu-batch-1", "one")
+	assertDeltaEventPayload(t, eventsByTurnID["tu-batch-1"][1].DataJSON, "tu-batch-1", "three")
+	assertDeltaEventPayload(t, eventsByTurnID["tu-batch-2"][0].DataJSON, "tu-batch-2", "two")
+}
+
 func TestTurnAttachmentsCRUD(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)

@@ -2,6 +2,7 @@
 
 ## ADR Index
 
+- ADR-094: Skip live provider transcript replay once a selected session already has filtered turns. (Accepted)
 - ADR-093: Integrate Pi Agent through the embedded `pkg/piacp` runtime. (Accepted)
 - ADR-092: Fold provider session replay into session-scoped `/history` responses. (Accepted)
 - ADR-091: Persist learned config snapshots per provider session. (Accepted)
@@ -91,6 +92,28 @@
 - ADR-050: Keep the left agent rail permanently expanded. (Accepted)
 - ADR-051: BLACKBOX AI ACP provider integration via shared ACP CLI driver. (Accepted)
 - ADR-052: Cursor CLI ACP provider integration with explicit ACP authentication. (Accepted)
+
+## ADR-094: Skip Live Provider Transcript Replay Once A Selected Session Already Has Filtered Turns
+
+- Status: Accepted
+- Date: 2026-04-10
+- Context:
+  - ADR-092 let one session-scoped `/history` response carry both filtered persisted `turns` and optional provider-owned `sessionTranscript` replay.
+  - the embedded Web UI merged those two sources when replay was available so provider-owned prehistory could appear ahead of ngent-owned turns.
+  - real usage exposed a duplication bug: once a selected session already had visible filtered turns in `/history`, the provider replay could still reintroduce the same visible `user` / `assistant` transcript content, leaving the chat pane with duplicated history.
+- Decision:
+  - move the duplication guard to the backend history path instead of keeping it as a frontend-only merge rule.
+  - when `GET /v1/threads/{threadId}/history?sessionId=...` finds one or more filtered turns for that selected session in the current response, skip live provider transcript loading through `session/load`.
+  - in that filtered-turn case, `/history` may still attach `sessionTranscript` when sqlite `session_transcript_cache` already holds a snapshot for the same `(agent, cwd, sessionId)`, but it must not call the provider again on a cache miss.
+  - only when the selected session currently has no filtered turns does `/history` fall back to provider `session/load` after checking cache.
+  - keep the existing fresh-session promotion path in the Web UI; it still reuses browser-local messages after the first bind, and the UI continues rendering replay first and local turns after it whenever `sessionTranscript` is present.
+- Consequences:
+  - once filtered turns exist, session switches no longer trigger a fresh provider replay for chat reconstruction, removing one major source of duplicated visible transcript content.
+  - provider-owned historical context remains available without a new provider call when that transcript snapshot was already warmed earlier into sqlite cache.
+  - if a selected session later returns one or more filtered turns before any transcript snapshot was ever cached, later `/history` requests will not live-load the missing provider prehistory.
+- Alternatives considered:
+  - keep unconditional frontend merging and rely on overlap heuristics alone (rejected: brittle and already producing user-visible duplicates).
+  - import provider replay directly into persisted `turns/events` (rejected for now: still conflates provider-owned transcript with ngent-owned durable history and needs a broader storage migration).
 
 ## ADR-093: Integrate Pi Agent Through The Embedded `pkg/piacp` Runtime
 

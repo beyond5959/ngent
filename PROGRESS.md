@@ -11,7 +11,19 @@ This file is the source of milestone progress, validation commands, and next act
 
 - `Post-M8` ACP multi-agent readiness and maintenance.
 
-## Latest Update (2026-04-04)
+## Latest Update (2026-04-10)
+
+- `Post-M8` session-history replay load-gating and history-event batching completed:
+  - moved selected-session transcript live-load gating from the embedded SPA into the backend `/history` path.
+  - session-scoped history now calls provider `session/load` only when the selected session has no filtered turns in the current `/history` response; once filtered turns exist, `/history` will reuse cached `sessionTranscript` if available but will not live-load a missing transcript from the provider.
+  - the embedded SPA keeps the simpler merge path: when replay is present it still renders replay first and local turns after it, but same-version backend behavior now determines whether replay comes from cache or from a fresh provider load.
+  - follow-up performance fix: thread history no longer issues one SQLite `ListEventsByTurn` read per turn when events are needed; the handler now batch-loads events for the thread's turns in one storage call and groups them in memory before session filtering/serialization.
+  - documentation now records the backend-gated live-replay policy and the remaining limitation that provider-only prehistory is unavailable after ngent turns exist unless a transcript snapshot was warmed into cache earlier, and that warmed transcript snapshots can still overlap with persisted turns because replay remains separate from `turns/events`.
+  - validation:
+    - pass: `go test ./...`
+    - pass: `git diff --check`
+
+## Previous Update (2026-04-04)
 
 - `Post-M8` memory-file redundancy cleanup completed:
   - kept `docs/SPEC.md` focused on current-state behavior while retaining older rollout notes in the appendix instead of duplicating them in the normative sections.

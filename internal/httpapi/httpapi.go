@@ -50,6 +50,7 @@ type ThreadStore interface {
 	GetTurn(ctx context.Context, turnID string) (storage.Turn, error)
 	ListTurnsByThread(ctx context.Context, threadID string) ([]storage.Turn, error)
 	AppendEvent(ctx context.Context, turnID, eventType, dataJSON string) (storage.Event, error)
+	ListEventsByTurns(ctx context.Context, turnIDs []string) (map[string][]storage.Event, error)
 	ListEventsByTurn(ctx context.Context, turnID string) ([]storage.Event, error)
 	FinalizeTurn(ctx context.Context, params storage.FinalizeTurnParams) error
 	ListRecentDirectories(ctx context.Context, clientID string, limit int) ([]string, error)

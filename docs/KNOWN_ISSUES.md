@@ -360,9 +360,15 @@ mitigated items so active work does not share space with already closed issues.
 - Status: Open
 - Severity: Medium
 - Affects: threads that select an existing ACP `sessionId` from the Web UI/API
-- Symptom: ngent now caches prior provider transcript snapshots in SQLite for session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` replies, but that replay is still not imported into SQLite `turns/events`; history APIs remain source-of-truth only for hub-created turns.
-- Workaround: use the grouped session-list replay for provider-owned historical context, but rely on persisted hub `/history` for turns created through ngent itself.
-- Follow-up plan: evaluate importing selected provider transcript into local persisted history, or exposing an explicit merged-history view, without duplicating future hub-originated turns.
+- Symptom:
+  - ngent caches prior provider transcript snapshots in SQLite for session-scoped `GET /v1/threads/{threadId}/history?sessionId=...` replies, but that replay is still not imported into SQLite `turns/events`; persisted history remains source-of-truth only for hub-created turns.
+  - once the selected session already has filtered turns in `/history`, that endpoint no longer live-loads missing provider transcript through `session/load`; provider-only earlier context is shown only when a transcript snapshot was already warmed into sqlite cache before those turns became visible in filtered history.
+  - if a warmed transcript snapshot overlaps with later persisted turns for the same session, the Web UI can still show overlapping visible history because cached replay remains a separate payload from `turns/events` rather than a deduplicated unified transcript.
+- Workaround:
+  - rely on persisted ngent `/history` for turns created through ngent itself.
+  - if older provider-only transcript context is still needed, warm that session's transcript snapshot before adding ngent turns to it, or use the provider's own history surface.
+  - if cached replay overlaps distractingly with local turns, rely on the persisted ngent view or the provider's own history surface until transcript data is unified or deduplicated server-side.
+- Follow-up plan: evaluate importing selected provider transcript into local persisted history, or exposing an explicit merged-history view that can retain provider-only prehistory without duplicating future hub-originated turns.
 
 - ID: KI-022
 - Title: Codex grouped session-list titles can still show provider wrapper text

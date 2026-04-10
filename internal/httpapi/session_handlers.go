@@ -182,22 +182,27 @@ func (s *Server) loadThreadSessionTranscript(
 	ctx context.Context,
 	thread storage.Thread,
 	sessionID string,
-) (sessionTranscriptResponse, error) {
+	allowProviderLoad bool,
+) (*sessionTranscriptResponse, error) {
 	cachedResult, found, err := s.loadCachedSessionTranscript(ctx, thread, sessionID)
 	if err != nil {
-		return sessionTranscriptResponse{}, fmt.Errorf("load session transcript cache: %w", err)
+		return nil, fmt.Errorf("load session transcript cache: %w", err)
 	}
 	_, configFound, configErr := s.loadStoredSessionConfigOptions(ctx, thread, sessionID)
 	if configErr != nil {
-		return sessionTranscriptResponse{}, fmt.Errorf("load session config cache: %w", configErr)
+		return nil, fmt.Errorf("load session config cache: %w", configErr)
 	}
-	if found && configFound {
-		return newSessionTranscriptResponse(true, cachedResult.Messages), nil
+	if found && (configFound || !allowProviderLoad) {
+		resp := newSessionTranscriptResponse(true, cachedResult.Messages)
+		return &resp, nil
+	}
+	if !allowProviderLoad {
+		return nil, nil
 	}
 
 	provider, err := s.turnAgentFactory(thread)
 	if err != nil {
-		return sessionTranscriptResponse{}, fmt.Errorf("resolve agent provider: %w", err)
+		return nil, fmt.Errorf("resolve agent provider: %w", err)
 	}
 	if closer, ok := provider.(io.Closer); ok {
 		defer closer.Close()
@@ -206,9 +211,11 @@ func (s *Server) loadThreadSessionTranscript(
 	loader, ok := provider.(agents.SessionTranscriptLoader)
 	if !ok {
 		if found {
-			return newSessionTranscriptResponse(true, cachedResult.Messages), nil
+			resp := newSessionTranscriptResponse(true, cachedResult.Messages)
+			return &resp, nil
 		}
-		return newSessionTranscriptResponse(false, nil), nil
+		resp := newSessionTranscriptResponse(false, nil)
+		return &resp, nil
 	}
 
 	loadCtx := agents.WithSessionUsageHandler(ctx, func(sessionUsageCtx context.Context, update agents.SessionUsageUpdate) error {
@@ -223,12 +230,14 @@ func (s *Server) loadThreadSessionTranscript(
 	})
 	if err != nil {
 		if found {
-			return newSessionTranscriptResponse(true, cachedResult.Messages), nil
+			resp := newSessionTranscriptResponse(true, cachedResult.Messages)
+			return &resp, nil
 		}
 		if errors.Is(err, agents.ErrSessionLoadUnsupported) || errors.Is(err, agents.ErrSessionListUnsupported) {
-			return newSessionTranscriptResponse(false, nil), nil
+			resp := newSessionTranscriptResponse(false, nil)
+			return &resp, nil
 		}
-		return sessionTranscriptResponse{}, err
+		return nil, err
 	}
 
 	result = agents.CloneSessionTranscriptResult(result)
@@ -242,7 +251,8 @@ func (s *Server) loadThreadSessionTranscript(
 		)
 	}
 
-	return newSessionTranscriptResponse(true, result.Messages), nil
+	resp := newSessionTranscriptResponse(true, result.Messages)
+	return &resp, nil
 }
 
 func newSessionTranscriptResponse(supported bool, messages []agents.SessionTranscriptMessage) sessionTranscriptResponse {

@@ -936,6 +936,87 @@ func TestUpdateThreadSessionSwitchAllowedWhenActiveTurnHasConfigSnapshot(t *test
 	}
 }
 
+func TestTurnFullAccessAppliesCodexRuntimeOverride(t *testing.T) {
+	root := t.TempDir()
+	streamer := &runtimeOverrideStreamer{}
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots: []string{root},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	threadID := createThreadHTTP(t, ts.URL, "client-a", root)
+	status, body := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/turns",
+		map[string]any{"input": "hello full access", "stream": true, "fullAccess": true},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("turn status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	if got, want := streamer.LastPromptRuntimeOverrides(), (agents.PromptRuntimeOverrides{
+		ApprovalPolicy: "never",
+		Sandbox:        "danger-full-access",
+	}); got != want {
+		t.Fatalf("LastPromptRuntimeOverrides() = %+v, want %+v", got, want)
+	}
+}
+
+func TestTurnFullAccessIgnoresNonCodexAgent(t *testing.T) {
+	root := t.TempDir()
+	streamer := &runtimeOverrideStreamer{}
+
+	h := newTestServer(t, testServerOptions{
+		allowedRoots:    []string{root},
+		allowedAgentIDs: []string{"codex", "qwen"},
+		agentList: []AgentInfo{
+			{ID: "codex", Name: "Codex", Status: "available"},
+			{ID: "qwen", Name: "Qwen", Status: "available"},
+		},
+		turnAgentFactory: func(thread storage.Thread) (agents.Streamer, error) {
+			_ = thread
+			return streamer, nil
+		},
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	status, body := doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads",
+		map[string]any{"agent": "qwen", "cwd": root},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("create thread status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+	threadID := extractThreadID(t, []byte(body))
+
+	status, body = doJSON(
+		t,
+		http.MethodPost,
+		ts.URL+"/v1/threads/"+threadID+"/turns",
+		map[string]any{"input": "hello qwen", "stream": true, "fullAccess": true},
+		map[string]string{"X-Client-ID": "client-a"},
+	)
+	if status != http.StatusOK {
+		t.Fatalf("turn status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+
+	if got := streamer.LastPromptRuntimeOverrides(); got != (agents.PromptRuntimeOverrides{}) {
+		t.Fatalf("LastPromptRuntimeOverrides() = %+v, want zero overrides", got)
+	}
+}
+
 func TestUpdateThreadClosesCachedAgent(t *testing.T) {
 	root := t.TempDir()
 	streamer := &countingClosableStreamer{}
@@ -6677,6 +6758,37 @@ func (s *configOptionStreamer) LastStreamConfigOverrides() map[string]string {
 		cloned[configID] = currentValue
 	}
 	return cloned
+}
+
+type runtimeOverrideStreamer struct {
+	lastPromptRuntimeOverrides atomic.Value
+}
+
+func (s *runtimeOverrideStreamer) Name() string {
+	return "runtime-override-streamer"
+}
+
+func (s *runtimeOverrideStreamer) Stream(
+	ctx context.Context,
+	input string,
+	onDelta func(delta string) error,
+) (agents.StopReason, error) {
+	if overrides, ok := agents.PromptRuntimeOverridesFromContext(ctx); ok {
+		s.lastPromptRuntimeOverrides.Store(overrides)
+	} else {
+		s.lastPromptRuntimeOverrides.Store(agents.PromptRuntimeOverrides{})
+	}
+	if onDelta != nil {
+		if err := onDelta(input); err != nil {
+			return agents.StopReasonEndTurn, err
+		}
+	}
+	return agents.StopReasonEndTurn, nil
+}
+
+func (s *runtimeOverrideStreamer) LastPromptRuntimeOverrides() agents.PromptRuntimeOverrides {
+	value, _ := s.lastPromptRuntimeOverrides.Load().(agents.PromptRuntimeOverrides)
+	return value
 }
 
 func mustDecodeStoredConfigOptions(t *testing.T, raw string) []agents.ConfigOption {

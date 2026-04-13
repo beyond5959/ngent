@@ -1292,3 +1292,12 @@ This file is the source of milestone progress, validation commands, and next act
     - pass: `go test ./internal/agents/pi -count=1`
     - pass: `cd internal/webui/web && npm run build`
     - pass: `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./...`
+
+- 2026-04-13: added a per-turn Codex full-access override and a Codex-only Web UI switch.
+  - extended `/v1/threads/{threadId}/turns` request decoding with optional `fullAccess`, including multipart turn uploads, without changing persisted thread `agentOptions`.
+  - mapped `fullAccess=true` only for Codex turns to one-shot runtime overrides `approvalPolicy=never` and `sandbox=danger-full-access`, carried through turn context into the embedded Codex provider's `session/prompt` request.
+  - replaced the composer footer hint text with a Codex-only `Full access` switch in the Web UI; the switch state is local to the current unsent chat scope and is cleared immediately after send so the override applies only to that turn.
+  - added backend tests covering Codex-only runtime override injection plus embedded Codex runtime propagation to fake app-server `turn/start`.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./...`

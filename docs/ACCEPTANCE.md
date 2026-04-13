@@ -813,3 +813,20 @@ This checklist defines executable acceptance checks for requirements 1-16.
   - `go test ./internal/agents/pi -count=1`
   - `cd internal/webui/web && npm run build`
   - `env GOCACHE=/tmp/ngent-gocache GOFLAGS=-p=1 /usr/local/go/bin/go test ./...`
+
+## Requirement 35: Codex Full Access Switch Applies Only To The Next Turn
+
+- Operation:
+  - create or open a Codex thread in the embedded Web UI.
+  - enable the composer `Full access` switch and send one turn.
+  - after that turn starts, inspect the next composer state and send another turn without re-enabling the switch.
+  - optionally repeat the same API call shape against a non-Codex thread with `fullAccess=true`.
+- Expected:
+  - only Codex threads render the `Full access` switch in the composer footer.
+  - the first Codex turn runs with one-shot runtime overrides equivalent to `approvalPolicy=never` and `sandbox=danger-full-access`.
+  - the switch clears immediately after send, so the next turn does not inherit full access unless the user explicitly re-enables it.
+  - thread-persisted `agentOptions` / config overrides do not gain sticky approval or sandbox settings.
+  - non-Codex turns ignore `fullAccess=true`.
+- Verification commands (executed 2026-04-13):
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`

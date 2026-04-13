@@ -444,7 +444,7 @@ class ApiClient {
    */
   startTurn(
     threadId: string,
-    params: { input: string; attachments?: File[] },
+    params: { input: string; attachments?: File[]; fullAccess?: boolean },
     callbacks: TurnStreamCallbacks,
   ): TurnStream {
     const url = this.url(`/v1/threads/${encodeURIComponent(threadId)}/turns`)
@@ -452,6 +452,7 @@ class ApiClient {
     let body: FormData | Record<string, unknown> = {
       input: params.input,
       stream: true,
+      fullAccess: !!params.fullAccess,
     }
     let headers = this.headers()
 
@@ -459,6 +460,9 @@ class ApiClient {
       const formData = new FormData()
       formData.set('input', params.input)
       formData.set('stream', 'true')
+      if (params.fullAccess) {
+        formData.set('fullAccess', 'true')
+      }
       attachments.forEach(file => {
         formData.append('attachments', file, file.name)
       })

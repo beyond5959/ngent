@@ -158,16 +158,18 @@ func (s *Server) decodeTurnCreateRequest(r *http.Request) (turnCreateRequest, er
 	}
 
 	var req struct {
-		Input  string `json:"input"`
-		Stream bool   `json:"stream"`
+		Input      string `json:"input"`
+		Stream     bool   `json:"stream"`
+		FullAccess bool   `json:"fullAccess"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		return turnCreateRequest{}, err
 	}
 
 	return turnCreateRequest{
-		Stream: req.Stream,
-		Prompt: agents.TextPrompt(req.Input),
+		Stream:     req.Stream,
+		FullAccess: req.FullAccess,
+		Prompt:     agents.TextPrompt(req.Input),
 	}, nil
 }
 
@@ -198,9 +200,10 @@ func decodeMultipartTurnCreateRequest(r *http.Request, dataDir string) (turnCrea
 	}
 
 	return turnCreateRequest{
-		Stream:  stream,
-		Prompt:  agents.NormalizePrompt(agents.Prompt{Content: content}),
-		Uploads: attachments,
+		Stream:     stream,
+		FullAccess: parseFormBoolValue(r.FormValue("fullAccess")),
+		Prompt:     agents.NormalizePrompt(agents.Prompt{Content: content}),
+		Uploads:    attachments,
 	}, nil
 }
 

@@ -2210,3 +2210,25 @@ Use this template for new decisions.
   - force users to copy one shared `clientId` across browsers (rejected: brittle manual workaround and still couples visibility to browser-local storage).
   - remove `X-Client-ID` from the API entirely (rejected for now: unnecessary breakage for existing clients when header-compatibility is enough).
   - keep thread ownership but special-case only `/sessions` (rejected: inconsistent UX because the main thread list would still disappear across browsers).
+
+## ADR-065: Model Codex Full Access As A Turn-Scoped Override, Not Persisted Thread Config
+
+- Status: Accepted
+- Date: 2026-04-13
+- Context:
+  - Codex full access requires two runtime knobs together: `approvalPolicy=never` and `sandbox=danger-full-access`.
+  - users asked for a Web UI control that applies only to the next Codex send, instead of mutating the thread's long-lived config or the embedded provider's cached session defaults.
+  - ngent already persists stable model/reasoning selections in `thread.agentOptions.configOverrides`, but persisting full access there would silently affect later turns and broaden the blast radius of one accidental toggle.
+- Decision:
+  - add an optional turn-create request flag `fullAccess` on `/v1/threads/{threadId}/turns`.
+  - translate that flag only for Codex turns into a context-local prompt runtime override with `approvalPolicy=never` and `sandbox=danger-full-access`.
+  - have the embedded Codex provider read those one-shot overrides only when issuing `session/prompt`; do not write them into persisted thread state, ACP session config state, or Web UI thread config options.
+  - expose the control only in the Web UI when the active thread uses the Codex agent, and clear the switch immediately after send.
+- Consequences:
+  - full access now behaves as a deliberate per-send escalation rather than sticky thread state.
+  - existing model/reasoning config persistence remains unchanged.
+  - non-Codex agents ignore the new flag and keep their previous turn behavior.
+- Alternatives considered:
+  - persist full access in `thread.agentOptions.configOverrides` (rejected: wrong lifetime; would surprise users by affecting later turns).
+  - add a new persistent ACP config option surfaced beside model/reasoning (rejected: upstream adapter does not expose approval/sandbox as mutable session config options, and the UX requirement was explicitly one-shot).
+  - mutate Codex session defaults via `session/new` / `session/set_config_option` (rejected: either not supported or too sticky for a per-turn override).

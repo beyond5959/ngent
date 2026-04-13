@@ -147,9 +147,10 @@ var errThreadConfigOptionsUnavailable = errors.New("thread config options are no
 const maxTurnMultipartMemory = 32 << 20
 
 type turnCreateRequest struct {
-	Prompt  agents.Prompt
-	Stream  bool
-	Uploads []storedTurnAttachment
+	Prompt     agents.Prompt
+	Stream     bool
+	FullAccess bool
+	Uploads    []storedTurnAttachment
 }
 
 type storedTurnAttachment struct {

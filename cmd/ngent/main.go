@@ -23,6 +23,7 @@ import (
 	claudeagent "github.com/beyond5959/ngent/internal/agents/claude"
 	codexagent "github.com/beyond5959/ngent/internal/agents/codex"
 	cursoragent "github.com/beyond5959/ngent/internal/agents/cursor"
+	droidagent "github.com/beyond5959/ngent/internal/agents/droid"
 	geminiagent "github.com/beyond5959/ngent/internal/agents/gemini"
 	kimiagent "github.com/beyond5959/ngent/internal/agents/kimi"
 	opencodeagent "github.com/beyond5959/ngent/internal/agents/opencode"
@@ -78,6 +79,7 @@ func main() {
 	codexPreflightErr := codexagent.Preflight(codexRuntimeConfig)
 	piPreflightErr := piagent.Preflight(piRuntimeConfig)
 	opencodePreflightErr := opencodeagent.Preflight()
+	droidPreflightErr := droidagent.Preflight()
 	geminiPreflightErr := geminiagent.Preflight()
 	kimiPreflightErr := kimiagent.Preflight()
 	qwenPreflightErr := qwenagent.Preflight()
@@ -109,6 +111,7 @@ func main() {
 	codexAvailable := codexPreflightErr == nil
 	piAvailable := piPreflightErr == nil
 	opencodeAvailable := opencodePreflightErr == nil
+	droidAvailable := droidPreflightErr == nil
 	geminiAvailable := geminiPreflightErr == nil
 	kimiAvailable := kimiPreflightErr == nil
 	qwenAvailable := qwenPreflightErr == nil
@@ -118,6 +121,7 @@ func main() {
 	logStartupPreflight(logger, "startup.codex_embedded_unavailable", codexPreflightErr)
 	logStartupPreflight(logger, "startup.pi_embedded_unavailable", piPreflightErr)
 	logStartupPreflight(logger, "startup.opencode_unavailable", opencodePreflightErr)
+	logStartupPreflight(logger, "startup.droid_unavailable", droidPreflightErr)
 	logStartupPreflight(logger, "startup.gemini_unavailable", geminiPreflightErr)
 	logStartupPreflight(logger, "startup.kimi_unavailable", kimiPreflightErr)
 	logStartupPreflight(logger, "startup.qwen_unavailable", qwenPreflightErr)
@@ -131,6 +135,7 @@ func main() {
 		codexAvailable,
 		piAvailable,
 		opencodeAvailable,
+		droidAvailable,
 		geminiAvailable,
 		kimiAvailable,
 		qwenAvailable,
@@ -203,6 +208,13 @@ func main() {
 				})
 			case agentimpl.AgentIDOpencode:
 				return opencodeagent.New(opencodeagent.Config{
+					Dir:             thread.CWD,
+					ModelID:         modelID,
+					SessionID:       sessionID,
+					ConfigOverrides: configOverrides,
+				})
+			case agentimpl.AgentIDDroid:
+				return droidagent.New(droidagent.Config{
 					Dir:             thread.CWD,
 					ModelID:         modelID,
 					SessionID:       sessionID,
@@ -283,6 +295,11 @@ func main() {
 					Dir:  modelDiscoveryDir,
 					Name: "claude-embedded",
 				})
+			case agentimpl.AgentIDDroid:
+				if droidPreflightErr != nil {
+					return nil, droidPreflightErr
+				}
+				return droidagent.DiscoverModels(ctx, droidagent.Config{Dir: modelDiscoveryDir})
 			case agentimpl.AgentIDGemini:
 				if geminiPreflightErr != nil {
 					return nil, geminiPreflightErr
@@ -425,6 +442,7 @@ func supportedAgents(
 	codexAvailable,
 	piAvailable,
 	opencodeAvailable,
+	droidAvailable,
 	geminiAvailable,
 	kimiAvailable,
 	qwenAvailable,
@@ -447,6 +465,7 @@ func supportedAgents(
 	appendIfAvailable(codexAvailable, agentimpl.AgentIDCodex, "Codex")
 	appendIfAvailable(piAvailable, agentimpl.AgentIDPi, "Pi")
 	appendIfAvailable(claudeAvailable, agentimpl.AgentIDClaude, "Claude Code")
+	appendIfAvailable(droidAvailable, agentimpl.AgentIDDroid, "Factory Droid")
 	appendIfAvailable(geminiAvailable, agentimpl.AgentIDGemini, "Gemini CLI")
 	appendIfAvailable(kimiAvailable, agentimpl.AgentIDKimi, "Kimi CLI")
 	appendIfAvailable(qwenAvailable, agentimpl.AgentIDQwen, "Qwen Code")

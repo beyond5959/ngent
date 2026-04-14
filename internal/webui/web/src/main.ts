@@ -3995,6 +3995,9 @@ function renderAgentAvatar(agentId: string, variant: 'thread' | 'message'): stri
   if (normalized === 'cursor') {
     return `<span class="${iconCls} ${cls}--cursor" role="img" aria-label="Cursor CLI"></span>`
   }
+  if (normalized === 'droid') {
+    return `<span class="${iconCls} ${cls}--droid" role="img" aria-label="Factory Droid"></span>`
+  }
   if (normalized === 'kimi') {
     return `<span class="${iconCls} ${cls}--kimi" role="img" aria-label="Kimi CLI"></span>`
   }

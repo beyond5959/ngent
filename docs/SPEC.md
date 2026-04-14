@@ -918,3 +918,23 @@ The integration follows the official ACP startup form `blackbox --experimental-a
 - The embedded Web UI exposes this as a composer footer switch only for Codex threads.
   - the switch is stored only in local unsent-composer scope state.
   - the switch is cleared immediately after send, so it applies to the next turn only.
+
+### 18.11 Factory Droid Native ACP Provider
+
+- ngent includes a built-in `droid` provider backed directly by the Factory CLI:
+  - binary: `droid`
+  - launch command: `droid exec --output-format acp`
+- The provider uses the shared `internal/agents/acpcli` transport lifecycle with these Factory-specific adjustments:
+  - `AllowStdoutNoise = true` because the CLI can emit non-JSON banner/title lines around ACP output.
+  - initialize params include `protocolVersion = 1`, `clientInfo = {name:"ngent", version:"0.1.0"}`, and disabled fs read/write client capabilities.
+  - `session/new` params stay minimal (`cwd`, `mcpServers`) and selected model ids are forwarded through the CLI `--model` flag rather than by adding extra ACP prompt params.
+  - model changes are currently treated as launch-time selection only; when the requested config id is `model`, ngent opens a fresh ACP session with the new CLI `--model` flag and skips `session/set_config_option(model)`.
+- Live CLI behavior observed during integration:
+  - ACP `initialize`, `session/list`, and `session/load` are available.
+  - ACP `session/cancel` currently returns JSON-RPC method-not-found.
+- Cancellation semantics:
+  - when a Droid turn context is cancelled, ngent does not send a provider cancel RPC.
+  - instead, the shared ACP client returns `cancelled` from the caller context and the deferred process cleanup closes/kills the Droid subprocess.
+- Web UI branding:
+  - the built-in Web UI maps `agent=droid` to a local `public/droid-icon.svg` asset sourced from Factory's homepage symbol mark.
+  - the symbol is rendered via CSS mask + theme-specific foreground color so the same SVG stays consistent across light and dark themes.

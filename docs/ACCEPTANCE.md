@@ -830,3 +830,19 @@ This checklist defines executable acceptance checks for requirements 1-16.
 - Verification commands (executed 2026-04-13):
   - `cd internal/webui/web && npm run build`
   - `go test ./...`
+
+## Requirement 36: Factory Droid Native ACP Integration
+
+- Operation:
+  - start ngent on a host where the `droid` binary is available and already authenticated for Factory usage.
+  - query `/v1/agents`, create a thread with `agent=droid`, and open the embedded Web UI thread list plus the `New Agent` modal.
+  - start a turn and then cancel it from ngent.
+- Expected:
+  - startup preflight includes `{"id":"droid","name":"Factory Droid","status":"available"}` in `GET /v1/agents` when the `droid` binary is present.
+  - ngent launches Factory Droid in ACP mode with `droid exec --output-format acp`.
+  - session list/load and ordinary prompt streaming work through the shared ACP CLI path.
+  - because Factory Droid does not currently expose ACP `session/cancel`, ngent still reports prompt cancellation promptly by cancelling the request context and tearing down the subprocess.
+  - the Web UI renders the official Factory symbol mark in both the thread list and the `New Agent` modal, and the icon remains legible in both light and dark themes.
+- Verification commands (executed 2026-04-14):
+  - `cd internal/webui/web && npm run build`
+  - `go test ./...`

@@ -1301,3 +1301,15 @@ This file is the source of milestone progress, validation commands, and next act
   - executed validation:
     - pass: `cd internal/webui/web && npm run build`
     - pass: `go test ./...`
+
+- 2026-04-14: integrated Factory Droid as a native ACP CLI provider and reused Factory's homepage symbol mark in the Web UI.
+  - added `internal/agents/droid` on top of the shared `internal/agents/acpcli` driver, launching `droid exec --output-format acp` with a tolerant stdout-noise parser because the real CLI can emit extra banner/title lines around ACP traffic.
+  - confirmed against the live local CLI that Factory Droid advertises ACP `session/list` and `session/load`, while `session/cancel` is not implemented; ngent therefore relies on context cancellation plus process teardown instead of an ACP cancel RPC for this provider.
+  - wired `droid` into `cmd/ngent/main.go` preflight, supported-agent registration, per-thread provider construction, and model discovery so `/v1/agents` can now surface `{"id":"droid","name":"Factory Droid"}` when the `droid` binary is present.
+  - added focused fake-process tests covering streaming, model flag forwarding, model discovery, permission mapping, and cancellation without a provider-side `session/cancel`.
+  - added `internal/webui/web/public/droid-icon.svg` from Factory's homepage symbol mark and rendered it in the thread list plus `New Agent` modal using a CSS mask so the same asset adapts cleanly across light and dark themes.
+  - executed validation:
+    - pass: `cd internal/webui/web && npm run build`
+    - pass: `go test ./internal/agents/droid -count=1`
+    - pass: `go test ./internal/agents/codex -count=1`
+    - pass: `go test -p=1 ./...`

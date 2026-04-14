@@ -69,6 +69,8 @@
   --qwen-icon-image: url('/qwen-icon.png');
   --blackbox-icon-image: url('/blackbox.png');
   --cursor-icon-image: url('/cursor-icon-light.png');
+  --droid-icon-mask-image: url('/droid-icon.svg');
+  --droid-icon-color: #111111;
   --kimi-icon-image: url('/kimi-icon.png');
   --opencode-icon-image: url('/opencode-icon.png');
   --pi-icon-shell-bg: #101315;
@@ -79,6 +81,7 @@
 
 [data-theme="dark"] {
   --cursor-icon-image: url('/cursor-icon-dark.png');
+  --droid-icon-color: #f5f5f5;
   --kimi-icon-image: url('/kimi-text.png');
   --opencode-icon-image: url('/opencode-logo-dark.svg');
   --pi-icon-shell-bg: transparent;
@@ -359,6 +362,18 @@ body {
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
+}
+
+.thread-item-avatar-icon--droid {
+  background-color: var(--droid-icon-color);
+  -webkit-mask-image: var(--droid-icon-mask-image);
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-image: var(--droid-icon-mask-image);
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
 }
 
 .thread-item-avatar-icon--opencode {
@@ -3550,6 +3565,22 @@ button:active:not(:disabled),
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
+}
+
+.agent-card-droid-icon {
+  width: 32px;
+  height: 32px;
+  display: block;
+  border-radius: 8px;
+  background-color: var(--droid-icon-color);
+  -webkit-mask-image: var(--droid-icon-mask-image);
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-image: var(--droid-icon-mask-image);
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
 }
 
 .agent-card-opencode-icon {

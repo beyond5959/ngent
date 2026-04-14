@@ -777,3 +777,16 @@ Newer closures should appear first when practical.
 - Symptom: historical issue where valid paths could be rejected as outside allowed roots
 - Workaround: N/A after ADR-016 default absolute-cwd policy
 - Follow-up plan: none
+
+- ID: KI-053
+- Title: Factory Droid ACP does not implement `session/cancel`
+- Status: Open
+- Severity: Medium
+- Affects: turns running through the built-in `droid` provider
+- Symptom:
+  - a live ACP probe of `droid exec --output-format acp` returned JSON-RPC method-not-found for `session/cancel`.
+  - cancelling a Droid turn in ngent therefore cannot ask the provider to stop one ACP session gracefully in-process.
+- Workaround:
+  - ngent falls back to request-context cancellation and process teardown for Droid turns.
+- Follow-up plan:
+  - watch for a future Factory CLI release that adds a real ACP cancel method, then wire it into the provider hook so cancellations can become session-scoped instead of subprocess-scoped.

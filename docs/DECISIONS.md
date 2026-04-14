@@ -2232,3 +2232,26 @@ Use this template for new decisions.
   - persist full access in `thread.agentOptions.configOverrides` (rejected: wrong lifetime; would surprise users by affecting later turns).
   - add a new persistent ACP config option surfaced beside model/reasoning (rejected: upstream adapter does not expose approval/sandbox as mutable session config options, and the UX requirement was explicitly one-shot).
   - mutate Codex session defaults via `session/new` / `session/set_config_option` (rejected: either not supported or too sticky for a per-turn override).
+
+## ADR-066: Integrate Factory Droid Via Direct ACP CLI Launch And Theme-Adaptive Symbol Mark
+
+- Status: Accepted
+- Date: 2026-04-14
+- Context:
+  - Factory documents Zed integration through a direct ACP launch command, `droid exec --output-format acp`, rather than through an external adapter layer.
+  - a live probe of the local `droid` CLI confirmed ACP `initialize`, `session/list`, and `session/load` support, but `session/cancel` returns JSON-RPC method-not-found.
+  - Factory's homepage brand symbol is an inline `currentColor` SVG mark, while Factory's docs site uses a separate light PNG / dark SVG pair; ngent only needs the symbol mark for compact agent avatars.
+- Decision:
+  - add a new built-in provider id `droid` backed by a shared `internal/agents/acpcli` client that launches `droid exec --output-format acp`.
+  - enable `AllowStdoutNoise` for this provider because the CLI can emit extra banner/title text around ACP output.
+  - do not send an ACP `session/cancel` request for Droid; rely on request-context cancellation and process teardown instead.
+  - treat model selection as a launch-time concern for now by forwarding selected model ids through the CLI `--model` flag and by skipping `session/set_config_option` when the requested config id is `model`.
+  - reuse Factory's homepage symbol mark as a local SVG asset and render it through a CSS mask so one monochrome source adapts to ngent's light/dark themes.
+- Consequences:
+  - ngent gains first-class Factory Droid support without an extra adapter binary.
+  - Droid turn cancellation remains coarser than providers that implement `session/cancel`, because cancellation currently stops the whole subprocess instead of interrupting one ACP session in place.
+  - the Web UI now stays visually aligned with Factory's own homepage branding for this agent.
+- Alternatives considered:
+  - wrap Droid through a separate ACP adapter layer (rejected: unnecessary when the CLI already speaks ACP directly).
+  - reuse the docs site's light PNG / dark SVG assets (rejected: the homepage mark is the product-facing source and adapts more cleanly in compact monochrome avatar slots).
+  - fake `session/cancel` with an unsupported RPC or shell signal hook (rejected: the shared ACP client already has a safe fail-closed path via context cancellation and cleanup).

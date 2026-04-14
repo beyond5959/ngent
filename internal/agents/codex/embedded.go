@@ -488,10 +488,19 @@ func (c *Client) streamOnce(
 		promptContent = []map[string]any{}
 	}
 	go func() {
-		resp, reqErr := c.clientRequest(promptCtx, runtime, methodSessionPrompt, map[string]any{
+		params := map[string]any{
 			"sessionId": sessionID,
 			"prompt":    promptContent,
-		})
+		}
+		if overrides, ok := agents.PromptRuntimeOverridesFromContext(promptCtx); ok {
+			if overrides.ApprovalPolicy != "" {
+				params["approvalPolicy"] = overrides.ApprovalPolicy
+			}
+			if overrides.Sandbox != "" {
+				params["sandbox"] = overrides.Sandbox
+			}
+		}
+		resp, reqErr := c.clientRequest(promptCtx, runtime, methodSessionPrompt, params)
 		promptDone <- promptResult{response: resp, err: reqErr}
 	}()
 

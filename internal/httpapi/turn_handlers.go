@@ -71,6 +71,12 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 	turnSessionID := threadSessionID(thread.AgentOptionsJSON)
 	turnCtx, cancelTurn := context.WithCancel(context.WithoutCancel(r.Context()))
 	persistCtx := context.WithoutCancel(r.Context())
+	if req.FullAccess && strings.EqualFold(strings.TrimSpace(thread.AgentID), agents.AgentIDCodex) {
+		turnCtx = agents.WithPromptRuntimeOverrides(turnCtx, agents.PromptRuntimeOverrides{
+			ApprovalPolicy: "never",
+			Sandbox:        "danger-full-access",
+		})
+	}
 	if err := s.turns.Activate(thread.ThreadID, turnSessionID, turnID, cancelTurn); err != nil {
 		if errors.Is(err, runtime.ErrActiveTurnExists) {
 			writeError(w, http.StatusConflict, codeConflict, "session already has an active turn", map[string]any{

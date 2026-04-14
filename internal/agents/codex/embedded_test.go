@@ -142,6 +142,35 @@ func TestStreamCapturesReasoningTextDeltas(t *testing.T) {
 	}
 }
 
+func TestStreamAppliesPromptRuntimeOverrides(t *testing.T) {
+	client := newFakeCodexClient(t)
+	defer func() {
+		_ = client.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ctx = agents.WithPromptRuntimeOverrides(ctx, agents.PromptRuntimeOverrides{
+		ApprovalPolicy: "never",
+		Sandbox:        "danger-full-access",
+	})
+
+	var answer strings.Builder
+	stopReason, err := client.Stream(ctx, "profile probe", func(delta string) error {
+		answer.WriteString(delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream(): %v", err)
+	}
+	if stopReason != agents.StopReasonEndTurn {
+		t.Fatalf("StopReason = %q, want %q", stopReason, agents.StopReasonEndTurn)
+	}
+	if got := answer.String(); !strings.Contains(got, "approval=never sandbox=danger-full-access") {
+		t.Fatalf("answer = %q, want approval/sandbox override", got)
+	}
+}
+
 func TestSlashCommandsAfterConfigOptionsInit(t *testing.T) {
 	client := newFakeCodexClient(t)
 	defer func() {

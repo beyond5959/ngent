@@ -902,3 +902,19 @@ The integration follows the official ACP startup form `blackbox --experimental-a
   - switching back to the active session is therefore a local view change rather than a conflict-producing backend write.
 - Unsaved "New session" views are tracked as frontend-only `@fresh:<nonce>` selections so the UI can keep a stable empty-session scope before ACP emits a concrete `session_bound`.
 - After the active turn completes, or just before the next user send if needed, the frontend synchronizes any pending selected session back into backend thread state.
+
+### 18.10 Codex Full Access As A Turn-Only Override
+
+- `POST /v1/threads/{threadId}/turns` accepts optional `fullAccess: boolean` in both JSON and multipart request forms.
+- ngent interprets `fullAccess=true` only when `thread.agent == "codex"`.
+  - other agents ignore the flag.
+  - persisted thread `agentOptions` are not modified.
+- For Codex turns, ngent injects one-shot runtime overrides into the turn context:
+  - `approvalPolicy = never`
+  - `sandbox = danger-full-access`
+- The embedded Codex provider reads those overrides only when sending ACP `session/prompt`.
+  - the override is therefore scoped to that prompt/turn.
+  - session/thread default config remains unchanged for later turns unless the caller explicitly sets `fullAccess` again.
+- The embedded Web UI exposes this as a composer footer switch only for Codex threads.
+  - the switch is stored only in local unsent-composer scope state.
+  - the switch is cleared immediately after send, so it applies to the next turn only.

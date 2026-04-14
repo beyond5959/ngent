@@ -322,6 +322,7 @@ const sessionTitleOverridesByThread = new Map<string, Map<string, string>>()
 const visibleSessionCountByThread = new Map<string, number>()
 const composerAttachmentsByThread = new Map<string, ComposerAttachmentDraft[]>()
 const composerDraftByScope = new Map<string, string>()
+const composerFullAccessByScope = new Map<string, boolean>()
 const threadGitStateByThread = new Map<string, ThreadGitState>()
 const threadGitDiffStateByScope = new Map<string, ThreadGitDiffState>()
 const threadGitDiffPreviewByScope = new Map<string, ThreadGitDiffPreviewState>()
@@ -988,6 +989,10 @@ function composerDraft(scopeKey: string): string {
   return composerDraftByScope.get(scopeKey) ?? ''
 }
 
+function composerFullAccess(scopeKey: string): boolean {
+  return composerFullAccessByScope.get(scopeKey) === true
+}
+
 function setComposerDraft(scopeKey: string, value: string): void {
   scopeKey = scopeKey.trim()
   if (!scopeKey) return
@@ -995,6 +1000,16 @@ function setComposerDraft(scopeKey: string, value: string): void {
     composerDraftByScope.set(scopeKey, value)
   } else {
     composerDraftByScope.delete(scopeKey)
+  }
+}
+
+function setComposerFullAccess(scopeKey: string, enabled: boolean): void {
+  scopeKey = scopeKey.trim()
+  if (!scopeKey) return
+  if (enabled) {
+    composerFullAccessByScope.set(scopeKey, true)
+  } else {
+    composerFullAccessByScope.delete(scopeKey)
   }
 }
 
@@ -1013,6 +1028,17 @@ function moveComposerDraft(oldScopeKey: string, nextScopeKey: string): void {
   composerDraftByScope.delete(oldScopeKey)
   if (draft === undefined || composerDraftByScope.has(nextScopeKey)) return
   composerDraftByScope.set(nextScopeKey, draft)
+}
+
+function moveComposerFullAccess(oldScopeKey: string, nextScopeKey: string): void {
+  oldScopeKey = oldScopeKey.trim()
+  nextScopeKey = nextScopeKey.trim()
+  if (!oldScopeKey || !nextScopeKey || oldScopeKey === nextScopeKey) return
+
+  const enabled = composerFullAccessByScope.get(oldScopeKey)
+  composerFullAccessByScope.delete(oldScopeKey)
+  if (enabled !== true || composerFullAccessByScope.has(nextScopeKey)) return
+  composerFullAccessByScope.set(nextScopeKey, true)
 }
 
 function attachmentPreviewURL(file: File): string | undefined {
@@ -1253,6 +1279,10 @@ function hasReasoningText(value: string | null | undefined): value is string {
 
 function normalizeAgentKey(agentId: string): string {
   return agentId.trim().toLowerCase()
+}
+
+function isCodexThread(thread: Thread | null | undefined): boolean {
+  return normalizeAgentKey(thread?.agent ?? '') === 'codex'
 }
 
 function agentDisplayName(agentId: string): string {
@@ -2407,6 +2437,7 @@ function rebindScopeRuntime(oldScopeKey: string, nextScopeKey: string, nextSessi
   }
   rebindMessageFilePreviewScope(oldScopeKey, nextScopeKey)
   moveComposerDraft(oldScopeKey, nextScopeKey)
+  moveComposerFullAccess(oldScopeKey, nextScopeKey)
   if (activeStreamScopeKey === oldScopeKey) {
     activeStreamScopeKey = nextScopeKey
   }
@@ -4423,6 +4454,11 @@ async function handleDeleteThread(threadId: string): Promise<void> {
       composerDraftByScope.delete(scopeKey)
     }
   })
+  Array.from(composerFullAccessByScope.keys()).forEach(scopeKey => {
+    if (scopeKey.startsWith(threadScopePrefix)) {
+      composerFullAccessByScope.delete(scopeKey)
+    }
+  })
   sessionPanelStateByThread.delete(threadId)
   sessionPanelRequestSeqByThread.delete(threadId)
   sessionTitleOverridesByThread.delete(threadId)
@@ -5944,6 +5980,7 @@ function updateInputState(): void {
   const sendBtn  = document.getElementById('send-btn')   as HTMLButtonElement   | null
   const inputEl  = document.getElementById('message-input') as HTMLTextAreaElement | null
   const attachmentBtn = document.getElementById('attachment-btn') as HTMLButtonElement | null
+  const fullAccessToggle = document.getElementById('full-access-toggle') as HTMLInputElement | null
   const isSwitchingConfig = !!activeThreadId && threadConfigSwitching.has(activeThreadId)
   const isSwitchingSession = !!activeThreadId && sessionSwitchingThreads.has(activeThreadId)
   const hasThreadStreaming = hasThreadStream(activeThreadId)
@@ -5963,6 +6000,7 @@ function updateInputState(): void {
   }
   if (inputEl)  inputEl.disabled  = disableComposerInput
   if (attachmentBtn) attachmentBtn.disabled = disableComposerActions
+  if (fullAccessToggle) fullAccessToggle.disabled = disableComposerActions
   document.querySelectorAll<HTMLButtonElement>('.composer-attachment__remove').forEach(button => {
     button.disabled = disableComposerActions
   })
@@ -7495,6 +7533,24 @@ function renderSessionUsageControl(thread: Thread): string {
     </div>`
 }
 
+function renderComposerFullAccessControl(thread: Thread, scopeKey: string): string {
+  if (!isCodexThread(thread)) return ''
+
+  return `
+    <label class="composer-full-access" for="full-access-toggle">
+      <input
+        id="full-access-toggle"
+        class="composer-full-access__input"
+        type="checkbox"
+        ${composerFullAccess(scopeKey) ? 'checked' : ''}
+      />
+      <span class="composer-full-access__copy">
+        <span class="composer-full-access__label">${escHtml(t('fullAccess'))}</span>
+      </span>
+      <span class="composer-full-access__switch" aria-hidden="true"></span>
+    </label>`
+}
+
 function renderChatThread(thread: Thread): string {
   const sessionTitleLabel = getCurrentSessionTitle(thread)
   const scopeKey = threadChatScopeKey(thread)
@@ -7586,8 +7642,8 @@ function renderChatThread(thread: Thread): string {
           </button>
         </div>
       </div>
-        <div class="input-meta-row">
-        <div class="input-hint">${t('inputHintHTML')}</div>
+      <div class="input-meta-row">
+        <div class="input-meta-primary">${renderComposerFullAccessControl(thread, scopeKey)}</div>
         <div class="input-meta-actions">
           <div class="input-meta-slot" id="thread-git-slot">${renderThreadGitControl(thread.threadId)}</div>
           <div class="input-meta-slot" id="session-usage-slot">${renderSessionUsageControl(thread)}</div>
@@ -7703,6 +7759,7 @@ function updateChatArea(): void {
   bindSessionInfoPopover()
   bindInputResize()
   bindComposerAttachments(thread)
+  bindComposerFullAccessToggle(thread)
   bindSendHandler()
   bindThreadConfigSwitches(thread)
   bindScrollBottom()
@@ -7918,6 +7975,17 @@ function bindThreadConfigSwitches(thread: Thread): void {
     triggerEl.addEventListener('keydown', onEsc)
     menuEl.addEventListener('keydown', onEsc)
     switchEl.dataset.bound = 'true'
+  })
+}
+
+function bindComposerFullAccessToggle(thread: Thread): void {
+  const toggleEl = document.getElementById('full-access-toggle') as HTMLInputElement | null
+  if (!toggleEl) return
+
+  toggleEl.addEventListener('change', () => {
+    const latest = store.get().threads.find(item => item.threadId === thread.threadId)
+    if (!latest) return
+    setComposerFullAccess(threadChatScopeKey(latest), toggleEl.checked)
   })
 }
 
@@ -8238,11 +8306,15 @@ async function handleSend(): Promise<void> {
   const capturedThreadID = activeThreadId
   let capturedSessionID = selectedThreadSessionID(refreshedThread)
   let capturedScopeKey = threadChatScopeKey(refreshedThread)
+  const useFullAccess = isCodexThread(refreshedThread) && composerFullAccess(capturedScopeKey)
   if (getScopeStreamState(capturedScopeKey)) return
 
   // Clear input immediately
   inputEl.value = ''
   setComposerDraft(capturedScopeKey, '')
+  setComposerFullAccess(capturedScopeKey, false)
+  const fullAccessToggle = document.getElementById('full-access-toggle') as HTMLInputElement | null
+  if (fullAccessToggle) fullAccessToggle.checked = false
   inputEl.style.height = 'auto'
   clearThreadComposerAttachments(capturedThreadID)
   renderComposerAttachments(capturedThreadID)
@@ -8319,6 +8391,7 @@ async function handleSend(): Promise<void> {
     openStream: callbacks => api.startTurn(capturedThreadID, {
       input: text,
       attachments: attachmentDrafts.map(attachment => attachment.file),
+      fullAccess: useFullAccess,
     }, callbacks),
   })
 }

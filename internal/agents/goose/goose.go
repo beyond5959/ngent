@@ -1,0 +1,108 @@
+package goose
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+
+	"github.com/beyond5959/ngent/internal/agents"
+	"github.com/beyond5959/ngent/internal/agents/acpcli"
+	"github.com/beyond5959/ngent/internal/agents/acpstdio"
+	"github.com/beyond5959/ngent/internal/agents/agentutil"
+)
+
+var handlePermissionRequest = acpcli.StructuredPermissionRequestHandler(acpcli.DefaultPermissionTimeout)
+
+// Config configures the Goose ACP stdio provider.
+type Config = agentutil.Config
+
+// Client runs one goose acp process per ACP operation.
+type Client struct {
+	*acpcli.Client
+}
+
+var _ agents.Streamer = (*Client)(nil)
+var _ agents.ConfigOptionManager = (*Client)(nil)
+var _ agents.SessionLister = (*Client)(nil)
+var _ agents.SessionTranscriptLoader = (*Client)(nil)
+var _ agents.SlashCommandsProvider = (*Client)(nil)
+
+// New constructs a Goose ACP client.
+func New(cfg Config) (*Client, error) {
+	base, err := acpcli.New(agents.AgentIDGoose, cfg, acpcli.Hooks{
+		OpenConn:                openConn(cfg.Dir),
+		SessionNewParams:        acpcli.SessionNewParams(cfg.Dir),
+		SessionLoadParams:       acpcli.SessionLoadParams(cfg.Dir),
+		SessionListParams:       acpcli.SessionListParams(cfg.Dir),
+		PromptParams:            promptParams,
+		DiscoverModelsParams:    acpcli.DiscoverModelsParams(cfg.Dir),
+		HandlePermissionRequest: handlePermissionRequest,
+		Cancel:                  cancelWithNotify,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Client{Client: base}, nil
+}
+
+// Preflight checks that the goose binary is available in PATH.
+func Preflight() error {
+	return agentutil.PreflightBinary(agents.AgentIDGoose)
+}
+
+func openConn(dir string) func(context.Context, acpcli.OpenConnRequest) (*acpstdio.Conn, func(), json.RawMessage, error) {
+	return func(
+		ctx context.Context,
+		req acpcli.OpenConnRequest,
+	) (*acpstdio.Conn, func(), json.RawMessage, error) {
+		args := []string{"acp"}
+		conn, cleanup, initResult, err := acpcli.OpenProcess(ctx, acpcli.ProcessConfig{
+			Command: agents.AgentIDGoose,
+			Args:    args,
+			Dir:     strings.TrimSpace(dir),
+			Env:     os.Environ(),
+			ConnOptions: acpstdio.ConnOptions{
+				Prefix: agents.AgentIDGoose,
+			},
+			InitializeParams: initializeParams(),
+		})
+		if err != nil {
+			return nil, nil, nil, acpcli.WrapOpenError(agents.AgentIDGoose, req.Purpose, err)
+		}
+		return conn, cleanup, initResult, nil
+	}
+}
+
+func initializeParams() map[string]any {
+	return map[string]any{
+		"clientInfo": map[string]any{
+			"name":    "ngent",
+			"version": "0.1.0",
+		},
+		"protocolVersion": 1,
+	}
+}
+
+func promptParams(sessionID string, prompt agents.Prompt, modelID string) map[string]any {
+	params := acpcli.ACPPromptParams(sessionID, prompt)
+	if modelID = strings.TrimSpace(modelID); modelID != "" {
+		params["modelId"] = modelID
+	}
+	return params
+}
+
+func cancelWithNotify(conn *acpstdio.Conn, sessionID string) {
+	if conn == nil {
+		return
+	}
+	conn.Notify("session/cancel", map[string]any{"sessionId": strings.TrimSpace(sessionID)})
+}
+
+// Name returns the provider identifier.
+func (c *Client) Name() string {
+	if c == nil || c.Client == nil {
+		return agents.AgentIDGoose
+	}
+	return c.Client.Name()
+}

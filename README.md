@@ -52,6 +52,7 @@ Ngent acts as a bridge between **ACP-compatible agents** (like Codex, Kimi CLI, 
 | OpenCode | ✅ |
 | Pi | ✅ |
 | BLACKBOX AI | ✅ |
+| Goose | ✅ |
 
 
 
